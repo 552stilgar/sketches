@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Particle Horizon</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #080503; overflow: hidden; }
+    canvas { display: block; }
+    #hint {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255, 190, 80, 0.28);
+      font: 11px/1 monospace;
+      letter-spacing: 0.08em;
+      pointer-events: none;
+    }
+    #mode {
+      position: fixed;
+      bottom: 18px;
+      right: 22px;
+      color: rgba(255, 170, 60, 0.45);
+      font: 13px/1 monospace;
+      letter-spacing: 0.12em;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<div id="hint">drag · horizon &nbsp;|&nbsp; 1 repel &nbsp; 2 attract &nbsp; 3 sculpt &nbsp;|&nbsp; H line</div>
+<div id="mode">REPEL</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const CFG = {
+  count:          900,
+  spawnWidth:     0.72,
+  spawnJitter:    3,
+  baseSpeed:      0.6,
+  speedVariance:  0.5,
+  accelRate:      0.016,
+  accelCurve:     1.8,
+  vxDamping:      0.97,
+
+  repelRadius:    90,
+  repelStrength:  3.2,
+  attractRadius:  120,
+  attractStrength:2.8,
+  sculptRadius:   110,
+  sculptStrength: 1.6,
+
+  minSize:        0.8,
+  maxSize:        5.5,
+  trailAlpha:     18,
+
+  // Warm amber / orange palette
+  hueAbove:       44,   // amber-gold (upward)
+  hueBelow:       20,   // burnt orange (downward)
+  hueSpread:      16,
+  satMin:         55,
+  satMax:         85,
+
+  showHorizon:    true,
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let particles  = [];
+let horizonY;
+let isDragging = false;
+let mode       = 'repel';   // 'repel' | 'attract' | 'sculpt'
+let sculptDx   = 0;
+let sculptDy   = 0;
+const modeEl   = document.getElementById('mode');
+
+// ─── Particle ─────────────────────────────────────────────────────────────────
+class Particle {
+  constructor() { this.spawn(true); }
+
+  spawn(stagger = false) {
+    this.dir = random() < 0.5 ? -1 : 1;
+    const halfW = width * CFG.spawnWidth * 0.5;
+    this.x = width * 0.5 + random(-halfW, halfW);
+    this.y = horizonY + random(-CFG.spawnJitter, CFG.spawnJitter);
+    this.vx = random(-0.4, 0.4);
+    this.vy = this.dir * (CFG.baseSpeed + random(CFG.speedVariance));
+    this.maxLife = random(90, 200);
+    this.life    = stagger ? floor(random(this.maxLife)) : 0;
+    this.hue = (this.dir === -1 ? CFG.hueAbove : CFG.hueBelow)
+               + random(-CFG.hueSpread, CFG.hueSpread);
+    this.sat = random(CFG.satMin, CFG.satMax);
+  }
+
+  update(mx, my) {
+    this.life++;
+
+    const dist = abs(this.y - horizonY);
+    const t    = constrain(dist / (height * 0.5), 0, 1);
+
+    // Outward acceleration
+    this.vy += this.dir * CFG.accelRate * pow(t, CFG.accelCurve) * (1 + t * 3);
+
+    // Cursor interaction
+    const dx = this.x - mx;
+    const dy = this.y - my;
+    const d2 = dx * dx + dy * dy;
+    const d  = sqrt(d2);
+
+    if (mode === 'repel' && d < CFG.repelRadius && d > 0.01) {
+      const f = ((CFG.repelRadius - d) / CFG.repelRadius) * CFG.repelStrength;
+      this.vx += (dx / d) * f;
+      this.vy += (dy / d) * f;
+
+    } else if (mode === 'attract' && d < CFG.attractRadius && d2 > 4) {
+      const f = ((CFG.attractRadius - d) / CFG.attractRadius) * CFG.attractStrength;
+      this.vx -= (dx / d) * f;
+      this.vy -= (dy / d) * f;
+
+    } else if (mode === 'sculpt' && d < CFG.sculptRadius && d > 0.01) {
+      const falloff = 1 - d / CFG.sculptRadius;
+      this.vx += sculptDx * CFG.sculptStrength * falloff;
+      this.vy += sculptDy * CFG.sculptStrength * falloff;
+    }
+
+    this.vx *= CFG.vxDamping;
+    this.x  += this.vx;
+    this.y  += this.vy;
+
+    this.sz    = map(t, 0, 1, CFG.minSize, CFG.maxSize);
+    const fade = 1 - this.life / this.maxLife;
+    this.alpha = map(t, 0, 0.25, 0, 210) * fade;
+  }
+
+  isDead() {
+    return this.life >= this.maxLife
+      || this.y < -20 || this.y > height + 20
+      || this.x < -20 || this.x > width  + 20;
+  }
+
+  draw() {
+    noStroke();
+    fill(this.hue, this.sat, 96, this.alpha);
+    circle(this.x, this.y, this.sz);
+  }
+}
+
+// ─── Sketch ───────────────────────────────────────────────────────────────────
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  colorMode(HSB, 360, 100, 100, 255);
+  horizonY = height * 0.5;
+  for (let i = 0; i < CFG.count; i++) particles.push(new Particle());
+}
+
+function draw() {
+  // Sculpt delta from mouse movement
+  sculptDx = mouseX - pmouseX;
+  sculptDy = mouseY - pmouseY;
+
+  colorMode(RGB);
+  background(8, 5, 3, CFG.trailAlpha);
+  colorMode(HSB, 360, 100, 100, 255);
+
+  const mx = mouseX, my = mouseY;
+  for (const p of particles) {
+    p.update(mx, my);
+    if (p.isDead()) p.spawn(false);
+    p.draw();
+  }
+
+  if (CFG.showHorizon) {
+    colorMode(RGB);
+    stroke(190, 130, 55, 28);
+    strokeWeight(1);
+    line(0, horizonY, width, horizonY);
+    noStroke();
+    colorMode(HSB, 360, 100, 100, 255);
+  }
+}
+
+// ─── Interaction ──────────────────────────────────────────────────────────────
+function mousePressed() { isDragging = true; }
+function mouseDragged() {
+  if (isDragging) horizonY = constrain(mouseY, 50, height - 50);
+}
+function mouseReleased() { isDragging = false; }
+
+function keyPressed() {
+  const k = key.toLowerCase();
+  if (key === '1') { mode = 'repel';   modeEl.textContent = 'REPEL'; }
+  if (key === '2') { mode = 'attract'; modeEl.textContent = 'ATTRACT'; }
+  if (key === '3') { mode = 'sculpt';  modeEl.textContent = 'SCULPT'; }
+  if (k === 'h')   CFG.showHorizon = !CFG.showHorizon;
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  horizonY = constrain(horizonY, 50, height - 50);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Entropic Collapse</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #040508; overflow: hidden; }
+    canvas { display: block; }
+    #controls {
+      position: fixed;
+      top: 16px;
+      left: 20px;
+      color: rgba(140, 170, 220, 0.30);
+      font: 11px/2 monospace;
+      letter-spacing: 0.07em;
+      pointer-events: none;
+    }
+    #state {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(140, 170, 220, 0.40);
+      font: 11px/1 monospace;
+      letter-spacing: 0.10em;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<div id="controls">
+  +/−&nbsp;&nbsp; coupling<br>
+  M&nbsp;&nbsp;&nbsp;&nbsp; many ↔ few<br>
+  C&nbsp;&nbsp;&nbsp;&nbsp; cyclic ↔ attractor<br>
+  I&nbsp;&nbsp;&nbsp;&nbsp; mouse on/off<br>
+  R&nbsp;&nbsp;&nbsp;&nbsp; reset
+</div>
+<div id="state">K: 0.80 · ORDER: 0.00 · FEW · ATTRACTOR</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const CFG = {
+  countMany:   300,
+  countFew:    60,
+  radiusMany:  2.5,
+  radiusFew:   8.0,
+
+  // Physics
+  coupling:    0.80,    // Kuramoto K: 0 = no sync, 2 = instant lock
+  couplingStep:0.05,
+  couplingMax: 2.0,
+
+  forceScale:  5000,    // positional force magnitude
+  repelDist:   18,      // hard repulsion below this distance (px)
+  friction:    0.90,    // velocity damping per frame
+  maxSpeed:    4.5,
+  interactDist:150,     // cutoff — only interact within this radius
+
+  freqSpread:  0.012,   // spread of natural phase frequencies ω
+
+  // Cyclic: scatter when order > threshold
+  cyclicOrder: 0.88,
+  cyclicNoise: 1.1,     // phase noise on scatter (radians)
+
+  // Mouse
+  mouseRadius:    110,
+  mouseCoupling:  0.5,  // how strongly mouse phase (0) pulls particle phases
+  mouseAttract:   0.25, // positional attraction strength
+
+  // Color — constrained blue-indigo-violet range
+  hueMin:  200,         // blue
+  hueMax:  258,         // violet
+  sat:      38,
+  briMin:   55,
+  briMax:   92,
+
+  trailAlpha: 26,
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let particles = [];
+let manyMode  = false;
+let cyclic    = false;
+let mouseOn   = false;
+const stateEl = document.getElementById('state');
+
+// ─── Particle ─────────────────────────────────────────────────────────────────
+class Particle {
+  constructor() { this.init(); }
+
+  init() {
+    const margin = 60;
+    this.x     = random(margin, width  - margin);
+    this.y     = random(margin, height - margin);
+    this.vx    = random(-0.6, 0.6);
+    this.vy    = random(-0.6, 0.6);
+    this.ax    = 0;
+    this.ay    = 0;
+    this.phase = random(TWO_PI);
+    this.omega = random(-CFG.freqSpread, CFG.freqSpread);
+    this.r     = manyMode ? CFG.radiusMany : CFG.radiusFew;
+    this._updateColor();
+  }
+
+  _updateColor() {
+    // Phase → hue within constrained range
+    const norm = (this.phase % TWO_PI) / TWO_PI; // 0–1
+    this.hue = map(norm, 0, 1, CFG.hueMin, CFG.hueMax);
+  }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function initParticles() {
+  particles = [];
+  const n = manyMode ? CFG.countMany : CFG.countFew;
+  for (let i = 0; i < n; i++) particles.push(new Particle());
+}
+
+function orderParameter() {
+  let sx = 0, sy = 0;
+  for (const p of particles) { sx += cos(p.phase); sy += sin(p.phase); }
+  return sqrt(sx * sx + sy * sy) / particles.length;
+}
+
+// ─── Sketch ───────────────────────────────────────────────────────────────────
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  colorMode(HSB, 360, 100, 100, 255);
+  initParticles();
+}
+
+function draw() {
+  // ── Background (BLEND mode so it dims properly) ────────────────────────────
+  blendMode(BLEND);
+  colorMode(RGB);
+  background(4, 5, 8, CFG.trailAlpha);
+
+  // ── Physics ────────────────────────────────────────────────────────────────
+  const n = particles.length;
+
+  // Reset accumulators
+  for (const p of particles) { p.ax = 0; p.ay = 0; p.dPhase = p.omega; }
+
+  // Pairwise: positional force + Kuramoto phase coupling
+  for (let i = 0; i < n; i++) {
+    const pi = particles[i];
+    for (let j = i + 1; j < n; j++) {
+      const pj  = particles[j];
+      const dx  = pj.x - pi.x;
+      const dy  = pj.y - pi.y;
+      const d2  = dx * dx + dy * dy;
+      if (d2 > CFG.interactDist * CFG.interactDist) continue;
+
+      const d  = sqrt(d2);
+      if (d < 0.01) continue;
+      const ux = dx / d;
+      const uy = dy / d;
+
+      const dPhase  = pj.phase - pi.phase;
+      const cosDp   = cos(dPhase);
+      const sinDp   = sin(dPhase);
+
+      // Positional force: cos(Δφ) determines sign
+      // Hard repulsion overrides at close range
+      let fMag;
+      if (d < CFG.repelDist) {
+        fMag = -CFG.forceScale / (d2 + 1);
+      } else {
+        fMag = cosDp * CFG.forceScale / (d2 + 80);
+      }
+      pi.ax += ux * fMag;  pi.ay += uy * fMag;
+      pj.ax -= ux * fMag;  pj.ay -= uy * fMag;
+
+      // Kuramoto: dθ/dt += K * sin(Δφ) * distance_weight
+      const w = 1 - d / CFG.interactDist;
+      const kf = CFG.coupling * sinDp * w;
+      pi.dPhase += kf;
+      pj.dPhase -= kf;
+    }
+  }
+
+  // Mouse influence (optional)
+  if (mouseOn && mouseX >= 0 && mouseX <= width) {
+    for (const p of particles) {
+      const dx = mouseX - p.x;
+      const dy = mouseY - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > CFG.mouseRadius * CFG.mouseRadius) continue;
+      const d = sqrt(d2);
+      if (d < 0.5) continue;
+      const w = 1 - d / CFG.mouseRadius;
+      // Phase coupling toward mouse phase = 0
+      p.dPhase += CFG.mouseCoupling * sin(-p.phase) * w;
+      // Positional pull
+      p.ax += (dx / d) * CFG.mouseAttract * w;
+      p.ay += (dy / d) * CFG.mouseAttract * w;
+    }
+  }
+
+  // Integrate
+  for (const p of particles) {
+    p.vx = (p.vx + p.ax) * CFG.friction;
+    p.vy = (p.vy + p.ay) * CFG.friction;
+
+    // Speed cap
+    const spd = sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (spd > CFG.maxSpeed) {
+      p.vx = (p.vx / spd) * CFG.maxSpeed;
+      p.vy = (p.vy / spd) * CFG.maxSpeed;
+    }
+
+    p.x += p.vx;
+    p.y += p.vy;
+
+    // Wrap edges
+    if (p.x < 0)       p.x += width;
+    if (p.x > width)   p.x -= width;
+    if (p.y < 0)       p.y += height;
+    if (p.y > height)  p.y -= height;
+
+    // Phase update
+    p.phase = (p.phase + p.dPhase + TWO_PI) % TWO_PI;
+    p._updateColor();
+  }
+
+  // Cyclic mode: scatter when system locks
+  const order = orderParameter();
+  if (cyclic && order > CFG.cyclicOrder) {
+    for (const p of particles) {
+      p.phase = (p.phase + random(-CFG.cyclicNoise, CFG.cyclicNoise) + TWO_PI) % TWO_PI;
+      p.vx += random(-0.8, 0.8);
+      p.vy += random(-0.8, 0.8);
+    }
+  }
+
+  // ── Draw (ADD for glow) ────────────────────────────────────────────────────
+  blendMode(ADD);
+  colorMode(HSB, 360, 100, 100, 255);
+  noStroke();
+
+  for (const p of particles) {
+    const spd = sqrt(p.vx * p.vx + p.vy * p.vy);
+    const bri = map(spd, 0, CFG.maxSpeed, CFG.briMin, CFG.briMax);
+
+    // Outer glow
+    fill(p.hue, CFG.sat * 0.7, bri * 0.7, 45);
+    circle(p.x, p.y, p.r * 3.8);
+
+    // Core
+    fill(p.hue, CFG.sat * 0.4, 98, 200);
+    circle(p.x, p.y, p.r);
+  }
+
+  // ── State display ──────────────────────────────────────────────────────────
+  if (frameCount % 20 === 0) {
+    const mStr = manyMode ? 'MANY' : 'FEW';
+    const cStr = cyclic   ? 'CYCLIC' : 'ATTRACTOR';
+    const iStr = mouseOn  ? ' · MOUSE' : '';
+    stateEl.textContent =
+      `K: ${CFG.coupling.toFixed(2)} · ORDER: ${order.toFixed(2)} · ${mStr} · ${cStr}${iStr}`;
+  }
+}
+
+// ─── Controls ─────────────────────────────────────────────────────────────────
+function keyPressed() {
+  const k = key.toLowerCase();
+  if (key === '+' || key === '=') CFG.coupling = min(CFG.couplingMax, CFG.coupling + CFG.couplingStep);
+  if (key === '-' || key === '_') CFG.coupling = max(0, CFG.coupling - CFG.couplingStep);
+  if (k === 'm') { manyMode = !manyMode; initParticles(); }
+  if (k === 'c') cyclic   = !cyclic;
+  if (k === 'i') mouseOn  = !mouseOn;
+  if (k === 'r') initParticles();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+}
+</script>
+</body>
+</html>
