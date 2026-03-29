@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chromatic Order</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #03040a; overflow: hidden; }
+    canvas { display: block; }
+    #hint {
+      position: fixed; top: 14px; left: 20px;
+      color: rgba(150,158,210,0.26);
+      font: 10px/2 monospace; letter-spacing: 0.07em;
+      pointer-events: none;
+    }
+    #state {
+      position: fixed; bottom: 16px; left: 50%;
+      transform: translateX(-50%);
+      color: rgba(150,158,210,0.38);
+      font: 11px/1 monospace; letter-spacing: 0.10em;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<div id="hint">
+  +/−&nbsp;&nbsp;coupling &nbsp;|&nbsp; M many/few &nbsp;|&nbsp; C cyclic &nbsp;|&nbsp; I mouse &nbsp;|&nbsp; R reset<br>
+  N connections &nbsp;|&nbsp; T trails &nbsp;|&nbsp; space pulse &nbsp;|&nbsp; right-click anchor &nbsp;(shift=permanent) &nbsp;|&nbsp; A clear
+</div>
+<div id="state">K: 0.80 · ORDER: 0.00 · FEW</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const CFG = {
+  countMany:      300,
+  countFew:       60,
+  radiusMany:     2.5,
+  radiusFew:      8.0,
+
+  // Kuramoto physics
+  coupling:       0.80,
+  couplingStep:   0.05,
+  couplingMax:    2.0,
+  freqSpread:     0.012,
+  forceScale:     5000,
+  repelDist:      18,
+  friction:       0.90,
+  maxSpeed:       4.5,
+  interactDist:   150,
+
+  // Cyclic mode
+  cyclicOrder:    0.88,
+  cyclicNoise:    1.1,
+
+  // Mouse coupling
+  mouseRadius:    110,
+  mouseCoupling:  0.5,
+  mouseAttract:   0.25,
+
+  // Anchors
+  anchorRadius:   130,
+  anchorCoupling: 1.2,
+  anchorAttract:  0.35,
+  anchorDriftAmp: 0.10,
+  anchorLife:     900,  // frames (~15s at 60fps)
+
+  // Connections (always visible, pulsing)
+  connCosThresh:  0.50,   // draw line when cos(Δφ) > this
+  connMaxDist:    180,    // only in FEW mode (avoids O(n²) density)
+  connPulse:      0.046,
+
+  // Trails
+  trailLen:       10,
+
+  // Color: gray when chaotic → vivid when synchronized
+  satMax:         88,
+  satGray:        5,
+  briMax:         92,
+  briMin:         40,
+  localSyncSmooth:0.06,
+
+  // Phase portrait
+  portraitR:      55,
+
+  trailAlpha:     22,
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let particles  = [];
+let anchors    = [];     // { x, y, vx, vy, phase, permanent, life }
+let nearPairs  = [];     // populated during physics for connection drawing
+let manyMode   = false;
+let cyclic     = false;
+let mouseOn    = false;
+let showConns  = true;
+let showTrails = true;
+const stateEl  = document.getElementById('state');
+
+// ─── Particle class ───────────────────────────────────────────────────────────
+class Particle {
+  constructor() { this.init(); }
+
+  init() {
+    const mg      = 60;
+    this.x        = random(mg, width  - mg);
+    this.y        = random(mg, height - mg);
+    this.vx       = random(-0.6, 0.6);
+    this.vy       = random(-0.6, 0.6);
+    this.ax       = 0; this.ay = 0;
+    this.phase    = random(TWO_PI);
+    this.omega    = random(-CFG.freqSpread, CFG.freqSpread);
+    this.dPhase   = 0;
+    this.r        = manyMode ? CFG.radiusMany : CFG.radiusFew;
+    this.localOrder = 0;
+    this.syncSum  = 0;
+    this.syncCount = 0;
+    this.trail    = [];
+    this._updateColor();
+  }
+
+  _updateColor() {
+    // Hue from phase (full rainbow)
+    this.hue = ((this.phase % TWO_PI + TWO_PI) % TWO_PI) / TWO_PI * 360;
+    // Saturation + brightness driven by local synchronization
+    const s      = constrain(this.localOrder, 0, 1);
+    this.sat     = map(s, 0, 1, CFG.satGray,  CFG.satMax);
+    this.bri     = map(s, 0, 1, CFG.briMin,   CFG.briMax);
+  }
+}
+
+// ─── Init / helpers ───────────────────────────────────────────────────────────
+function initParticles() {
+  particles = [];
+  const n = manyMode ? CFG.countMany : CFG.countFew;
+  for (let i = 0; i < n; i++) particles.push(new Particle());
+  nearPairs = [];
+}
+
+function orderParameter() {
+  let sx = 0, sy = 0;
+  for (const p of particles) { sx += cos(p.phase); sy += sin(p.phase); }
+  return sqrt(sx * sx + sy * sy) / particles.length;
+}
+
+// ─── Physics ──────────────────────────────────────────────────────────────────
+function updatePhysics() {
+  const n = particles.length;
+  nearPairs = [];
+
+  for (const p of particles) {
+    p.ax = 0; p.ay = 0;
+    p.dPhase   = p.omega;
+    p.syncSum  = 0;
+    p.syncCount = 0;
+  }
+
+  // Pairwise: positional force + Kuramoto coupling
+  for (let i = 0; i < n; i++) {
+    const pi = particles[i];
+    for (let j = i + 1; j < n; j++) {
+      const pj = particles[j];
+      const dx = pj.x - pi.x;
+      const dy = pj.y - pi.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > CFG.interactDist * CFG.interactDist) continue;
+      const d = sqrt(d2);
+      if (d < 0.01) continue;
+      const ux = dx / d, uy = dy / d;
+
+      const dPhase = pj.phase - pi.phase;
+      const cosDP  = cos(dPhase);
+      const sinDP  = sin(dPhase);
+
+      // Positional force: cos(Δφ) sign determines attract/repel
+      let fMag;
+      if (d < CFG.repelDist) {
+        fMag = -CFG.forceScale / (d2 + 1);
+      } else {
+        fMag = cosDP * CFG.forceScale / (d2 + 80);
+      }
+      pi.ax += ux * fMag;  pi.ay += uy * fMag;
+      pj.ax -= ux * fMag;  pj.ay -= uy * fMag;
+
+      // Kuramoto: dθ/dt += K·sin(Δφ)·w
+      const w  = 1 - d / CFG.interactDist;
+      const kf = CFG.coupling * sinDP * w;
+      pi.dPhase += kf;
+      pj.dPhase -= kf;
+
+      // Local sync accumulation (for color)
+      pi.syncSum += cosDP; pi.syncCount++;
+      pj.syncSum += cosDP; pj.syncCount++;
+
+      // Connection pairs (FEW mode only — manageable at 60 particles)
+      if (!manyMode && cosDP > CFG.connCosThresh && d < CFG.connMaxDist) {
+        nearPairs.push({ xi: pi.x, yi: pi.y, xj: pj.x, yj: pj.y,
+                         hi: pi.hue, hj: pj.hue, si: pi.sat, sj: pj.sat, cosDP });
+      }
+    }
+  }
+
+  // Mouse coupling
+  if (mouseOn && mouseX >= 0 && mouseX <= width) {
+    for (const p of particles) {
+      const dx = mouseX - p.x, dy = mouseY - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > CFG.mouseRadius * CFG.mouseRadius) continue;
+      const d = sqrt(d2);
+      if (d < 0.5) continue;
+      const w = 1 - d / CFG.mouseRadius;
+      p.dPhase += CFG.mouseCoupling * sin(-p.phase) * w;
+      p.ax     += (dx / d) * CFG.mouseAttract * w;
+      p.ay     += (dy / d) * CFG.mouseAttract * w;
+    }
+  }
+
+  // Anchor coupling + attract
+  for (const a of anchors) {
+    for (const p of particles) {
+      const dx = a.x - p.x, dy = a.y - p.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 > CFG.anchorRadius * CFG.anchorRadius) continue;
+      const d = sqrt(d2);
+      if (d < 0.5) continue;
+      const w = 1 - d / CFG.anchorRadius;
+      p.dPhase += CFG.anchorCoupling * sin(a.phase - p.phase) * w;
+      p.ax     += (dx / d) * CFG.anchorAttract * w;
+      p.ay     += (dy / d) * CFG.anchorAttract * w;
+    }
+  }
+
+  // Integrate
+  for (const p of particles) {
+    p.vx = (p.vx + p.ax) * CFG.friction;
+    p.vy = (p.vy + p.ay) * CFG.friction;
+    const spd = sqrt(p.vx * p.vx + p.vy * p.vy);
+    if (spd > CFG.maxSpeed) {
+      p.vx = (p.vx / spd) * CFG.maxSpeed;
+      p.vy = (p.vy / spd) * CFG.maxSpeed;
+    }
+
+    // Trail history
+    if (showTrails) {
+      p.trail.push({ x: p.x, y: p.y });
+      if (p.trail.length > CFG.trailLen) p.trail.shift();
+    }
+
+    p.x += p.vx;
+    p.y += p.vy;
+    // Wrap edges
+    if (p.x < 0)       p.x += width;
+    if (p.x > width)   p.x -= width;
+    if (p.y < 0)       p.y += height;
+    if (p.y > height)  p.y -= height;
+
+    p.phase = (p.phase + p.dPhase + TWO_PI * 4) % TWO_PI;
+
+    // Smooth local order (drives saturation/brightness)
+    const raw     = p.syncCount > 0 ? p.syncSum / p.syncCount : 0;
+    p.localOrder  = lerp(p.localOrder, raw, CFG.localSyncSmooth);
+    p._updateColor();
+  }
+
+  // Cyclic: scatter when locked
+  const order = orderParameter();
+  if (cyclic && order > CFG.cyclicOrder) {
+    for (const p of particles) {
+      p.phase = (p.phase + random(-CFG.cyclicNoise, CFG.cyclicNoise) + TWO_PI * 2) % TWO_PI;
+      p.vx += random(-0.8, 0.8);
+      p.vy += random(-0.8, 0.8);
+    }
+  }
+}
+
+// ─── Anchor update ────────────────────────────────────────────────────────────
+function updateAnchors() {
+  for (let i = anchors.length - 1; i >= 0; i--) {
+    const a     = anchors[i];
+    // Perlin-noise drift for organic wandering
+    const angle = noise(i * 17.3, frameCount * 0.0028) * TWO_PI * 2;
+    a.vx = a.vx * 0.91 + cos(angle) * CFG.anchorDriftAmp;
+    a.vy = a.vy * 0.91 + sin(angle) * CFG.anchorDriftAmp;
+    a.x  = constrain(a.x + a.vx, 55, width  - 55);
+    a.y  = constrain(a.y + a.vy, 55, height - 55);
+    if (!a.permanent) {
+      a.life--;
+      if (a.life <= 0) { anchors.splice(i, 1); continue; }
+    }
+  }
+}
+
+// ─── Drawing ──────────────────────────────────────────────────────────────────
+function drawConnections() {
+  if (!showConns || nearPairs.length === 0) return;
+  blendMode(BLEND);
+  colorMode(HSB, 360, 100, 100, 255);
+  noFill();
+  strokeWeight(0.85);
+  const pulse = 0.62 + 0.38 * sin(frameCount * CFG.connPulse);
+  for (const { xi, yi, xj, yj, hi, hj, si, sj, cosDP } of nearPairs) {
+    const avgH = (hi + hj) * 0.5;
+    const avgS = (si + sj) * 0.5;
+    // Alpha: faint when barely sync, vivid when locked; sat tracks particle sync
+    const a = map(cosDP, CFG.connCosThresh, 1, 5, 55) * pulse;
+    stroke(avgH, avgS * 0.72, 82, a);
+    line(xi, yi, xj, yj);
+  }
+  noStroke();
+}
+
+function drawTrails() {
+  if (!showTrails) return;
+  blendMode(BLEND);
+  colorMode(HSB, 360, 100, 100, 255);
+  noFill();
+  strokeWeight(0.9);
+  for (const p of particles) {
+    if (p.trail.length < 2) continue;
+    for (let i = 0; i < p.trail.length - 1; i++) {
+      const t = i / p.trail.length;
+      stroke(p.hue, p.sat * 0.78, p.bri * 0.72, map(t, 0, 1, 0, 26));
+      line(p.trail[i].x, p.trail[i].y, p.trail[i+1].x, p.trail[i+1].y);
+    }
+  }
+  noStroke();
+}
+
+function drawParticles() {
+  blendMode(ADD);
+  colorMode(HSB, 360, 100, 100, 255);
+  noStroke();
+  const glowR  = manyMode ? 3.2 : 4.8;
+  const glowA  = manyMode ? 32  : 48;
+  const coreA  = manyMode ? 150 : 205;
+
+  for (const p of particles) {
+    const spd  = sqrt(p.vx * p.vx + p.vy * p.vy);
+    const bri  = map(spd, 0, CFG.maxSpeed, p.bri * 0.78, p.bri);
+    // Outer glow
+    fill(p.hue, p.sat * 0.62, bri * 0.68, glowA);
+    circle(p.x, p.y, p.r * glowR);
+    // Inner glow
+    fill(p.hue, p.sat * 0.38, bri * 0.88, glowA * 0.52);
+    circle(p.x, p.y, p.r * glowR * 0.5);
+    // Core
+    fill(p.hue, p.sat * 0.20, 98, coreA);
+    circle(p.x, p.y, p.r);
+  }
+}
+
+function drawAnchors() {
+  // Phase 1: ADD glow
+  blendMode(ADD);
+  colorMode(HSB, 360, 100, 100, 255);
+  noStroke();
+  for (const a of anchors) {
+    const h     = (a.phase / TWO_PI) * 360;
+    const pulse = 0.58 + 0.42 * sin(frameCount * 0.07 + a.phase);
+    const fade  = a.permanent ? 1 : constrain(a.life / (CFG.anchorLife * 0.25), 0, 1);
+    fill(h, 62, 82, 22 * pulse * fade);
+    circle(a.x, a.y, CFG.anchorRadius * 1.5);
+    fill(h, 52, 95, 55 * pulse);
+    circle(a.x, a.y, 22);
+    fill(h, 22, 99, 205);
+    circle(a.x, a.y, 8);
+  }
+
+  // Phase 2: BLEND mode rings — permanent vs decaying
+  blendMode(BLEND);
+  colorMode(HSB, 360, 100, 100, 255);
+  noFill();
+  for (const a of anchors) {
+    const h     = (a.phase / TWO_PI) * 360;
+    const pulse = 0.58 + 0.42 * sin(frameCount * 0.07 + a.phase);
+    if (a.permanent) {
+      stroke(h, 48, 78, 62 * pulse);
+      strokeWeight(1.5);
+      circle(a.x, a.y, 28);
+    } else {
+      // Shrinking arc shows remaining life
+      stroke(h, 40, 68, 48);
+      strokeWeight(1.2);
+      const arc_end = map(a.life, 0, CFG.anchorLife, 0, TWO_PI);
+      arc(a.x, a.y, 28, 28, -HALF_PI, -HALF_PI + arc_end);
+    }
+  }
+  noStroke();
+}
+
+function drawPhasePortrait() {
+  blendMode(BLEND);
+  const cx = width  - 90;
+  const cy = height - 90;
+  const r  = CFG.portraitR;
+
+  // Background
+  colorMode(RGB);
+  fill(8, 10, 18, 215);
+  noStroke();
+  circle(cx, cy, r * 2 + 10);
+
+  // Border ring
+  stroke(42, 50, 78, 68);
+  strokeWeight(0.8);
+  noFill();
+  circle(cx, cy, r * 2);
+
+  // Axis cross
+  stroke(28, 35, 55, 48);
+  strokeWeight(0.5);
+  line(cx - r * 0.82, cy, cx + r * 0.82, cy);
+  line(cx, cy - r * 0.82, cx, cy + r * 0.82);
+  noStroke();
+
+  // Particle phase dots — always colorful (shows raw phase even when desync)
+  colorMode(HSB, 360, 100, 100, 255);
+  for (const p of particles) {
+    const px = cx + r * 0.65 * cos(p.phase);
+    const py = cy + r * 0.65 * sin(p.phase);
+    fill(p.hue, max(p.sat, 42), 88, 168);
+    circle(px, py, 2.5);
+  }
+
+  // Order readout
+  colorMode(RGB);
+  noStroke();
+  fill(115, 128, 172, 88);
+  textAlign(CENTER, CENTER);
+  textSize(9);
+  text(orderParameter().toFixed(2), cx, cy);
+}
+
+// ─── Sketch ───────────────────────────────────────────────────────────────────
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  colorMode(HSB, 360, 100, 100, 255);
+  initParticles();
+}
+
+function draw() {
+  updatePhysics();
+  updateAnchors();
+
+  // Background trail
+  blendMode(BLEND);
+  colorMode(RGB);
+  background(3, 4, 10, CFG.trailAlpha);
+
+  drawConnections();
+  drawTrails();
+  drawParticles();
+  if (anchors.length > 0) drawAnchors();
+  drawPhasePortrait();
+
+  // State display (update every 20 frames)
+  if (frameCount % 20 === 0) {
+    const order = orderParameter();
+    const mStr  = manyMode ? 'MANY' : 'FEW';
+    const cStr  = cyclic   ? ' · CYCLIC' : '';
+    const iStr  = mouseOn  ? ' · MOUSE'  : '';
+    const aStr  = anchors.length > 0 ? ` · anchors: ${anchors.length}` : '';
+    stateEl.textContent = `K: ${CFG.coupling.toFixed(2)} · ORDER: ${order.toFixed(2)} · ${mStr}${cStr}${iStr}${aStr}`;
+  }
+}
+
+// ─── Controls ─────────────────────────────────────────────────────────────────
+function mousePressed() {
+  if (mouseButton === RIGHT) {
+    anchors.push({
+      x: mouseX, y: mouseY,
+      vx: 0, vy: 0,
+      phase: random(TWO_PI),
+      permanent: keyIsDown(SHIFT),
+      life: CFG.anchorLife,
+    });
+  }
+}
+
+function keyPressed() {
+  const k = key.toLowerCase();
+  if (key === '+' || key === '=') CFG.coupling = min(CFG.couplingMax, CFG.coupling + CFG.couplingStep);
+  if (key === '-' || key === '_') CFG.coupling = max(0, CFG.coupling - CFG.couplingStep);
+  if (k === 'm') { manyMode = !manyMode; initParticles(); }
+  if (k === 'c') cyclic     = !cyclic;
+  if (k === 'i') mouseOn    = !mouseOn;
+  if (k === 'r') initParticles();
+  if (k === 'n') showConns  = !showConns;
+  if (k === 't') showTrails = !showTrails;
+  if (k === 'a') anchors    = [];
+  if (key === ' ') {
+    // Pulse: shatter synchronization → watch it reconverge
+    for (const p of particles) {
+      p.phase = (p.phase + random(-TWO_PI * 0.92, TWO_PI * 0.92) + TWO_PI * 4) % TWO_PI;
+      p.vx   += random(-1.8, 1.8);
+      p.vy   += random(-1.8, 1.8);
+    }
+  }
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+}
+</script>
+</body>
+</html>

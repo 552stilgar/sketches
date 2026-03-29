@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Void Filament</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #040308; overflow: hidden; }
+    canvas { display: block; }
+    #hint {
+      position: fixed; top: 14px; left: 50%;
+      transform: translateX(-50%);
+      color: rgba(155,150,205,0.22);
+      font: 10px/1.8 monospace; letter-spacing: 0.07em;
+      text-align: center; pointer-events: none;
+    }
+    #mode {
+      position: fixed; bottom: 16px; right: 20px;
+      color: rgba(155,150,205,0.38);
+      font: 12px/1 monospace; letter-spacing: 0.12em;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<div id="hint">
+  left-drag · warp membrane &nbsp;|&nbsp; 1 repel &nbsp; 2 attract &nbsp; 3 vortex<br>
+  right-click · drop anchor &nbsp;|&nbsp; A clear &nbsp;|&nbsp; H membrane &nbsp;|&nbsp; F freeze &nbsp;|&nbsp; space burst
+</div>
+<div id="mode">REPEL</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const CFG = {
+  count:        1100,
+  maxAnchors:   6,
+
+  // Membrane
+  memPoints:    80,
+  memAmp:       78,
+  memNoise:     0.021,
+  memTime:      0.00048,
+  memSpring:    0.050,
+  memDamp:      0.81,
+  memDragR:     88,
+  memDragStr:   0.15,
+  memWeightStr: 0.11,   // particle-proximity push on membrane
+
+  // Particles
+  baseSpeed:    0.65,
+  speedVar:     0.55,
+  accelRate:    0.018,
+  accelCurve:   1.90,
+  vxDamp:       0.965,
+  maxLifeLo:    90,
+  maxLifeHi:    210,
+
+  // Forces
+  repelR:       95,  repelStr:  3.6,
+  attractR:     125, attractStr:3.0,
+  vortexR:      110, vortexStr: 2.8,
+  anchorMult:   0.60,   // anchors slightly weaker than cursor
+
+  // Render
+  minSz:        0.9,
+  maxSz:        5.8,
+  trailAlpha:   13,
+
+  // Color — void duality
+  hueAbove:     188,   // cyan-blue (going up)
+  hueBelow:     308,   // hot magenta (going down)
+  hueSpread:    18,
+  satMin:       72,
+  satMax:       92,
+
+  showMem:      true,
+};
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let mem        = [];
+let memVel     = [];
+let memT       = 0;
+let particles  = [];
+let anchors    = [];   // { x, y, mode, seed }
+let mode       = 'repel';
+let frozen     = false;
+let isDragging = false;
+const modeEl   = document.getElementById('mode');
+
+// ─── Membrane helpers ─────────────────────────────────────────────────────────
+function getMemY(x) {
+  const t = constrain(x / width, 0, 1) * (CFG.memPoints - 1);
+  const i = floor(t);
+  const f = t - i;
+  return lerp(
+    mem[constrain(i,   0, mem.length - 1)],
+    mem[constrain(i+1, 0, mem.length - 1)],
+    f
+  );
+}
+
+function memNormalAt(x) {
+  const eps = width / (CFG.memPoints - 1);
+  const dy  = getMemY(x + eps * 0.5) - getMemY(x - eps * 0.5);
+  const len = sqrt(dy * dy + eps * eps);
+  return { x: -dy / len, y: eps / len };  // y component always positive (downward)
+}
+
+function updateMembrane() {
+  memT++;
+  for (let i = 0; i < CFG.memPoints; i++) {
+    const n      = noise(i * CFG.memNoise, memT * CFG.memTime);
+    const target = height * 0.5 + map(n, 0, 1, -CFG.memAmp, CFG.memAmp);
+    const delta  = target - mem[i];
+    memVel[i]    = memVel[i] * CFG.memDamp + delta * CFG.memSpring;
+    mem[i]      += memVel[i];
+  }
+}
+
+// Particles disturb the membrane they flow through
+function applyParticleWeight() {
+  for (const p of particles) {
+    if (p.x < 0 || p.x > width) continue;
+    const mi   = constrain(floor(p.x / width * (CFG.memPoints - 1)), 0, CFG.memPoints - 2);
+    const dist = p.y - mem[mi];
+    if (abs(dist) < 22) {
+      const push = Math.sign(dist) * (1 - abs(dist) / 22) * CFG.memWeightStr;
+      memVel[mi]     += push;
+      memVel[mi + 1] += push * 0.45;
+    }
+  }
+}
+
+function warpMembrane(mx, my) {
+  for (let i = 0; i < CFG.memPoints; i++) {
+    const px = (i / (CFG.memPoints - 1)) * width;
+    const d  = abs(px - mx);
+    if (d >= CFG.memDragR) continue;
+    const w    = 1 - d / CFG.memDragR;
+    const pull = (my - mem[i]) * CFG.memDragStr * w * w;
+    mem[i]    += pull;
+    memVel[i] += pull * 0.22;
+  }
+}
+
+function drawMembrane() {
+  colorMode(HSB, 360, 100, 100, 255);
+  noFill();
+  // Soft outer glow
+  strokeWeight(8);
+  for (let i = 0; i < CFG.memPoints - 1; i++) {
+    const x1 = i       / (CFG.memPoints - 1) * width;
+    const x2 = (i + 1) / (CFG.memPoints - 1) * width;
+    stroke(270, 40, 60, 9);
+    line(x1, mem[i], x2, mem[i + 1]);
+  }
+  // Crisp inner seam
+  strokeWeight(1.4);
+  for (let i = 0; i < CFG.memPoints - 1; i++) {
+    const x1 = i       / (CFG.memPoints - 1) * width;
+    const x2 = (i + 1) / (CFG.memPoints - 1) * width;
+    stroke(270, 22, 92, 50);
+    line(x1, mem[i], x2, mem[i + 1]);
+  }
+  noStroke();
+}
+
+// ─── Particle ─────────────────────────────────────────────────────────────────
+class Particle {
+  constructor() { this.spawn(true); }
+
+  spawn(stagger = false) {
+    this.spawnX  = random(width);
+    const my     = getMemY(this.spawnX);
+    this.x       = this.spawnX + random(-2, 2);
+    this.y       = my + random(-2, 2);
+    this.dir     = random() < 0.5 ? -1 : 1;
+    const norm   = memNormalAt(this.spawnX);
+    // dir=-1 → above membrane (up = negative y), dir=+1 → below (down)
+    this.vx      = norm.x * this.dir * 0.45 + random(-0.3, 0.3);
+    this.vy      = norm.y * this.dir * (CFG.baseSpeed + random(CFG.speedVar));
+    this.maxLife = floor(random(CFG.maxLifeLo, CFG.maxLifeHi));
+    this.life    = stagger ? floor(random(this.maxLife)) : 0;
+    const baseH  = this.dir < 0 ? CFG.hueAbove : CFG.hueBelow;
+    this.hue     = (baseH + random(-CFG.hueSpread, CFG.hueSpread) + 360) % 360;
+    this.sat     = random(CFG.satMin, CFG.satMax);
+    this.sz      = 0;
+    this.alpha   = 0;
+  }
+
+  _applyForce(ax, ay, amode, isAnchor = false) {
+    const m  = isAnchor ? CFG.anchorMult : 1.0;
+    const dx = this.x - ax;
+    const dy = this.y - ay;
+    const d2 = dx * dx + dy * dy;
+    const d  = sqrt(d2);
+
+    if (amode === 'repel' && d < CFG.repelR && d > 0.01) {
+      const f = ((CFG.repelR - d) / CFG.repelR) * CFG.repelStr * m;
+      this.vx += (dx / d) * f;
+      this.vy += (dy / d) * f;
+
+    } else if (amode === 'attract' && d < CFG.attractR && d > 0.01) {
+      const f = ((CFG.attractR - d) / CFG.attractR) * CFG.attractStr * m;
+      this.vx -= (dx / d) * f;
+      this.vy -= (dy / d) * f;
+
+    } else if (amode === 'vortex' && d < CFG.vortexR && d > 0.01) {
+      // Tangential (CCW) + 30% inward spiral
+      const fo = (1 - d / CFG.vortexR) * CFG.vortexStr * m;
+      this.vx += (-dy / d - (dx / d) * 0.30) * fo;
+      this.vy += ( dx / d - (dy / d) * 0.30) * fo;
+    }
+  }
+
+  update(mx, my) {
+    this.life++;
+
+    // Outward acceleration from membrane
+    const memY = getMemY(this.x);
+    const dist = abs(this.y - memY);
+    const t    = constrain(dist / (height * 0.42), 0, 1);
+    this.vy   += this.dir * CFG.accelRate * pow(t, CFG.accelCurve) * (1 + t * 2.5);
+
+    // Cursor force
+    this._applyForce(mx, my, mode);
+
+    // Dropped anchor forces
+    for (const anc of anchors) {
+      this._applyForce(anc.x, anc.y, anc.mode, true);
+    }
+
+    this.vx *= CFG.vxDamp;
+    this.x  += this.vx;
+    this.y  += this.vy;
+
+    this.sz    = map(t, 0, 1, CFG.minSz, CFG.maxSz);
+    const fade = 1 - this.life / this.maxLife;
+    this.alpha = constrain(map(t, 0, 0.18, 0, 215), 0, 215) * fade;
+  }
+
+  isDead() {
+    return this.life >= this.maxLife
+        || this.y < -28 || this.y > height + 28
+        || this.x < -28 || this.x > width  + 28;
+  }
+
+  draw() {
+    if (this.alpha < 1) return;
+    const a = this.alpha, h = this.hue, s = this.sat, z = this.sz;
+    // Halo (large, very dim)
+    fill(h, s * 0.38, 68, a * 0.05);
+    circle(this.x, this.y, z * 6.5);
+    // Glow
+    fill(h, s * 0.62, 86, a * 0.19);
+    circle(this.x, this.y, z * 2.7);
+    // Core (near-white sharp point)
+    fill(h, s * 0.20, 99, a * 0.82);
+    circle(this.x, this.y, z * 0.72);
+  }
+}
+
+// ─── Anchor rendering ─────────────────────────────────────────────────────────
+const ANCHOR_HUE = { repel: 188, attract: 308, vortex: 270 };
+const ANCHOR_LBL = { repel: 'R', attract: 'A', vortex: 'V' };
+
+function drawAnchors() {
+  colorMode(HSB, 360, 100, 100, 255);
+  noStroke();
+  for (const anc of anchors) {
+    const h     = ANCHOR_HUE[anc.mode];
+    const pulse = 0.58 + 0.42 * sin(frameCount * 0.07 + anc.seed);
+    // Outer halo
+    fill(h, 55, 75, 20 * pulse);
+    circle(anc.x, anc.y, 64);
+    // Ring
+    fill(h, 50, 95, 52 * pulse);
+    circle(anc.x, anc.y, 16);
+    // Core
+    fill(h, 18, 99, 210);
+    circle(anc.x, anc.y, 5.5);
+  }
+  // Labels in BLEND mode
+  blendMode(BLEND);
+  colorMode(RGB);
+  textAlign(CENTER, CENTER);
+  textSize(9);
+  noStroke();
+  for (const anc of anchors) {
+    fill(170, 165, 215, 105);
+    text(ANCHOR_LBL[anc.mode], anc.x, anc.y - 14);
+  }
+}
+
+// ─── Sketch ───────────────────────────────────────────────────────────────────
+function setup() {
+  createCanvas(windowWidth, windowHeight);
+  colorMode(HSB, 360, 100, 100, 255);
+  noiseSeed(floor(random(9999)));
+  for (let i = 0; i < CFG.memPoints; i++) { mem[i] = height * 0.5; memVel[i] = 0; }
+  for (let i = 0; i < CFG.count; i++) particles.push(new Particle());
+}
+
+function draw() {
+  if (!frozen)    updateMembrane();
+  applyParticleWeight();
+  if (isDragging) warpMembrane(mouseX, mouseY);
+
+  // Trail fade (BLEND)
+  blendMode(BLEND);
+  colorMode(RGB);
+  background(4, 3, 8, CFG.trailAlpha);
+
+  // Particles — ADD blendMode for bloom
+  blendMode(ADD);
+  colorMode(HSB, 360, 100, 100, 255);
+  noStroke();
+  for (const p of particles) {
+    p.update(mouseX, mouseY);
+    if (p.isDead()) p.spawn(false);
+    p.draw();
+  }
+
+  // Anchors (ADD glow + BLEND labels — handled inside)
+  if (anchors.length > 0) drawAnchors();
+
+  // Membrane seam on top (ADD glow)
+  if (CFG.showMem) {
+    blendMode(ADD);
+    drawMembrane();
+  }
+
+  // Maintain particle count (burst particles die off naturally)
+  while (particles.length < CFG.count) particles.push(new Particle());
+  if (particles.length > CFG.count + 600) particles.length = CFG.count + 300;
+}
+
+// ─── Interaction ──────────────────────────────────────────────────────────────
+function mousePressed() {
+  if (mouseButton === LEFT)  isDragging = true;
+  if (mouseButton === RIGHT && anchors.length < CFG.maxAnchors) {
+    anchors.push({ x: mouseX, y: mouseY, mode, seed: random(TWO_PI) });
+  }
+}
+function mouseReleased() { isDragging = false; }
+
+function keyPressed() {
+  if (key === '1') { mode = 'repel';   modeEl.textContent = 'REPEL';   }
+  if (key === '2') { mode = 'attract'; modeEl.textContent = 'ATTRACT'; }
+  if (key === '3') { mode = 'vortex';  modeEl.textContent = 'VORTEX';  }
+  const k = key.toLowerCase();
+  if (k === 'h') CFG.showMem = !CFG.showMem;
+  if (k === 'f') {
+    frozen = !frozen;
+    modeEl.textContent = mode.toUpperCase() + (frozen ? ' · FROZEN' : '');
+  }
+  if (k === 'a') anchors = [];
+  if (key === ' ') {
+    for (let i = 0; i < 300; i++) particles.push(new Particle());
+  }
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  for (let i = 0; i < CFG.memPoints; i++) { mem[i] = height * 0.5; memVel[i] = 0; }
+}
+</script>
+</body>
+</html>
