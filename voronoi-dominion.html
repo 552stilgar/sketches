@@ -12,20 +12,16 @@
     position: fixed;
     top: 16px;
     left: 16px;
-    color: #444;
     font-size: 11px;
     line-height: 2;
     pointer-events: none;
     user-select: none;
   }
 
-  #hud-state {
-    color: #666;
-    margin-bottom: 6px;
-  }
+  #hud-state { color: #888; margin-bottom: 8px; }
 
   #hud-keys {
-    color: #2a2a30;
+    color: #555;
     line-height: 1.9;
   }
 
@@ -45,28 +41,24 @@
   #panel.open { display: block; }
 
   #panel h3 {
-    color: #555;
+    color: #666;
     font-size: 11px;
     font-weight: normal;
     letter-spacing: 0.08em;
     margin-bottom: 20px;
   }
 
-  .param-block {
-    margin-bottom: 16px;
-  }
+  .param-block { margin-bottom: 16px; }
 
   .param-header {
     display: flex;
     justify-content: space-between;
-    color: #444;
+    color: #555;
     font-size: 11px;
     margin-bottom: 4px;
   }
 
-  .param-header .val {
-    color: #666;
-  }
+  .param-header .val { color: #888; }
 
   input[type=range] {
     width: 100%;
@@ -82,10 +74,12 @@
     <span id="hud-mode">mode · passive</span>
     &nbsp;&nbsp;
     <span id="hud-seeds">seeds · 16</span>
+    &nbsp;&nbsp;
+    <span id="hud-relax" style="color:#444">relax · off</span>
   </div>
   <div id="hud-keys">
-    h seeds &nbsp; e edges &nbsp; m mode<br>
-    + / − seeds &nbsp; p params &nbsp; r reset
+    h seeds &nbsp; e edges &nbsp; t trails &nbsp; m mode<br>
+    l lloyd &nbsp; + / − seeds &nbsp; p params &nbsp; r reset
   </div>
 </div>
 
@@ -104,20 +98,26 @@ const CFG = {
   mouseStrength:    1.5,      // px/frame force at distance 0
   wallMargin:       80,       // px from edge where soft push begins
   wallStrength:     1.8,      // push force magnitude
+  relaxStrength:    0.0,      // Lloyd centroid attraction (0 = off)
+  contestThreshold: 240,      // px — border glows below this seed distance
   showSeeds:        true,
   showEdges:        true,
+  showTrails:       true,
   mouseMode:        'passive',
 }
 
-const MODES = ['passive', 'attractor', 'repulsor', 'vortex']
+const MODES    = ['passive', 'attractor', 'repulsor', 'vortex']
+const TRAIL_LEN = 18
 
 const PARAMS = [
-  { key: 'driftSpeed',    label: 'drift speed',     min: 0.1,    max: 4.0,  step: 0.1,    fmt: v => v.toFixed(1) },
-  { key: 'noiseEvo',      label: 'field evolution', min: 0.0005, max: 0.01, step: 0.0005, fmt: v => v.toFixed(4) },
-  { key: 'mouseRadius',   label: 'mouse radius',    min: 30,     max: 400,  step: 10,     fmt: v => v.toFixed(0) },
-  { key: 'mouseStrength', label: 'mouse strength',  min: 0.1,    max: 5.0,  step: 0.1,    fmt: v => v.toFixed(1) },
-  { key: 'wallMargin',    label: 'wall margin',      min: 10,     max: 200,  step: 10,     fmt: v => v.toFixed(0) },
-  { key: 'wallStrength',  label: 'wall strength',    min: 0.1,    max: 5.0,  step: 0.1,    fmt: v => v.toFixed(1) },
+  { key: 'driftSpeed',        label: 'drift speed',       min: 0.1,  max: 4.0,  step: 0.1,    fmt: v => v.toFixed(1) },
+  { key: 'noiseEvo',          label: 'field evolution',   min: 0.0005, max: 0.01, step: 0.0005, fmt: v => v.toFixed(4) },
+  { key: 'relaxStrength',     label: 'lloyd relax',       min: 0.0,  max: 0.12, step: 0.005,  fmt: v => v.toFixed(3) },
+  { key: 'contestThreshold',  label: 'contest radius',    min: 60,   max: 500,  step: 20,     fmt: v => v.toFixed(0) },
+  { key: 'mouseRadius',       label: 'mouse radius',      min: 30,   max: 400,  step: 10,     fmt: v => v.toFixed(0) },
+  { key: 'mouseStrength',     label: 'mouse strength',    min: 0.1,  max: 5.0,  step: 0.1,    fmt: v => v.toFixed(1) },
+  { key: 'wallMargin',        label: 'wall margin',       min: 10,   max: 200,  step: 10,     fmt: v => v.toFixed(0) },
+  { key: 'wallStrength',      label: 'wall strength',     min: 0.1,  max: 5.0,  step: 0.1,    fmt: v => v.toFixed(1) },
 ]
 
 // Build slider panel
@@ -159,26 +159,40 @@ new p5(s => {
   let t = 0
   const hudMode  = document.getElementById('hud-mode')
   const hudSeeds = document.getElementById('hud-seeds')
+  const hudRelax = document.getElementById('hud-relax')
 
-  // Shoelace polygon area
   function polyArea(pts) {
-    let a = 0
-    const n = pts.length
+    let a = 0, n = pts.length
     for (let i = 0; i < n; i++) {
-      const [x1, y1] = pts[i]
-      const [x2, y2] = pts[(i + 1) % n]
+      const [x1, y1] = pts[i], [x2, y2] = pts[(i + 1) % n]
       a += x1 * y2 - x2 * y1
     }
     return Math.abs(a) / 2
   }
 
+  function polyCentroid(pts) {
+    return [
+      pts.reduce((s, [x]) => s + x, 0) / pts.length,
+      pts.reduce((s, [, y]) => s + y, 0) / pts.length
+    ]
+  }
+
+  // Scale polygon toward/away from its centroid
+  function scalePolyFromCenter(pts, cx, cy, scale) {
+    return pts.map(([x, y]) => [cx + (x - cx) * scale, cy + (y - cy) * scale])
+  }
+
   function makeSeed(x, y) {
+    const sx = x ?? Math.random() * s.width
+    const sy = y ?? Math.random() * s.height
     return {
-      x:   x ?? Math.random() * s.width,
-      y:   y ?? Math.random() * s.height,
-      ox:  Math.random() * 10000,   // independent noise coordinate x
-      oy:  Math.random() * 10000,   // independent noise coordinate y
-      hue: Math.random() * 360,     // identity color, fixed
+      x: sx, y: sy,
+      px: sx, py: sy,
+      vx: 0, vy: 0,
+      ox: Math.random() * 10000,
+      oy: Math.random() * 10000,
+      hue: Math.random() * 360,
+      trail: [],
     }
   }
 
@@ -198,20 +212,22 @@ new p5(s => {
 
   s.draw = () => {
     s.background('#060608')
-
     const W = s.width, H = s.height
     const mx = s.mouseX, my = s.mouseY
 
     // ── update seeds ──────────────────────────────────────────────────────
 
     for (const seed of seeds) {
-      // Noise drift — each seed has independent 1D offsets advancing over time
+      seed.px = seed.x
+      seed.py = seed.y
+
+      // Noise drift
       const nx = (s.noise(seed.ox, t) - 0.5) * 2
       const ny = (s.noise(seed.oy, t) - 0.5) * 2
       seed.x += nx * CFG.driftSpeed
       seed.y += ny * CFG.driftSpeed
 
-      // Soft wall — inward push proportional to incursion depth
+      // Soft wall
       const m = CFG.wallMargin, ws = CFG.wallStrength
       if (seed.x < m)     seed.x += ((m - seed.x) / m) * ws
       if (seed.x > W - m) seed.x -= ((seed.x - (W - m)) / m) * ws
@@ -220,31 +236,27 @@ new p5(s => {
 
       // Mouse influence
       if (CFG.mouseMode !== 'passive') {
-        const dx   = seed.x - mx
-        const dy   = seed.y - my
+        const dx = seed.x - mx, dy = seed.y - my
         const dist = Math.sqrt(dx * dx + dy * dy)
         if (dist > 0.5 && dist < CFG.mouseRadius) {
-          const falloff = (1 - dist / CFG.mouseRadius) * CFG.mouseStrength
+          const f = (1 - dist / CFG.mouseRadius) * CFG.mouseStrength
           const ux = dx / dist, uy = dy / dist
-          if (CFG.mouseMode === 'attractor') {
-            seed.x -= ux * falloff
-            seed.y -= uy * falloff
-          } else if (CFG.mouseMode === 'repulsor') {
-            seed.x += ux * falloff
-            seed.y += uy * falloff
-          } else if (CFG.mouseMode === 'vortex') {
-            // Tangential: rotate radius vector 90°
-            seed.x += -uy * falloff
-            seed.y +=  ux * falloff
-          }
+          if      (CFG.mouseMode === 'attractor') { seed.x -= ux * f; seed.y -= uy * f }
+          else if (CFG.mouseMode === 'repulsor')  { seed.x += ux * f; seed.y += uy * f }
+          else if (CFG.mouseMode === 'vortex')    { seed.x += -uy * f; seed.y += ux * f }
         }
       }
 
-      // Hard clamp
       seed.x = Math.max(1, Math.min(W - 1, seed.x))
       seed.y = Math.max(1, Math.min(H - 1, seed.y))
 
-      // Advance noise coordinates
+      seed.vx = seed.x - seed.px
+      seed.vy = seed.y - seed.py
+
+      // Trail ring buffer
+      seed.trail.push({ x: seed.x, y: seed.y })
+      if (seed.trail.length > TRAIL_LEN) seed.trail.shift()
+
       seed.ox += CFG.noiseEvo
       seed.oy += CFG.noiseEvo
     }
@@ -262,29 +274,62 @@ new p5(s => {
     const minA = Math.min(...validAreas) || 1
     const maxA = Math.max(...validAreas) || 1
 
-    // ── draw cells ────────────────────────────────────────────────────────
+    // ── Lloyd relaxation (nudge seeds toward cell centroids) ───────────────
+    // Applies after Voronoi computed, takes effect next frame.
+    // Creates tension between noise drift (wants chaos) and Lloyd (wants order).
+    if (CFG.relaxStrength > 0) {
+      for (let i = 0; i < seeds.length; i++) {
+        const poly = polys[i]
+        if (poly.length < 3) continue
+        const [cx, cy] = polyCentroid(poly)
+        seeds[i].x += (cx - seeds[i].x) * CFG.relaxStrength
+        seeds[i].y += (cy - seeds[i].y) * CFG.relaxStrength
+      }
+    }
 
+    // ── Helper: saturation for seed i ────────────────────────────────────
+    function seedSat(i) {
+      const normA = maxA > minA ? (areas[i] - minA) / (maxA - minA) : 0.5
+      return s.map(normA, 0, 1, 80, 20)
+    }
+
+    // ── Cell fills ────────────────────────────────────────────────────────
     s.noStroke()
     for (let i = 0; i < seeds.length; i++) {
       const poly = polys[i]
       if (poly.length < 3) continue
-
-      // Normalize area 0→1 (0 = smallest, 1 = largest)
-      const normA = maxA > minA ? (areas[i] - minA) / (maxA - minA) : 0.5
-      // Small cell = vivid (compressed), large cell = pale (overextended)
-      const sat = s.map(normA, 0, 1, 70, 16)
-
-      s.fill(seeds[i].hue, sat, 22)
+      s.fill(seeds[i].hue, seedSat(i), 32)
       s.beginShape()
       for (const [px, py] of poly) s.vertex(px, py)
       s.endShape(s.CLOSE)
     }
 
-    // ── draw edges ────────────────────────────────────────────────────────
+    // ── Contour rings (topographic depth inside each cell) ────────────────
+    // Inspired by elevation contours in procedural terrain — same polygon
+    // scaled inward at 3 levels, creating a sense of depth and territory mass.
+    s.noFill()
+    s.strokeWeight(0.7)
+    const ringScales  = [0.78, 0.54, 0.30]
+    const ringAlphas  = [16,   11,    7  ]
+    const ringBri     = [52,   60,   68  ]
+    for (let i = 0; i < seeds.length; i++) {
+      const poly = polys[i]
+      if (poly.length < 3) continue
+      const [cx, cy] = polyCentroid(poly)
+      const sat = seedSat(i) * 0.55
+      for (let r = 0; r < ringScales.length; r++) {
+        s.stroke(seeds[i].hue, sat, ringBri[r], ringAlphas[r])
+        s.beginShape()
+        for (const [px, py] of scalePolyFromCenter(poly, cx, cy, ringScales[r])) {
+          s.vertex(px, py)
+        }
+        s.endShape(s.CLOSE)
+      }
+    }
 
+    // ── Base edges ────────────────────────────────────────────────────────
     if (CFG.showEdges) {
-      s.noFill()
-      s.stroke(0, 0, 50, 55)
+      s.stroke(0, 0, 42, 45)
       s.strokeWeight(1)
       for (let i = 0; i < seeds.length; i++) {
         const poly = polys[i]
@@ -293,18 +338,84 @@ new p5(s => {
         for (const [px, py] of poly) s.vertex(px, py)
         s.endShape(s.CLOSE)
       }
-      s.noStroke()
     }
 
-    // ── draw seed dots ────────────────────────────────────────────────────
+    // ── Contested border glow ─────────────────────────────────────────────
+    // For each Delaunay-adjacent seed pair closer than contestThreshold,
+    // find their shared Voronoi edge vertices and draw a bright overlay.
+    // Closer seeds = hotter border. From procedural gen: fault lines and
+    // tectonic plate boundaries emerge at adjacency stress points.
+    for (let i = 0; i < seeds.length; i++) {
+      for (const j of delaunay.neighbors(i)) {
+        if (j <= i) continue
+        const dx = seeds[i].x - seeds[j].x
+        const dy = seeds[i].y - seeds[j].y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist >= CFG.contestThreshold) continue
 
+        const heat = 1 - dist / CFG.contestThreshold
+
+        // Find shared Voronoi vertices (exact shared edge)
+        const pi = polys[i], pj = polys[j]
+        if (pi.length < 3 || pj.length < 3) continue
+        const shared = []
+        for (const [ax, ay] of pi) {
+          for (const [bx, by] of pj) {
+            if (Math.abs(ax - bx) < 0.5 && Math.abs(ay - by) < 0.5) {
+              shared.push([ax, ay])
+              break
+            }
+          }
+          if (shared.length === 2) break
+        }
+        if (shared.length < 2) continue
+
+        const alpha = heat * 55
+        const weight = 0.8 + heat * 1.4
+        s.stroke(0, 0, 65 + heat * 30, alpha)
+        s.strokeWeight(weight)
+        s.noFill()
+        s.line(shared[0][0], shared[0][1], shared[1][0], shared[1][1])
+      }
+    }
+    s.noStroke()
+
+    // ── Trails ────────────────────────────────────────────────────────────
+    // Fading position history per seed — makes drift motion legible
+    if (CFG.showTrails) {
+      for (let i = 0; i < seeds.length; i++) {
+        const seed = seeds[i]
+        const sat  = seedSat(i)
+        for (let k = 0; k < seed.trail.length; k++) {
+          const age   = k / seed.trail.length           // 0 = oldest, 1 = newest
+          const alpha = age * 28
+          const diam  = age * 3.5
+          s.fill(seed.hue, Math.min(100, sat + 10), 65, alpha)
+          s.circle(seed.trail[k].x, seed.trail[k].y, diam)
+        }
+      }
+    }
+
+    // ── Seed speed aura ───────────────────────────────────────────────────
     if (CFG.showSeeds) {
-      s.noStroke()
+      for (let i = 0; i < seeds.length; i++) {
+        const seed  = seeds[i]
+        const speed = Math.sqrt(seed.vx * seed.vx + seed.vy * seed.vy)
+        if (speed > 0.2) {
+          const auraR = s.map(speed, 0, CFG.driftSpeed * 1.5, 8, 28)
+          const auraA = s.map(speed, 0, CFG.driftSpeed * 1.5, 0, 30)
+          s.fill(seed.hue, 35, 80, auraA)
+          s.circle(seed.x, seed.y, auraR * 2)
+        }
+      }
+    }
+
+    // ── Seed dots ─────────────────────────────────────────────────────────
+    if (CFG.showSeeds) {
       for (let i = 0; i < seeds.length; i++) {
         if (polys[i].length < 3) continue
-        const normA = maxA > minA ? (areas[i] - minA) / (maxA - minA) : 0.5
-        const sat   = s.map(normA, 0, 1, 70, 16)
-        s.fill(seeds[i].hue, Math.min(100, sat + 22), 78)
+        const sat = seedSat(i)
+        s.fill(seeds[i].hue, Math.min(100, sat + 22), 82)
         s.circle(seeds[i].x, seeds[i].y, 5)
       }
     }
@@ -321,10 +432,19 @@ new p5(s => {
     } else if (k === 'e' || k === 'E') {
       CFG.showEdges = !CFG.showEdges
 
+    } else if (k === 't' || k === 'T') {
+      CFG.showTrails = !CFG.showTrails
+
     } else if (k === 'm' || k === 'M') {
       const idx = MODES.indexOf(CFG.mouseMode)
       CFG.mouseMode = MODES[(idx + 1) % MODES.length]
       hudMode.textContent = `mode · ${CFG.mouseMode}`
+
+    } else if (k === 'l' || k === 'L') {
+      // Toggle Lloyd relaxation on/off
+      CFG.relaxStrength = CFG.relaxStrength > 0 ? 0.0 : 0.035
+      hudRelax.textContent = CFG.relaxStrength > 0 ? 'relax · on' : 'relax · off'
+      hudRelax.style.color  = CFG.relaxStrength > 0 ? '#888' : '#444'
 
     } else if (k === 'p' || k === 'P') {
       panel.classList.toggle('open')
@@ -337,13 +457,9 @@ new p5(s => {
       hudSeeds.textContent = `seeds · ${seeds.length}`
 
     } else if ((k === '-' || k === '_') && seeds.length > 3) {
-      // Remove seed with smallest current cell area
       const del = d3.Delaunay.from(seeds, d => d.x, d => d.y)
       const vor = del.voronoi([0, 0, s.width, s.height])
-      const a   = seeds.map((_, i) => {
-        const p = vor.cellPolygon(i)
-        return p ? polyArea(p) : Infinity
-      })
+      const a   = seeds.map((_, i) => { const p = vor.cellPolygon(i); return p ? polyArea(p) : Infinity })
       seeds.splice(a.indexOf(Math.min(...a)), 1)
       hudSeeds.textContent = `seeds · ${seeds.length}`
     }
