@@ -6,49 +6,166 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #060608; overflow: hidden; }
+
     #hud {
       position: fixed; top: 14px; left: 16px;
-      font-family: monospace; font-size: 11px; color: #555;
-      pointer-events: none; line-height: 1.8;
+      font-family: monospace; font-size: 11px; color: #4a4a5a;
+      pointer-events: none; line-height: 1.9;
     }
     #seed-box {
       position: fixed; top: 14px; right: 16px;
       font-family: monospace; font-size: 11px;
       background: transparent; border: none;
-      border-bottom: 1px solid #333; color: #777;
+      border-bottom: 1px solid #2a2a2a; color: #666;
       width: 90px; outline: none; text-align: right;
+    }
+
+    /* ── CFG Panel ───────────────────────────────────────── */
+    #panel {
+      display: none;
+      position: fixed; top: 40px; right: 16px;
+      width: 268px;
+      background: rgba(7, 7, 10, 0.94);
+      border: 1px solid #1e1e28;
+      font-family: monospace; font-size: 11px; color: #555;
+      padding: 10px 14px 14px;
+      line-height: 1.0;
+    }
+    #panel.visible { display: block; }
+    .pnl-title {
+      color: #777; font-size: 12px;
+      display: flex; justify-content: space-between;
+      margin-bottom: 8px; padding-bottom: 6px;
+      border-bottom: 1px solid #1a1a22;
+    }
+    .pnl-section {
+      color: #333; font-size: 9px; letter-spacing: 0.10em;
+      margin: 10px 0 4px; text-transform: uppercase;
+    }
+    .pnl-row {
+      display: flex; align-items: center; gap: 6px; margin: 3px 0;
+    }
+    .pnl-row label { width: 136px; color: #4a4a5a; font-size: 10px; white-space: nowrap; }
+    .pnl-row input[type=range] { flex: 1; height: 2px; cursor: pointer; accent-color: #3a3a55; }
+    .pnl-val { width: 46px; text-align: right; color: #666; font-size: 10px; }
+    .pnl-regen {
+      margin-top: 12px; width: 100%;
+      background: #0d0d14; border: 1px solid #222;
+      color: #555; font-family: monospace; font-size: 11px;
+      padding: 5px; cursor: pointer; letter-spacing: 0.04em;
+    }
+    .pnl-regen:hover { background: #12121c; color: #888; }
+
+    /* ── Info overlay ────────────────────────────────────── */
+    #info {
+      display: none;
+      position: fixed; bottom: 30px; left: 16px;
+      width: 360px;
+      background: rgba(6, 6, 10, 0.93);
+      border: 1px solid #1e1e28;
+      font-family: monospace; font-size: 10px; color: #4a4a5a;
+      padding: 12px 16px 14px;
+      line-height: 1.9;
+      pointer-events: none;
+    }
+    #info.visible { display: block; }
+    .info-title {
+      color: #666; font-size: 11px; margin-bottom: 8px;
+      padding-bottom: 5px; border-bottom: 1px solid #1a1a22;
+    }
+    .info-section { color: #333; font-size: 9px; letter-spacing: 0.10em; margin: 8px 0 3px; }
+    .info-row { display: flex; align-items: baseline; gap: 8px; }
+    .info-dot { font-size: 13px; line-height: 1; flex-shrink: 0; }
+    .info-name { color: #666; width: 120px; flex-shrink: 0; }
+    .info-desc { color: #3a3a4a; font-size: 9px; }
+    .info-key { color: #555; width: 120px; flex-shrink: 0; }
+    .info-keyval { color: #3a3a4a; font-size: 9px; }
+
+    /* ── Mode badge ──────────────────────────────────────── */
+    #mode-badge {
+      position: fixed; bottom: 16px; right: 16px;
+      font-family: monospace; font-size: 10px; color: #333;
+      pointer-events: none; letter-spacing: 0.07em;
     }
   </style>
 </head>
 <body>
-<div id="hud"><span id="hud-line1"></span><br><span id="hud-line2"></span></div>
+<div id="hud">
+  <span id="hud-seed"></span><br>
+  <span id="hud-stats"></span><br>
+  <span id="hud-keys"></span>
+</div>
 <input id="seed-box" type="text" value="FENRIR">
+<div id="panel"></div>
+<div id="info"></div>
+<div id="mode-badge"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6"></script>
 <script>
+
+// ── Config ────────────────────────────────────────────────────────────────────
 const CFG = {
-  starCount:        55,
-  poissonRadius:    34,
-  fBmOctaves:       4,
-  fBmSpeed:         0.000055,
-  nebulaStep:       7,
-  nebulaRedraw:     4,
-  biomeScale:       0.0019,
-  particleCount:    720,
-  edgeGlowAlpha:    0.17,
-  cellFillAlpha:    0.08,
-  worleyDots:       7,
-  worleyRadius:     11,
+  starCount:            55,
+  poissonRadius:        34,
+  biomeScale:           0.00085,
+  fBmOctaves:           4,
+  fBmSpeed:             0.000055,
+  nebulaStep:           7,
+  nebulaRedraw:         4,
+  cellFillAlpha:        0.13,
+  edgeGlowAlpha:        0.22,
+  contestedGlowAlpha:   0.45,
+  particleCount:        720,
+  mouseMode:            0,
+  mouseRadius:          150,
+  mouseForce:           0.007,
+  starForce:            0.024,
+  starDamp:             0.87,
+  starSpring:           0.038,
+  maxStarDisplace:      58,
 };
 
+// ── Biomes ────────────────────────────────────────────────────────────────────
 const BIOMES = [
-  { name: 'Habitable',       hue:  42, sat: 68, bri: 62, speed: 0.004 },
-  { name: 'Gas Giant Belt',  hue:  18, sat: 88, bri: 72, speed: 0.011 },
-  { name: 'Dead Zone',       hue: 212, sat: 22, bri: 32, speed: 0.002 },
-  { name: 'Stellar Nursery', hue: 183, sat: 92, bri: 82, speed: 0.013 },
-  { name: 'Binary',          hue: 272, sat: 62, bri: 56, speed: 0.007 },
+  { name: 'Habitable',       hue:  48, sat: 70, bri: 68, speed: 0.004,
+    desc: 'Warm golden systems — stable particle drift, double halo' },
+  { name: 'Gas Giant Belt',  hue:  22, sat: 90, bri: 75, speed: 0.011,
+    desc: 'Amber giants — orbital rings, high turbulence' },
+  { name: 'Dead Zone',       hue: 198, sat: 35, bri: 48, speed: 0.002,
+    desc: 'Cold remnants — minimal particles, vast faint halo, no cluster' },
+  { name: 'Stellar Nursery', hue: 172, sat: 95, bri: 85, speed: 0.013,
+    desc: 'Bright protostars — oversized flickering halo, dense dot scatter' },
+  { name: 'Binary',          hue: 278, sat: 68, bri: 62, speed: 0.007,
+    desc: 'Dual-core systems — two offset stars, split-hue streams' },
 ];
 
+const MODE_NAMES  = ['OBSERVE', 'ATTRACTOR', 'REPULSOR', 'VORTEX'];
+const MODE_DESCS  = [
+  'no mouse effect',
+  'stars + particles pulled toward cursor',
+  'stars + particles pushed away from cursor',
+  'tangential orbital force around cursor',
+];
+
+const PANEL_ROWS = [
+  { section: 'VISUAL' },
+  { key: 'cellFillAlpha',      label: 'cell fill alpha',   min: 0.02,    max: 0.35,   step: 0.01,     fmt: v => v.toFixed(2) },
+  { key: 'edgeGlowAlpha',      label: 'edge glow',         min: 0.04,    max: 0.45,   step: 0.01,     fmt: v => v.toFixed(2) },
+  { key: 'contestedGlowAlpha', label: 'contested edge',    min: 0.08,    max: 0.70,   step: 0.01,     fmt: v => v.toFixed(2) },
+  { key: 'nebulaStep',         label: 'nebula resolution', min: 4,       max: 14,     step: 1,        fmt: v => Math.round(v) },
+  { key: 'fBmSpeed',           label: 'nebula drift',      min: 0,       max: 0.0003, step: 0.000005, fmt: v => v.toFixed(6) },
+  { section: 'SIMULATION' },
+  { key: 'particleCount',      label: 'particles',         min: 100,     max: 1500,   step: 10,       fmt: v => Math.round(v) },
+  { key: 'starCount',          label: 'stars ↺',           min: 20,      max: 120,    step: 1,        fmt: v => Math.round(v), regen: true },
+  { key: 'biomeScale',         label: 'biome scale ↺',     min: 0.0003,  max: 0.004,  step: 0.0001,   fmt: v => v.toFixed(4), regen: true },
+  { section: 'MOUSE' },
+  { key: 'mouseRadius',        label: 'mouse radius',      min: 40,      max: 320,    step: 5,        fmt: v => Math.round(v) },
+  { key: 'mouseForce',         label: 'particle force',    min: 0.001,   max: 0.025,  step: 0.001,    fmt: v => v.toFixed(3) },
+  { key: 'starForce',          label: 'star force',        min: 0.005,   max: 0.06,   step: 0.002,    fmt: v => v.toFixed(3) },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
 new p5(s => {
 
   let stars = [], edges = [], particles = [];
@@ -56,9 +173,9 @@ new p5(s => {
   let nebulaG;
   let nebulaT = 0, _frame = 0;
   let seedStr = 'FENRIR';
-  let showLabels = false;
+  let showLabels = false, panelVisible = false, infoVisible = false;
 
-  // ── Seeded hash ──────────────────────────────────────────────
+  // ── Hash ────────────────────────────────────────────────────────────────────
   function hashStr(str) {
     let h = 0x811c9dc5;
     for (let i = 0; i < str.length; i++)
@@ -66,28 +183,24 @@ new p5(s => {
     return h;
   }
 
-  // ── Poisson disk ─────────────────────────────────────────────
+  // ── Poisson disk ────────────────────────────────────────────────────────────
   function poissonDisk(w, h, r) {
     const cell = r / Math.sqrt(2);
     const cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
     const grid = new Array(cols * rows).fill(null);
     const active = [], pts = [];
-
     function gIdx(x, y) { return Math.floor(x / cell) + Math.floor(y / cell) * cols; }
     function add(x, y) {
       const p = {x, y}; pts.push(p); active.push(p); grid[gIdx(x, y)] = p;
     }
     add(w * 0.5, h * 0.5);
-
     while (active.length) {
       const idx = Math.floor(s.random(active.length));
       const base = active[idx];
       let found = false;
       for (let k = 0; k < 28; k++) {
-        const a  = s.random(s.TWO_PI);
-        const d  = s.random(r, 2 * r);
-        const nx = base.x + Math.cos(a) * d;
-        const ny = base.y + Math.sin(a) * d;
+        const a = s.random(s.TWO_PI), d = s.random(r, 2 * r);
+        const nx = base.x + Math.cos(a) * d, ny = base.y + Math.sin(a) * d;
         if (nx < 24 || ny < 24 || nx > w - 24 || ny > h - 24) continue;
         const gx = Math.floor(nx / cell), gy = Math.floor(ny / cell);
         let ok = true;
@@ -105,38 +218,39 @@ new p5(s => {
     return pts;
   }
 
-  // ── Biome from noise ─────────────────────────────────────────
+  // ── Biome from noise ────────────────────────────────────────────────────────
   function biomeAt(x, y) {
     const v = s.noise(x * CFG.biomeScale + 77, y * CFG.biomeScale + 33);
     return Math.floor(v * BIOMES.length) % BIOMES.length;
   }
 
-  // ── Build stars ───────────────────────────────────────────────
+  // ── Build stars ─────────────────────────────────────────────────────────────
   function buildStars() {
     let pts = poissonDisk(s.width, s.height, CFG.poissonRadius);
     s.shuffle(pts, true);
     pts = pts.slice(0, CFG.starCount);
-
     stars = pts.map(pt => {
-      const nv  = s.noise(pt.x * 0.0028, pt.y * 0.0028, 55);
-      const r   = s.map(nv, 0, 1, 1.8, 5.2);
-      const bm  = biomeAt(pt.x, pt.y);
-      const dots = Array.from({length: CFG.worleyDots}, () => {
-        const a = s.random(s.TWO_PI);
-        const d = s.random(r + 1.5, CFG.worleyRadius);
-        return { dx: Math.cos(a) * d, dy: Math.sin(a) * d,
-                 r: s.random(0.5, 1.6), alpha: s.random(22, 58) };
+      const nv      = s.noise(pt.x * 0.0028, pt.y * 0.0028, 55);
+      const r       = s.map(nv, 0, 1, 1.8, 5.2);
+      const bm      = biomeAt(pt.x, pt.y);
+      const numDots = bm === 2 ? 0 : bm === 3 ? 12 : 7;
+      const dotRad  = bm === 3 ? 18 : 11;
+      const dots    = Array.from({length: numDots}, () => {
+        const a = s.random(s.TWO_PI), d = s.random(r + 1.5, dotRad);
+        return { dx: Math.cos(a)*d, dy: Math.sin(a)*d,
+                 r: s.random(0.5, 1.6), alpha: s.random(22, 58),
+                 hueShift: bm === 4 && s.random() < 0.5 ? 42 : 0 };
       });
-      return { x: pt.x, y: pt.y, r, biome: bm, dots };
+      return { x: pt.x, y: pt.y, ox: 0, oy: 0, vx: 0, vy: 0,
+               r, biome: bm, dots, ringAngle: s.random(s.TWO_PI) };
     });
   }
 
-  // ── Build Voronoi + edge list ─────────────────────────────────
-  function buildVoronoi() {
-    delaunay = d3.Delaunay.from(stars, st => st.x, st => st.y);
+  // ── Build Voronoi + edges ────────────────────────────────────────────────────
+  function buildGeometry() {
+    delaunay = d3.Delaunay.from(stars, st => st.x + st.ox, st => st.y + st.oy);
     voronoi  = delaunay.voronoi([0, 0, s.width, s.height]);
-
-    edges = [];
+    edges    = [];
     const seen = new Set();
     for (let i = 0; i < stars.length; i++) {
       for (const j of delaunay.neighbors(i)) {
@@ -144,39 +258,40 @@ new p5(s => {
         const key = i + '-' + j;
         if (seen.has(key)) continue;
         seen.add(key);
-        const pi = voronoi.cellPolygon(i);
-        const pj = voronoi.cellPolygon(j);
+        const pi = voronoi.cellPolygon(i), pj = voronoi.cellPolygon(j);
         if (!pi || !pj) continue;
-        const tol = 1.8;
         const shared = pi.filter(([ax, ay]) =>
-          pj.some(([bx, by]) => Math.hypot(ax - bx, ay - by) < tol)
+          pj.some(([bx, by]) => Math.hypot(ax - bx, ay - by) < 1.8)
         );
         if (shared.length >= 2) {
           edges.push({
             ax: shared[0][0],               ay: shared[0][1],
             bx: shared[shared.length-1][0], by: shared[shared.length-1][1],
             biomeA: stars[i].biome, biomeB: stars[j].biome,
+            contested: stars[i].biome !== stars[j].biome,
           });
         }
       }
     }
   }
 
-  // ── Particles ─────────────────────────────────────────────────
+  // ── Particles ───────────────────────────────────────────────────────────────
   function makeParticle(ei) {
-    const e  = edges[ei % edges.length];
-    const bA = BIOMES[e.biomeA], bB = BIOMES[e.biomeB];
-    const bm = s.random() < 0.5 ? bA : bB;
+    if (!edges.length) return null;
+    const e   = edges[ei % edges.length];
+    const bA  = BIOMES[e.biomeA], bB = BIOMES[e.biomeB];
+    const bm  = s.random() < 0.5 ? bA : bB;
+    const r   = bm === BIOMES[3] ? s.random(1.2, 3.5)
+              : bm === BIOMES[2] ? s.random(0.4, 0.9)
+              : s.random(0.7, 2.1);
+    const alpha = bm === BIOMES[2] ? s.random(10, 38) : s.random(28, 82);
     return {
-      ei,
-      t:     s.random(),
-      dir:   s.random() < 0.5 ? 1 : -1,
+      ei: ei % edges.length, t: s.random(),
+      dir: s.random() < 0.5 ? 1 : -1,
       speed: s.random((bA.speed + bB.speed) * 0.35, (bA.speed + bB.speed) * 0.85),
-      hue:   bm.hue + s.random(-12, 12),
-      sat:   s.random(52, 88),
-      bri:   s.random(62, 96),
-      alpha: s.random(28, 82),
-      r:     s.random(0.7, 2.1),
+      hue: bm.hue + s.random(-14, 14),
+      sat: s.random(52, 88), bri: s.random(60, 96),
+      alpha, r,
     };
   }
 
@@ -187,7 +302,9 @@ new p5(s => {
       particles.push(makeParticle(i % edges.length));
   }
 
-  // ── Draw nebula offscreen ─────────────────────────────────────
+  // ── Nebula — offscreen, hue aligned to biome field ──────────────────────────
+  // The same noise field that drives biome assignment also drives nebula hue,
+  // so gas/cloud color and stellar territory visually agree.
   function drawNebula() {
     nebulaG.colorMode(s.HSB, 360, 100, 100, 100);
     nebulaG.noStroke();
@@ -197,35 +314,316 @@ new p5(s => {
 
     for (let x = 0; x < s.width; x += step) {
       for (let y = 0; y < s.height; y += step) {
+        // fBm density
         let val = 0, amp = 1, freq = 1, norm = 0;
         for (let oct = 0; oct < CFG.fBmOctaves; oct++) {
           val  += s.noise(x * 0.0028 * freq + tx, y * 0.0028 * freq + ty) * amp;
           norm += amp;
-          amp  *= 0.52; freq *= 2.1;
+          amp *= 0.52; freq *= 2.1;
         }
         val /= norm;
-        if (val < 0.40) continue;
-        const bri = s.map(val, 0.40, 1.0, 0, 52);
-        const zv  = s.noise(x * 0.0015 + 8, y * 0.0015 + 8);
-        const hue = zv < 0.33 ? 258 : zv < 0.60 ? 187 : 36;
-        nebulaG.fill(hue, 58, bri, 88);
+        if (val < 0.38) continue;
+
+        const bri = s.map(val, 0.38, 1.0, 0, 48);
+
+        // Hue: sampled from the same biome field → nebula haze aligns with territories
+        const bv  = s.noise(x * CFG.biomeScale + 77, y * CFG.biomeScale + 33);
+        const bi  = Math.floor(bv * BIOMES.length) % BIOMES.length;
+        const hue = BIOMES[bi].hue;
+
+        nebulaG.fill(hue, 52, bri, 84);
         nebulaG.rect(x, y, step, step);
+      }
+    }
+
+    // Star coronas — drawn into the nebula layer so stars feel embedded
+    // Each star adds a soft radial haze in its biome color
+    nebulaG.colorMode(s.HSB, 360, 100, 100, 100);
+    for (const st of stars) {
+      const bm = BIOMES[st.biome];
+      const x  = st.x + st.ox, y = st.y + st.oy;
+      nebulaG.noStroke();
+      nebulaG.fill(bm.hue, 45, bm.bri * 0.55, 9);
+      nebulaG.circle(x, y, st.r * 22);
+      nebulaG.fill(bm.hue, 38, bm.bri * 0.70, 6);
+      nebulaG.circle(x, y, st.r * 14);
+    }
+  }
+
+  // ── Star rendering — per-biome personality ──────────────────────────────────
+  function drawStar(st) {
+    const bm = BIOMES[st.biome];
+    const x  = st.x + st.ox, y = st.y + st.oy;
+    s.noStroke();
+
+    switch (st.biome) {
+      case 0: {  // Habitable — warm double halo, green-tinted outer ring
+        s.fill(78, 20, 60, 10);  s.circle(x, y, st.r * 12);
+        s.fill(bm.hue, 42, 82, 22);   s.circle(x, y, st.r * 7);
+        s.fill(bm.hue, 18, 100, 96);  s.circle(x, y, st.r * 2.2);
+        for (const d of st.dots) {
+          s.fill(bm.hue, 55, 72, d.alpha);
+          s.circle(x + d.dx, y + d.dy, d.r * 2);
+        }
+        break;
+      }
+      case 1: {  // Gas Giant Belt — large core + titled elliptical ring arc
+        s.fill(bm.hue, 52, 80, 24);  s.circle(x, y, st.r * 8);
+        s.fill(bm.hue, 22, 100, 96); s.circle(x, y, st.r * 2.7);
+        for (const d of st.dots) {
+          s.fill(bm.hue, 62, 70, d.alpha);
+          s.circle(x + d.dx, y + d.dy, d.r * 2);
+        }
+        s.push();
+        s.translate(x, y);
+        s.rotate(st.ringAngle);
+        s.noFill();
+        s.stroke(bm.hue, 60, 72, 36); s.strokeWeight(0.9);
+        s.arc(0, 0, st.r * 11, st.r * 4.2, 0.3, s.PI + 0.3, s.OPEN);
+        s.noStroke();
+        s.pop();
+        break;
+      }
+      case 2: {  // Dead Zone — cold pinprick, vast faint halo, no cluster
+        s.fill(bm.hue, 16, 48, 6);   s.circle(x, y, st.r * 18);
+        s.fill(bm.hue, 24, 68, 52);  s.circle(x, y, st.r * 1.5);
+        break;
+      }
+      case 3: {  // Stellar Nursery — oversized, flickering alpha, dense dots
+        const flicker = s.noise(st.x * 0.012, _frame * 0.025);
+        const fa = s.map(flicker, 0, 1, 16, 44);
+        s.fill(bm.hue, 55, 92, fa * 1.9); s.circle(x, y, st.r * 13);
+        s.fill(bm.hue, 38, 95, fa);        s.circle(x, y, st.r * 7);
+        s.fill(bm.hue, 16, 100, 98);       s.circle(x, y, st.r * 2.4);
+        for (const d of st.dots) {
+          s.fill(bm.hue, 52, 78, d.alpha + fa * 0.4);
+          s.circle(x + d.dx, y + d.dy, d.r * 2);
+        }
+        break;
+      }
+      case 4: {  // Binary — two offset cores with distinct hues
+        const cos = Math.cos(st.ringAngle), sin2 = Math.sin(st.ringAngle);
+        const sep = st.r * 1.9;
+        const h2  = (bm.hue + 42) % 360;
+        s.fill(bm.hue, 45, 85, 20);  s.circle(x, y, st.r * 10);
+        s.fill(bm.hue, 22, 100, 94); s.circle(x - cos * sep, y - sin2 * sep, st.r * 2.1);
+        s.fill(h2,     28, 100, 90); s.circle(x + cos * sep, y + sin2 * sep, st.r * 1.9);
+        for (const d of st.dots) {
+          s.fill((bm.hue + d.hueShift) % 360, 55, 72, d.alpha);
+          s.circle(x + d.dx, y + d.dy, d.r * 2);
+        }
+        break;
+      }
+    }
+
+    if (showLabels) {
+      s.fill(bm.hue, 25, 80, 70);
+      s.textSize(9);
+      s.textFont('monospace');
+      s.text(bm.name.toUpperCase(), x + st.r + 6, y + 3);
+    }
+  }
+
+  // ── Star physics ────────────────────────────────────────────────────────────
+  function updateStars() {
+    const mx = s.mouseX, my = s.mouseY;
+    const mode = CFG.mouseMode;
+    let anyMoving = false;
+    for (const st of stars) {
+      const ax = st.x + st.ox, ay = st.y + st.oy;
+      if (mode > 0) {
+        const dx = ax - mx, dy = ay - my;
+        const dist = Math.hypot(dx, dy);
+        if (dist < CFG.mouseRadius && dist > 1) {
+          const fall = 1 - dist / CFG.mouseRadius;
+          const f    = CFG.starForce * fall * fall;
+          const nx = dx / dist, ny = dy / dist;
+          if      (mode === 1) { st.vx -= nx * f; st.vy -= ny * f; }
+          else if (mode === 2) { st.vx += nx * f; st.vy += ny * f; }
+          else if (mode === 3) { st.vx -= ny * f; st.vy += nx * f; }
+        }
+      }
+      st.vx += -st.ox * CFG.starSpring;
+      st.vy += -st.oy * CFG.starSpring;
+      st.vx *= CFG.starDamp;
+      st.vy *= CFG.starDamp;
+      st.ox += st.vx;
+      st.oy += st.vy;
+      const disp = Math.hypot(st.ox, st.oy);
+      if (disp > CFG.maxStarDisplace) { st.ox *= CFG.maxStarDisplace / disp; st.oy *= CFG.maxStarDisplace / disp; }
+      if (Math.abs(st.vx) + Math.abs(st.vy) > 0.01) anyMoving = true;
+    }
+    return anyMoving;
+  }
+
+  // ── Particle physics ────────────────────────────────────────────────────────
+  function updateParticles() {
+    while (particles.length < CFG.particleCount && edges.length)
+      particles.push(makeParticle(Math.floor(s.random(edges.length))));
+    while (particles.length > CFG.particleCount) particles.pop();
+
+    const mx = s.mouseX, my = s.mouseY;
+    const mode = CFG.mouseMode;
+
+    for (const pt of particles) {
+      const e = edges[pt.ei];
+      if (!e) { const np = makeParticle(Math.floor(s.random(edges.length))); if (np) Object.assign(pt, np); continue; }
+
+      if (mode > 0) {
+        const px = e.ax + (e.bx - e.ax) * pt.t;
+        const py = e.ay + (e.by - e.ay) * pt.t;
+        const dx = px - mx, dy = py - my;
+        const dist = Math.hypot(dx, dy);
+        if (dist < CFG.mouseRadius && dist > 1) {
+          const fall = 1 - dist / CFG.mouseRadius;
+          const f    = CFG.mouseForce * fall * fall;
+          const ex = e.bx - e.ax, ey = e.by - e.ay;
+          const elen = Math.hypot(ex, ey) || 1;
+          const enx = ex / elen, eny = ey / elen;
+          const nx = dx / dist, ny = dy / dist;
+          if      (mode === 1) pt.t += (-nx * enx + -ny * eny) * f;
+          else if (mode === 2) pt.t += ( nx * enx +  ny * eny) * f;
+          else if (mode === 3) pt.t += (-ny * enx +  nx * eny) * f * 1.3;
+        }
+      }
+
+      pt.t += pt.speed * pt.dir;
+      if (pt.t >= 1 || pt.t <= 0) {
+        pt.t = s.constrain(pt.t, 0, 1);
+        pt.dir *= -1;
+        if (s.random() < 0.2) { const np = makeParticle(Math.floor(s.random(edges.length))); if (np) Object.assign(pt, np); }
       }
     }
   }
 
-  // ── Init ──────────────────────────────────────────────────────
+  // ── CFG Panel ───────────────────────────────────────────────────────────────
+  function buildPanel() {
+    const panel = document.getElementById('panel');
+    panel.textContent = '';
+
+    const title = document.createElement('div');
+    title.className = 'pnl-title';
+    const tl = document.createElement('span'); tl.textContent = 'CFG';
+    const tr = document.createElement('span'); tr.textContent = '[P to close]';
+    title.appendChild(tl); title.appendChild(tr);
+    panel.appendChild(title);
+
+    for (const row of PANEL_ROWS) {
+      if (row.section) {
+        const sec = document.createElement('div');
+        sec.className = 'pnl-section';
+        sec.textContent = row.section;
+        panel.appendChild(sec);
+        continue;
+      }
+      const rowDiv = document.createElement('div'); rowDiv.className = 'pnl-row';
+      const lbl    = document.createElement('label'); lbl.textContent = row.label;
+      const input  = document.createElement('input');
+      input.type   = 'range';
+      input.min    = String(row.min); input.max = String(row.max);
+      input.step   = String(row.step); input.value = String(CFG[row.key]);
+      const val    = document.createElement('span');
+      val.className = 'pnl-val'; val.id = 'pv-' + row.key;
+      val.textContent = row.fmt(CFG[row.key]);
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        CFG[row.key] = v;
+        val.textContent = row.fmt(v);
+        if (row.key === 'nebulaStep') drawNebula();
+      });
+      rowDiv.appendChild(lbl); rowDiv.appendChild(input); rowDiv.appendChild(val);
+      panel.appendChild(rowDiv);
+    }
+
+    const regen = document.createElement('button');
+    regen.className = 'pnl-regen';
+    regen.textContent = '↺  regenerate';
+    regen.addEventListener('click', init);
+    panel.appendChild(regen);
+  }
+
+  // ── Info overlay ─────────────────────────────────────────────────────────────
+  function buildInfo() {
+    const el = document.getElementById('info');
+    el.textContent = '';
+
+    const title = document.createElement('div');
+    title.className = 'info-title';
+    title.textContent = 'NEBULA AS BIOME MAP — reference';
+    el.appendChild(title);
+
+    // Biomes
+    const bsec = document.createElement('div');
+    bsec.className = 'info-section';
+    bsec.textContent = 'BIOMES  (each Voronoi region = one stellar territory)';
+    el.appendChild(bsec);
+
+    for (const bm of BIOMES) {
+      const row  = document.createElement('div'); row.className = 'info-row';
+      const dot  = document.createElement('span'); dot.className = 'info-dot';
+      dot.textContent = '●';
+      dot.style.color = 'hsl(' + bm.hue + ', ' + bm.sat + '%, ' + Math.round(bm.bri * 0.7) + '%)';
+      const name = document.createElement('span'); name.className = 'info-name';
+      name.textContent = bm.name;
+      const desc = document.createElement('span'); desc.className = 'info-desc';
+      desc.textContent = bm.desc;
+      row.appendChild(dot); row.appendChild(name); row.appendChild(desc);
+      el.appendChild(row);
+    }
+
+    // Mouse modes
+    const msec = document.createElement('div');
+    msec.className = 'info-section';
+    msec.textContent = 'MOUSE MODES  (M to cycle, 1–4 to select directly)';
+    el.appendChild(msec);
+
+    for (let i = 0; i < MODE_NAMES.length; i++) {
+      const row  = document.createElement('div'); row.className = 'info-row';
+      const key  = document.createElement('span'); key.className = 'info-key';
+      key.textContent = (i + 1) + '  ' + MODE_NAMES[i];
+      const desc = document.createElement('span'); desc.className = 'info-desc';
+      desc.textContent = MODE_DESCS[i];
+      row.appendChild(key); row.appendChild(desc);
+      el.appendChild(row);
+    }
+
+    // Keys
+    const ksec = document.createElement('div');
+    ksec.className = 'info-section';
+    ksec.textContent = 'KEYS';
+    el.appendChild(ksec);
+
+    const keys = [
+      ['S',      'toggle biome labels on each star'],
+      ['R',      'randomize seed'],
+      ['P',      'open / close CFG parameter panel'],
+      ['I',      'this info overlay'],
+      ['click',  'plant a new star at cursor position'],
+      ['Enter',  'apply seed typed in top-right input'],
+    ];
+    for (const [k, d] of keys) {
+      const row  = document.createElement('div'); row.className = 'info-row';
+      const key  = document.createElement('span'); key.className = 'info-key';
+      key.textContent = k;
+      const desc = document.createElement('span'); desc.className = 'info-desc';
+      desc.textContent = d;
+      row.appendChild(key); row.appendChild(desc);
+      el.appendChild(row);
+    }
+  }
+
+  // ── Init ────────────────────────────────────────────────────────────────────
   function init() {
     s.randomSeed(hashStr(seedStr));
     s.noiseSeed(hashStr(seedStr));
     _frame = 0;
     buildStars();
-    buildVoronoi();
+    buildGeometry();
     buildParticles();
     drawNebula();
   }
 
-  // ── setup ─────────────────────────────────────────────────────
+  // ── setup ───────────────────────────────────────────────────────────────────
   s.setup = function() {
     s.createCanvas(s.windowWidth, s.windowHeight);
     s.colorMode(s.HSB, 360, 100, 100, 100);
@@ -233,6 +631,8 @@ new p5(s => {
     nebulaG = s.createGraphics(s.width, s.height);
     nebulaG.pixelDensity(1);
     init();
+    buildPanel();
+    buildInfo();
 
     document.getElementById('seed-box').addEventListener('keydown', ev => {
       if (ev.key === 'Enter') {
@@ -242,11 +642,16 @@ new p5(s => {
     });
   };
 
-  // ── draw ──────────────────────────────────────────────────────
+  // ── draw ────────────────────────────────────────────────────────────────────
   s.draw = function() {
     _frame++;
     nebulaT += CFG.fBmSpeed;
-    if (_frame % CFG.nebulaRedraw === 0) drawNebula();
+
+    const anyMoving = updateStars();
+    // Rebuild nebula when stars move (coronas are embedded in it)
+    if (_frame % CFG.nebulaRedraw === 0 || anyMoving) drawNebula();
+    if (anyMoving || CFG.mouseMode > 0) buildGeometry();
+    updateParticles();
 
     s.image(nebulaG, 0, 0);
     if (!stars.length || !voronoi) return;
@@ -257,75 +662,78 @@ new p5(s => {
       const poly = voronoi.cellPolygon(i);
       if (!poly) continue;
       const bm = BIOMES[stars[i].biome];
-      s.fill(bm.hue, bm.sat * 0.55, bm.bri * 0.45, CFG.cellFillAlpha * 100);
+      s.fill(bm.hue, bm.sat * 0.80, bm.bri * 0.65, CFG.cellFillAlpha * 100);
       s.beginShape();
       for (const [vx, vy] of poly) s.vertex(vx, vy);
       s.endShape(s.CLOSE);
     }
 
-    // Voronoi edge glow (two-pass)
+    // Voronoi edges — dark groove first, then biome-hued glow
     for (const e of edges) {
       const h = (BIOMES[e.biomeA].hue + BIOMES[e.biomeB].hue) * 0.5;
-      s.stroke(h, 38, 78, CFG.edgeGlowAlpha * 100);
-      s.strokeWeight(1.1);
+      const a = e.contested ? CFG.contestedGlowAlpha : CFG.edgeGlowAlpha;
+      const w = e.contested ? 1.8 : 1.2;
+
+      // dark groove gives the line visual depth against the nebula
+      s.stroke(0, 0, 4, a * 60);
+      s.strokeWeight(w + 3);
       s.line(e.ax, e.ay, e.bx, e.by);
-      s.stroke(h, 28, 68, CFG.edgeGlowAlpha * 35);
-      s.strokeWeight(3.5);
+
+      // wide soft glow
+      s.stroke(h, 30, 70, a * 30);
+      s.strokeWeight(e.contested ? 6 : 4);
+      s.line(e.ax, e.ay, e.bx, e.by);
+
+      // bright narrow center
+      s.stroke(h, 40, 82, a * 100);
+      s.strokeWeight(w);
       s.line(e.ax, e.ay, e.bx, e.by);
     }
 
     // Stars
     s.noStroke();
-    for (const st of stars) {
-      const bm = BIOMES[st.biome];
-      s.fill(bm.hue, 48, 88, 30);
-      s.circle(st.x, st.y, st.r * 7);
-      s.fill(bm.hue, 18, 100, 96);
-      s.circle(st.x, st.y, st.r * 2.2);
-      for (const d of st.dots) {
-        s.fill(bm.hue, 55, 72, d.alpha);
-        s.circle(st.x + d.dx, st.y + d.dy, d.r * 2);
-      }
-      if (showLabels) {
-        s.fill(bm.hue, 25, 80, 72);
-        s.noStroke();
-        s.textSize(9);
-        s.textFont('monospace');
-        s.text(bm.name.toUpperCase(), st.x + st.r + 6, st.y + 3);
-      }
-    }
+    for (const st of stars) drawStar(st);
 
     // Particles
     s.noStroke();
     for (const pt of particles) {
       const e = edges[pt.ei];
       if (!e) continue;
-      pt.t += pt.speed * pt.dir;
-      if (pt.t >= 1 || pt.t <= 0) {
-        pt.t = s.constrain(pt.t, 0, 1);
-        pt.dir *= -1;
-        if (s.random() < 0.2) {
-          const np = makeParticle(Math.floor(s.random(edges.length)));
-          Object.assign(pt, np);
-          continue;
-        }
-      }
       const x = e.ax + (e.bx - e.ax) * pt.t;
       const y = e.ay + (e.by - e.ay) * pt.t;
       s.fill(pt.hue, pt.sat, pt.bri, pt.alpha);
       s.circle(x, y, pt.r * 2);
     }
 
-    // HUD (safe DOM text update)
-    document.getElementById('hud-line1').textContent =
-      'seed: ' + seedStr + '   stars: ' + stars.length + '   edges: ' + edges.length;
-    document.getElementById('hud-line2').textContent =
-      'S = labels   R = random seed   click = add star';
+    // HUD
+    document.getElementById('hud-seed').textContent =
+      'seed: ' + seedStr;
+    document.getElementById('hud-stats').textContent =
+      'stars: ' + stars.length + '   edges: ' + edges.length + '   particles: ' + particles.length;
+    document.getElementById('hud-keys').textContent =
+      'M = mode   S = labels   R = regen   P = panel   I = info   click = add star';
+    document.getElementById('mode-badge').textContent =
+      '[ ' + MODE_NAMES[CFG.mouseMode] + ' ]';
   };
 
+  // ── Keys ────────────────────────────────────────────────────────────────────
   s.keyPressed = function() {
-    if (s.key === 'S' || s.key === 's') showLabels = !showLabels;
-    if (s.key === 'R' || s.key === 'r') {
+    const k = s.key.toUpperCase();
+    if (k === 'M')  CFG.mouseMode = (CFG.mouseMode + 1) % 4;
+    if (k === '1')  CFG.mouseMode = 0;
+    if (k === '2')  CFG.mouseMode = 1;
+    if (k === '3')  CFG.mouseMode = 2;
+    if (k === '4')  CFG.mouseMode = 3;
+    if (k === 'S')  showLabels = !showLabels;
+    if (k === 'P') {
+      panelVisible = !panelVisible;
+      document.getElementById('panel').classList.toggle('visible', panelVisible);
+    }
+    if (k === 'I') {
+      infoVisible = !infoVisible;
+      document.getElementById('info').classList.toggle('visible', infoVisible);
+    }
+    if (k === 'R') {
       const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
       seedStr = Array.from({length: 6}, () => c[Math.floor(Math.random() * c.length)]).join('');
       document.getElementById('seed-box').value = seedStr;
@@ -333,22 +741,27 @@ new p5(s => {
     }
   };
 
+  // ── Click: plant star ────────────────────────────────────────────────────────
   s.mousePressed = function() {
     if (s.mouseX < 0 || s.mouseY < 0 ||
         s.mouseX > s.width || s.mouseY > s.height) return;
-    const bm  = biomeAt(s.mouseX, s.mouseY);
-    const nv  = s.noise(s.mouseX * 0.0028, s.mouseY * 0.0028, 55);
-    const r   = s.map(nv, 0, 1, 1.8, 5.2);
-    const dots = Array.from({length: CFG.worleyDots}, () => {
-      const a = s.random(s.TWO_PI);
-      const d = s.random(r + 1.5, CFG.worleyRadius);
-      return { dx: Math.cos(a) * d, dy: Math.sin(a) * d,
-               r: s.random(0.5, 1.6), alpha: s.random(22, 58) };
+    const bm      = biomeAt(s.mouseX, s.mouseY);
+    const nv      = s.noise(s.mouseX * 0.0028, s.mouseY * 0.0028, 55);
+    const r       = s.map(nv, 0, 1, 1.8, 5.2);
+    const numDots = bm === 2 ? 0 : bm === 3 ? 12 : 7;
+    const dotRad  = bm === 3 ? 18 : 11;
+    const dots    = Array.from({length: numDots}, () => {
+      const a = s.random(s.TWO_PI), d = s.random(r + 1.5, dotRad);
+      return { dx: Math.cos(a)*d, dy: Math.sin(a)*d,
+               r: s.random(0.5,1.6), alpha: s.random(22,58),
+               hueShift: bm === 4 && s.random() < 0.5 ? 42 : 0 };
     });
-    stars.push({ x: s.mouseX, y: s.mouseY, r, biome: bm, dots });
-    buildVoronoi();
-    const tail = edges.slice(-Math.min(6, edges.length));
-    tail.forEach(e => particles.push(makeParticle(edges.indexOf(e))));
+    stars.push({ x: s.mouseX, y: s.mouseY, ox: 0, oy: 0, vx: 0, vy: 0,
+                 r, biome: bm, dots, ringAngle: s.random(s.TWO_PI) });
+    buildGeometry();
+    edges.slice(-Math.min(6, edges.length)).forEach(e => {
+      const np = makeParticle(edges.indexOf(e)); if (np) particles.push(np);
+    });
   };
 
   s.windowResized = function() {
