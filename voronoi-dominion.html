@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>voronoi dominion</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060608; overflow: hidden; font-family: 'Courier New', monospace; }
+  canvas { display: block; }
+
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    color: #444;
+    font-size: 11px;
+    line-height: 2;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  #hud-state {
+    color: #666;
+    margin-bottom: 6px;
+  }
+
+  #hud-keys {
+    color: #2a2a30;
+    line-height: 1.9;
+  }
+
+  #panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 236px;
+    background: rgba(4, 4, 6, 0.92);
+    border-left: 1px solid #18181e;
+    padding: 20px 16px;
+    display: none;
+    overflow-y: auto;
+  }
+
+  #panel.open { display: block; }
+
+  #panel h3 {
+    color: #555;
+    font-size: 11px;
+    font-weight: normal;
+    letter-spacing: 0.08em;
+    margin-bottom: 20px;
+  }
+
+  .param-block {
+    margin-bottom: 16px;
+  }
+
+  .param-header {
+    display: flex;
+    justify-content: space-between;
+    color: #444;
+    font-size: 11px;
+    margin-bottom: 4px;
+  }
+
+  .param-header .val {
+    color: #666;
+  }
+
+  input[type=range] {
+    width: 100%;
+    accent-color: #3a3a44;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="hud-state">
+    <span id="hud-mode">mode · passive</span>
+    &nbsp;&nbsp;
+    <span id="hud-seeds">seeds · 16</span>
+  </div>
+  <div id="hud-keys">
+    h seeds &nbsp; e edges &nbsp; m mode<br>
+    + / − seeds &nbsp; p params &nbsp; r reset
+  </div>
+</div>
+
+<div id="panel">
+  <h3>parameters</h3>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6/dist/d3-delaunay.min.js"></script>
+<script>
+const CFG = {
+  seedCount:        16,
+  driftSpeed:       1.2,      // px/frame max displacement from noise
+  noiseEvo:         0.0020,   // how fast noise field evolves per frame
+  mouseRadius:      150,      // px influence radius
+  mouseStrength:    1.5,      // px/frame force at distance 0
+  wallMargin:       80,       // px from edge where soft push begins
+  wallStrength:     1.8,      // push force magnitude
+  showSeeds:        true,
+  showEdges:        true,
+  mouseMode:        'passive',
+}
+
+const MODES = ['passive', 'attractor', 'repulsor', 'vortex']
+
+const PARAMS = [
+  { key: 'driftSpeed',    label: 'drift speed',     min: 0.1,    max: 4.0,  step: 0.1,    fmt: v => v.toFixed(1) },
+  { key: 'noiseEvo',      label: 'field evolution', min: 0.0005, max: 0.01, step: 0.0005, fmt: v => v.toFixed(4) },
+  { key: 'mouseRadius',   label: 'mouse radius',    min: 30,     max: 400,  step: 10,     fmt: v => v.toFixed(0) },
+  { key: 'mouseStrength', label: 'mouse strength',  min: 0.1,    max: 5.0,  step: 0.1,    fmt: v => v.toFixed(1) },
+  { key: 'wallMargin',    label: 'wall margin',      min: 10,     max: 200,  step: 10,     fmt: v => v.toFixed(0) },
+  { key: 'wallStrength',  label: 'wall strength',    min: 0.1,    max: 5.0,  step: 0.1,    fmt: v => v.toFixed(1) },
+]
+
+// Build slider panel
+const panel = document.getElementById('panel')
+for (const p of PARAMS) {
+  const block = document.createElement('div')
+  block.className = 'param-block'
+
+  const header = document.createElement('div')
+  header.className = 'param-header'
+  const lbl = document.createElement('span')
+  lbl.textContent = p.label
+  const valEl = document.createElement('span')
+  valEl.className = 'val'
+  valEl.textContent = p.fmt(CFG[p.key])
+  header.appendChild(lbl)
+  header.appendChild(valEl)
+
+  const slider = document.createElement('input')
+  slider.type = 'range'
+  slider.min = p.min
+  slider.max = p.max
+  slider.step = p.step
+  slider.value = CFG[p.key]
+  slider.addEventListener('input', () => {
+    CFG[p.key] = parseFloat(slider.value)
+    valEl.textContent = p.fmt(CFG[p.key])
+  })
+
+  block.appendChild(header)
+  block.appendChild(slider)
+  panel.appendChild(block)
+}
+
+// ─── sketch ────────────────────────────────────────────────────────────────
+
+new p5(s => {
+  let seeds = []
+  let t = 0
+  const hudMode  = document.getElementById('hud-mode')
+  const hudSeeds = document.getElementById('hud-seeds')
+
+  // Shoelace polygon area
+  function polyArea(pts) {
+    let a = 0
+    const n = pts.length
+    for (let i = 0; i < n; i++) {
+      const [x1, y1] = pts[i]
+      const [x2, y2] = pts[(i + 1) % n]
+      a += x1 * y2 - x2 * y1
+    }
+    return Math.abs(a) / 2
+  }
+
+  function makeSeed(x, y) {
+    return {
+      x:   x ?? Math.random() * s.width,
+      y:   y ?? Math.random() * s.height,
+      ox:  Math.random() * 10000,   // independent noise coordinate x
+      oy:  Math.random() * 10000,   // independent noise coordinate y
+      hue: Math.random() * 360,     // identity color, fixed
+    }
+  }
+
+  function resetSeeds() {
+    seeds = Array.from({ length: CFG.seedCount }, () => makeSeed())
+    hudSeeds.textContent = `seeds · ${seeds.length}`
+    t = 0
+  }
+
+  s.setup = () => {
+    s.createCanvas(window.innerWidth, window.innerHeight)
+    s.colorMode(s.HSB, 360, 100, 100, 100)
+    resetSeeds()
+  }
+
+  s.windowResized = () => s.resizeCanvas(window.innerWidth, window.innerHeight)
+
+  s.draw = () => {
+    s.background('#060608')
+
+    const W = s.width, H = s.height
+    const mx = s.mouseX, my = s.mouseY
+
+    // ── update seeds ──────────────────────────────────────────────────────
+
+    for (const seed of seeds) {
+      // Noise drift — each seed has independent 1D offsets advancing over time
+      const nx = (s.noise(seed.ox, t) - 0.5) * 2
+      const ny = (s.noise(seed.oy, t) - 0.5) * 2
+      seed.x += nx * CFG.driftSpeed
+      seed.y += ny * CFG.driftSpeed
+
+      // Soft wall — inward push proportional to incursion depth
+      const m = CFG.wallMargin, ws = CFG.wallStrength
+      if (seed.x < m)     seed.x += ((m - seed.x) / m) * ws
+      if (seed.x > W - m) seed.x -= ((seed.x - (W - m)) / m) * ws
+      if (seed.y < m)     seed.y += ((m - seed.y) / m) * ws
+      if (seed.y > H - m) seed.y -= ((seed.y - (H - m)) / m) * ws
+
+      // Mouse influence
+      if (CFG.mouseMode !== 'passive') {
+        const dx   = seed.x - mx
+        const dy   = seed.y - my
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist > 0.5 && dist < CFG.mouseRadius) {
+          const falloff = (1 - dist / CFG.mouseRadius) * CFG.mouseStrength
+          const ux = dx / dist, uy = dy / dist
+          if (CFG.mouseMode === 'attractor') {
+            seed.x -= ux * falloff
+            seed.y -= uy * falloff
+          } else if (CFG.mouseMode === 'repulsor') {
+            seed.x += ux * falloff
+            seed.y += uy * falloff
+          } else if (CFG.mouseMode === 'vortex') {
+            // Tangential: rotate radius vector 90°
+            seed.x += -uy * falloff
+            seed.y +=  ux * falloff
+          }
+        }
+      }
+
+      // Hard clamp
+      seed.x = Math.max(1, Math.min(W - 1, seed.x))
+      seed.y = Math.max(1, Math.min(H - 1, seed.y))
+
+      // Advance noise coordinates
+      seed.ox += CFG.noiseEvo
+      seed.oy += CFG.noiseEvo
+    }
+    t += CFG.noiseEvo
+
+    // ── Voronoi ───────────────────────────────────────────────────────────
+
+    const delaunay = d3.Delaunay.from(seeds, d => d.x, d => d.y)
+    const voronoi  = delaunay.voronoi([0, 0, W, H])
+
+    const polys = seeds.map((_, i) => voronoi.cellPolygon(i) ?? [])
+    const areas = polys.map(p => p.length >= 3 ? polyArea(p) : 0)
+
+    const validAreas = areas.filter(a => a > 0)
+    const minA = Math.min(...validAreas) || 1
+    const maxA = Math.max(...validAreas) || 1
+
+    // ── draw cells ────────────────────────────────────────────────────────
+
+    s.noStroke()
+    for (let i = 0; i < seeds.length; i++) {
+      const poly = polys[i]
+      if (poly.length < 3) continue
+
+      // Normalize area 0→1 (0 = smallest, 1 = largest)
+      const normA = maxA > minA ? (areas[i] - minA) / (maxA - minA) : 0.5
+      // Small cell = vivid (compressed), large cell = pale (overextended)
+      const sat = s.map(normA, 0, 1, 70, 16)
+
+      s.fill(seeds[i].hue, sat, 22)
+      s.beginShape()
+      for (const [px, py] of poly) s.vertex(px, py)
+      s.endShape(s.CLOSE)
+    }
+
+    // ── draw edges ────────────────────────────────────────────────────────
+
+    if (CFG.showEdges) {
+      s.noFill()
+      s.stroke(0, 0, 50, 55)
+      s.strokeWeight(1)
+      for (let i = 0; i < seeds.length; i++) {
+        const poly = polys[i]
+        if (poly.length < 3) continue
+        s.beginShape()
+        for (const [px, py] of poly) s.vertex(px, py)
+        s.endShape(s.CLOSE)
+      }
+      s.noStroke()
+    }
+
+    // ── draw seed dots ────────────────────────────────────────────────────
+
+    if (CFG.showSeeds) {
+      s.noStroke()
+      for (let i = 0; i < seeds.length; i++) {
+        if (polys[i].length < 3) continue
+        const normA = maxA > minA ? (areas[i] - minA) / (maxA - minA) : 0.5
+        const sat   = s.map(normA, 0, 1, 70, 16)
+        s.fill(seeds[i].hue, Math.min(100, sat + 22), 78)
+        s.circle(seeds[i].x, seeds[i].y, 5)
+      }
+    }
+  }
+
+  // ── key bindings ──────────────────────────────────────────────────────────
+
+  s.keyPressed = () => {
+    const k = s.key
+
+    if (k === 'h' || k === 'H') {
+      CFG.showSeeds = !CFG.showSeeds
+
+    } else if (k === 'e' || k === 'E') {
+      CFG.showEdges = !CFG.showEdges
+
+    } else if (k === 'm' || k === 'M') {
+      const idx = MODES.indexOf(CFG.mouseMode)
+      CFG.mouseMode = MODES[(idx + 1) % MODES.length]
+      hudMode.textContent = `mode · ${CFG.mouseMode}`
+
+    } else if (k === 'p' || k === 'P') {
+      panel.classList.toggle('open')
+
+    } else if (k === 'r' || k === 'R') {
+      resetSeeds()
+
+    } else if (k === '+' || k === '=') {
+      seeds.push(makeSeed())
+      hudSeeds.textContent = `seeds · ${seeds.length}`
+
+    } else if ((k === '-' || k === '_') && seeds.length > 3) {
+      // Remove seed with smallest current cell area
+      const del = d3.Delaunay.from(seeds, d => d.x, d => d.y)
+      const vor = del.voronoi([0, 0, s.width, s.height])
+      const a   = seeds.map((_, i) => {
+        const p = vor.cellPolygon(i)
+        return p ? polyArea(p) : Infinity
+      })
+      seeds.splice(a.indexOf(Math.min(...a)), 1)
+      hudSeeds.textContent = `seeds · ${seeds.length}`
+    }
+  }
+})
+</script>
+</body>
+</html>
