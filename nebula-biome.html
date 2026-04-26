@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Nebula as Biome Map</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #060608; overflow: hidden; }
+    #hud {
+      position: fixed; top: 14px; left: 16px;
+      font-family: monospace; font-size: 11px; color: #555;
+      pointer-events: none; line-height: 1.8;
+    }
+    #seed-box {
+      position: fixed; top: 14px; right: 16px;
+      font-family: monospace; font-size: 11px;
+      background: transparent; border: none;
+      border-bottom: 1px solid #333; color: #777;
+      width: 90px; outline: none; text-align: right;
+    }
+  </style>
+</head>
+<body>
+<div id="hud"><span id="hud-line1"></span><br><span id="hud-line2"></span></div>
+<input id="seed-box" type="text" value="FENRIR">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6"></script>
+<script>
+const CFG = {
+  starCount:        55,
+  poissonRadius:    34,
+  fBmOctaves:       4,
+  fBmSpeed:         0.000055,
+  nebulaStep:       7,
+  nebulaRedraw:     4,
+  biomeScale:       0.0019,
+  particleCount:    720,
+  edgeGlowAlpha:    0.17,
+  cellFillAlpha:    0.08,
+  worleyDots:       7,
+  worleyRadius:     11,
+};
+
+const BIOMES = [
+  { name: 'Habitable',       hue:  42, sat: 68, bri: 62, speed: 0.004 },
+  { name: 'Gas Giant Belt',  hue:  18, sat: 88, bri: 72, speed: 0.011 },
+  { name: 'Dead Zone',       hue: 212, sat: 22, bri: 32, speed: 0.002 },
+  { name: 'Stellar Nursery', hue: 183, sat: 92, bri: 82, speed: 0.013 },
+  { name: 'Binary',          hue: 272, sat: 62, bri: 56, speed: 0.007 },
+];
+
+new p5(s => {
+
+  let stars = [], edges = [], particles = [];
+  let delaunay, voronoi;
+  let nebulaG;
+  let nebulaT = 0, _frame = 0;
+  let seedStr = 'FENRIR';
+  let showLabels = false;
+
+  // ── Seeded hash ──────────────────────────────────────────────
+  function hashStr(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++)
+      h = Math.imul(h ^ str.charCodeAt(i), 0x01000193) >>> 0;
+    return h;
+  }
+
+  // ── Poisson disk ─────────────────────────────────────────────
+  function poissonDisk(w, h, r) {
+    const cell = r / Math.sqrt(2);
+    const cols = Math.ceil(w / cell), rows = Math.ceil(h / cell);
+    const grid = new Array(cols * rows).fill(null);
+    const active = [], pts = [];
+
+    function gIdx(x, y) { return Math.floor(x / cell) + Math.floor(y / cell) * cols; }
+    function add(x, y) {
+      const p = {x, y}; pts.push(p); active.push(p); grid[gIdx(x, y)] = p;
+    }
+    add(w * 0.5, h * 0.5);
+
+    while (active.length) {
+      const idx = Math.floor(s.random(active.length));
+      const base = active[idx];
+      let found = false;
+      for (let k = 0; k < 28; k++) {
+        const a  = s.random(s.TWO_PI);
+        const d  = s.random(r, 2 * r);
+        const nx = base.x + Math.cos(a) * d;
+        const ny = base.y + Math.sin(a) * d;
+        if (nx < 24 || ny < 24 || nx > w - 24 || ny > h - 24) continue;
+        const gx = Math.floor(nx / cell), gy = Math.floor(ny / cell);
+        let ok = true;
+        for (let dx = -2; dx <= 2 && ok; dx++)
+          for (let dy = -2; dy <= 2 && ok; dy++) {
+            const cx = gx + dx, cy = gy + dy;
+            if (cx < 0 || cy < 0 || cx >= cols || cy >= rows) continue;
+            const n = grid[cx + cy * cols];
+            if (n && Math.hypot(n.x - nx, n.y - ny) < r) ok = false;
+          }
+        if (ok) { add(nx, ny); found = true; break; }
+      }
+      if (!found) active.splice(idx, 1);
+    }
+    return pts;
+  }
+
+  // ── Biome from noise ─────────────────────────────────────────
+  function biomeAt(x, y) {
+    const v = s.noise(x * CFG.biomeScale + 77, y * CFG.biomeScale + 33);
+    return Math.floor(v * BIOMES.length) % BIOMES.length;
+  }
+
+  // ── Build stars ───────────────────────────────────────────────
+  function buildStars() {
+    let pts = poissonDisk(s.width, s.height, CFG.poissonRadius);
+    s.shuffle(pts, true);
+    pts = pts.slice(0, CFG.starCount);
+
+    stars = pts.map(pt => {
+      const nv  = s.noise(pt.x * 0.0028, pt.y * 0.0028, 55);
+      const r   = s.map(nv, 0, 1, 1.8, 5.2);
+      const bm  = biomeAt(pt.x, pt.y);
+      const dots = Array.from({length: CFG.worleyDots}, () => {
+        const a = s.random(s.TWO_PI);
+        const d = s.random(r + 1.5, CFG.worleyRadius);
+        return { dx: Math.cos(a) * d, dy: Math.sin(a) * d,
+                 r: s.random(0.5, 1.6), alpha: s.random(22, 58) };
+      });
+      return { x: pt.x, y: pt.y, r, biome: bm, dots };
+    });
+  }
+
+  // ── Build Voronoi + edge list ─────────────────────────────────
+  function buildVoronoi() {
+    delaunay = d3.Delaunay.from(stars, st => st.x, st => st.y);
+    voronoi  = delaunay.voronoi([0, 0, s.width, s.height]);
+
+    edges = [];
+    const seen = new Set();
+    for (let i = 0; i < stars.length; i++) {
+      for (const j of delaunay.neighbors(i)) {
+        if (j <= i) continue;
+        const key = i + '-' + j;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const pi = voronoi.cellPolygon(i);
+        const pj = voronoi.cellPolygon(j);
+        if (!pi || !pj) continue;
+        const tol = 1.8;
+        const shared = pi.filter(([ax, ay]) =>
+          pj.some(([bx, by]) => Math.hypot(ax - bx, ay - by) < tol)
+        );
+        if (shared.length >= 2) {
+          edges.push({
+            ax: shared[0][0],               ay: shared[0][1],
+            bx: shared[shared.length-1][0], by: shared[shared.length-1][1],
+            biomeA: stars[i].biome, biomeB: stars[j].biome,
+          });
+        }
+      }
+    }
+  }
+
+  // ── Particles ─────────────────────────────────────────────────
+  function makeParticle(ei) {
+    const e  = edges[ei % edges.length];
+    const bA = BIOMES[e.biomeA], bB = BIOMES[e.biomeB];
+    const bm = s.random() < 0.5 ? bA : bB;
+    return {
+      ei,
+      t:     s.random(),
+      dir:   s.random() < 0.5 ? 1 : -1,
+      speed: s.random((bA.speed + bB.speed) * 0.35, (bA.speed + bB.speed) * 0.85),
+      hue:   bm.hue + s.random(-12, 12),
+      sat:   s.random(52, 88),
+      bri:   s.random(62, 96),
+      alpha: s.random(28, 82),
+      r:     s.random(0.7, 2.1),
+    };
+  }
+
+  function buildParticles() {
+    particles = [];
+    if (!edges.length) return;
+    for (let i = 0; i < CFG.particleCount; i++)
+      particles.push(makeParticle(i % edges.length));
+  }
+
+  // ── Draw nebula offscreen ─────────────────────────────────────
+  function drawNebula() {
+    nebulaG.colorMode(s.HSB, 360, 100, 100, 100);
+    nebulaG.noStroke();
+    nebulaG.background(6, 6, 8);
+    const step = CFG.nebulaStep;
+    const tx = nebulaT * 0.28, ty = nebulaT * 0.19;
+
+    for (let x = 0; x < s.width; x += step) {
+      for (let y = 0; y < s.height; y += step) {
+        let val = 0, amp = 1, freq = 1, norm = 0;
+        for (let oct = 0; oct < CFG.fBmOctaves; oct++) {
+          val  += s.noise(x * 0.0028 * freq + tx, y * 0.0028 * freq + ty) * amp;
+          norm += amp;
+          amp  *= 0.52; freq *= 2.1;
+        }
+        val /= norm;
+        if (val < 0.40) continue;
+        const bri = s.map(val, 0.40, 1.0, 0, 52);
+        const zv  = s.noise(x * 0.0015 + 8, y * 0.0015 + 8);
+        const hue = zv < 0.33 ? 258 : zv < 0.60 ? 187 : 36;
+        nebulaG.fill(hue, 58, bri, 88);
+        nebulaG.rect(x, y, step, step);
+      }
+    }
+  }
+
+  // ── Init ──────────────────────────────────────────────────────
+  function init() {
+    s.randomSeed(hashStr(seedStr));
+    s.noiseSeed(hashStr(seedStr));
+    _frame = 0;
+    buildStars();
+    buildVoronoi();
+    buildParticles();
+    drawNebula();
+  }
+
+  // ── setup ─────────────────────────────────────────────────────
+  s.setup = function() {
+    s.createCanvas(s.windowWidth, s.windowHeight);
+    s.colorMode(s.HSB, 360, 100, 100, 100);
+    s.pixelDensity(1);
+    nebulaG = s.createGraphics(s.width, s.height);
+    nebulaG.pixelDensity(1);
+    init();
+
+    document.getElementById('seed-box').addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') {
+        seedStr = ev.target.value.trim().toUpperCase() || 'FENRIR';
+        init();
+      }
+    });
+  };
+
+  // ── draw ──────────────────────────────────────────────────────
+  s.draw = function() {
+    _frame++;
+    nebulaT += CFG.fBmSpeed;
+    if (_frame % CFG.nebulaRedraw === 0) drawNebula();
+
+    s.image(nebulaG, 0, 0);
+    if (!stars.length || !voronoi) return;
+
+    // Cell zone fills
+    s.noStroke();
+    for (let i = 0; i < stars.length; i++) {
+      const poly = voronoi.cellPolygon(i);
+      if (!poly) continue;
+      const bm = BIOMES[stars[i].biome];
+      s.fill(bm.hue, bm.sat * 0.55, bm.bri * 0.45, CFG.cellFillAlpha * 100);
+      s.beginShape();
+      for (const [vx, vy] of poly) s.vertex(vx, vy);
+      s.endShape(s.CLOSE);
+    }
+
+    // Voronoi edge glow (two-pass)
+    for (const e of edges) {
+      const h = (BIOMES[e.biomeA].hue + BIOMES[e.biomeB].hue) * 0.5;
+      s.stroke(h, 38, 78, CFG.edgeGlowAlpha * 100);
+      s.strokeWeight(1.1);
+      s.line(e.ax, e.ay, e.bx, e.by);
+      s.stroke(h, 28, 68, CFG.edgeGlowAlpha * 35);
+      s.strokeWeight(3.5);
+      s.line(e.ax, e.ay, e.bx, e.by);
+    }
+
+    // Stars
+    s.noStroke();
+    for (const st of stars) {
+      const bm = BIOMES[st.biome];
+      s.fill(bm.hue, 48, 88, 30);
+      s.circle(st.x, st.y, st.r * 7);
+      s.fill(bm.hue, 18, 100, 96);
+      s.circle(st.x, st.y, st.r * 2.2);
+      for (const d of st.dots) {
+        s.fill(bm.hue, 55, 72, d.alpha);
+        s.circle(st.x + d.dx, st.y + d.dy, d.r * 2);
+      }
+      if (showLabels) {
+        s.fill(bm.hue, 25, 80, 72);
+        s.noStroke();
+        s.textSize(9);
+        s.textFont('monospace');
+        s.text(bm.name.toUpperCase(), st.x + st.r + 6, st.y + 3);
+      }
+    }
+
+    // Particles
+    s.noStroke();
+    for (const pt of particles) {
+      const e = edges[pt.ei];
+      if (!e) continue;
+      pt.t += pt.speed * pt.dir;
+      if (pt.t >= 1 || pt.t <= 0) {
+        pt.t = s.constrain(pt.t, 0, 1);
+        pt.dir *= -1;
+        if (s.random() < 0.2) {
+          const np = makeParticle(Math.floor(s.random(edges.length)));
+          Object.assign(pt, np);
+          continue;
+        }
+      }
+      const x = e.ax + (e.bx - e.ax) * pt.t;
+      const y = e.ay + (e.by - e.ay) * pt.t;
+      s.fill(pt.hue, pt.sat, pt.bri, pt.alpha);
+      s.circle(x, y, pt.r * 2);
+    }
+
+    // HUD (safe DOM text update)
+    document.getElementById('hud-line1').textContent =
+      'seed: ' + seedStr + '   stars: ' + stars.length + '   edges: ' + edges.length;
+    document.getElementById('hud-line2').textContent =
+      'S = labels   R = random seed   click = add star';
+  };
+
+  s.keyPressed = function() {
+    if (s.key === 'S' || s.key === 's') showLabels = !showLabels;
+    if (s.key === 'R' || s.key === 'r') {
+      const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      seedStr = Array.from({length: 6}, () => c[Math.floor(Math.random() * c.length)]).join('');
+      document.getElementById('seed-box').value = seedStr;
+      init();
+    }
+  };
+
+  s.mousePressed = function() {
+    if (s.mouseX < 0 || s.mouseY < 0 ||
+        s.mouseX > s.width || s.mouseY > s.height) return;
+    const bm  = biomeAt(s.mouseX, s.mouseY);
+    const nv  = s.noise(s.mouseX * 0.0028, s.mouseY * 0.0028, 55);
+    const r   = s.map(nv, 0, 1, 1.8, 5.2);
+    const dots = Array.from({length: CFG.worleyDots}, () => {
+      const a = s.random(s.TWO_PI);
+      const d = s.random(r + 1.5, CFG.worleyRadius);
+      return { dx: Math.cos(a) * d, dy: Math.sin(a) * d,
+               r: s.random(0.5, 1.6), alpha: s.random(22, 58) };
+    });
+    stars.push({ x: s.mouseX, y: s.mouseY, r, biome: bm, dots });
+    buildVoronoi();
+    const tail = edges.slice(-Math.min(6, edges.length));
+    tail.forEach(e => particles.push(makeParticle(edges.indexOf(e))));
+  };
+
+  s.windowResized = function() {
+    s.resizeCanvas(s.windowWidth, s.windowHeight);
+    nebulaG.resizeCanvas(s.width, s.height);
+    init();
+  };
+
+});
+</script>
+</body>
+</html>
