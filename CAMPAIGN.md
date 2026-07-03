@@ -1,5 +1,14 @@
 # sketches — Campaign Log
 
+## Active Thread
+_Checkpoint: 2026-07-03T21:35:00Z_
+
+**In progress:** forge/ (procedural sword & axe generator) shipped functionally — commit `04ca66a`, all clean.
+**Context:** Built via `/usul-idea-to-design`: reverse-engineered noahsprerogative.com/prism's live JS (hex hash → DNA params → GLSL SDF raymarcher) to confirm the architecture, then built the same pipeline for swords/axes as one combined generator (weapon_class rolled from the seed, not two separate sketches). Tested core (`params.mjs`, 5 behaviors green) + WebGL view (`index.html`). Two browser-verify passes caught and fixed a washed-out background (gamma applied twice) and a hammer-poll that read as a second blade.
+**Next action:** Usul reviews the visual craft (open gate — headless confirmed it renders correctly, not that it looks good). Serve over http (ES modules need a server, not `file://`) and direct tuning in words: blade profiles / head silhouettes / metal tone / accent frequency are all named params in `params.mjs`'s DNA table or the type-mod tables at the top of `index.html`.
+**Suggested skills:** none needed — direct craft-loop tuning, same pattern as weirding-synth audio-feel gate.
+**Files in flight:** none (all committed)
+
 ## Status
 Active. Creative coding sandbox — generative art experiments in self-contained HTML/JS files.
 
