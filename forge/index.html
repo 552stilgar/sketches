@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>forge</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #15171c; --panel: #1c1f26; --line: #2b2f39;
+  --ink: #c7ccd6; --mut: #7b818d; --stage-bg: #0b0d12;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  min-height: 100%; display: flex; flex-direction: column; align-items: center;
+}
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+header { text-align: center; padding: 30px 20px 18px; user-select: none; }
+.wordmark { font-size: clamp(34px, 6vw, 68px); font-weight: 700; letter-spacing: -0.02em; }
+.sub { color: var(--mut); font-size: 13px; margin-top: 6px; }
+.toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center;
+  padding: 0 18px; margin-bottom: 16px;
+}
+.field {
+  display: flex; background: var(--panel); border: 1px solid var(--line);
+  border-radius: 7px; overflow: hidden;
+}
+.field input {
+  background: transparent; border: 0; outline: none; color: var(--ink);
+  font: 13px ui-monospace, Consolas, monospace; padding: 8px 12px; width: 200px;
+}
+button.btn {
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+  padding: 8px 14px; font: 600 13px ui-sans-serif, system-ui, sans-serif;
+  border-radius: 7px; cursor: pointer; transition: border-color .12s, color .12s;
+}
+button.btn:hover { border-color: #4a505c; color: #fff; }
+button.btn.on { border-color: #6b7280; color: #fff; }
+.stage-wrap { display: flex; justify-content: center; width: 100%; padding: 0 18px; }
+.stage {
+  position: relative; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--stage-bg); box-shadow: 0 16px 48px rgba(0,0,0,.3);
+  width: min(520px, 92vw); height: min(560px, 68vh); overflow: hidden;
+}
+#stage-canvas {
+  width: 100%; height: 100%; display: block; image-rendering: pixelated;
+  cursor: grab; touch-action: none;
+}
+#stage-canvas:active { cursor: grabbing; }
+#stage-hash {
+  position: absolute; left: 12px; bottom: 10px; color: var(--mut); font-size: 12px;
+  pointer-events: none;
+}
+.grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px; width: min(920px, 94vw); margin: 26px 0 40px; padding: 0 18px;
+}
+.cell {
+  background: var(--stage-bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 8px 6px; cursor: pointer; transition: border-color .12s;
+}
+.cell:hover { border-color: #4a505c; }
+.cell.sel { border-color: #8a93a6; }
+.cell canvas { width: 100%; display: block; image-rendering: pixelated; border-radius: 6px; }
+.cell .cap { color: var(--mut); font-size: 11px; text-align: center; padding-top: 6px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wordmark mono">forge</div>
+  <div class="sub">seeded arms — every hash is a weapon</div>
+</header>
+
+<div class="toolbar">
+  <div class="field">
+    <input id="hash-input" class="mono" placeholder="hash or token…" spellcheck="false">
+  </div>
+  <button class="btn" id="btn-load">Load</button>
+  <button class="btn" id="btn-random">⟳ Random</button>
+  <button class="btn on" id="f-all">All</button>
+  <button class="btn" id="f-sword">Swords</button>
+  <button class="btn" id="f-axe">Axes</button>
+  <button class="btn" id="btn-link">Copy Link</button>
+  <button class="btn" id="btn-png">PNG</button>
+</div>
+
+<div class="stage-wrap">
+  <div class="stage">
+    <canvas id="stage-canvas"></canvas>
+    <div id="stage-hash" class="mono"></div>
+  </div>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script type="module">
+import {
+  paramsFromHash, deriveLayout, randHex, hashToSeed, mulberry32,
+  encodeToken, decodeToken, applyOverrides, clamp,
+} from './params.mjs';
+
+const CFG = {
+  gridCount: 12,
+  stageRes: 220,        // internal raymarch width (pixelated charm, cheap GPU)
+  thumbRes: 120,
+  thumbAspect: 1.25,
+  fov: 0.62,
+};
+
+// ---------------------------------------------------------------------------
+// Shaders
+// ---------------------------------------------------------------------------
+const VERT = `
+attribute vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const FRAG = `
+precision highp float;
+
+uniform vec2  u_res;
+uniform float u_yaw, u_pitch, u_dist, u_centerY;
+uniform float u_class;            // 0 sword, 1 axe
+
+// sword
+uniform float u_bladeRoot, u_bladeLen, u_bladeW, u_bladeTh, u_taper, u_curve;
+uniform float u_leaf, u_tipFrac, u_tipStyle;         // tipStyle: 0 point, 1 clip, 2 round
+uniform float u_fullerN, u_fullerDepth;
+uniform float u_guardType, u_guardSpan, u_guardThick, u_guardDroop;
+uniform float u_gripLen, u_gripR, u_wrapBands;
+uniform float u_pommelType, u_pommelR, u_pommelY;
+
+// axe
+uniform float u_haftLen, u_haftR, u_haftCurve, u_haftWrap;
+uniform float u_headType, u_headY, u_headHalfH, u_edgeReach, u_edgeSweep;
+uniform float u_beardDepth, u_cheek, u_pollType;
+
+// material + light
+uniform vec3  u_steelCol, u_accentCol;
+uniform float u_accentOn;
+uniform vec3  u_lightDir;
+
+const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
+
+float sdSphere(vec3 p, float r) { return length(p) - r; }
+float sdBox(vec3 p, vec3 b) {
+  vec3 q = abs(p) - b;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+float sdCapsule(vec3 p, vec3 a, vec3 b, float r) {
+  vec3 pa = p - a, ba = b - a;
+  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba * h) - r;
+}
+float sdCylY(vec3 p, float h, float r) {
+  vec2 d = abs(vec2(length(p.xz), p.y)) - vec2(r, h);
+  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+}
+float sdCylZ(vec3 p, float h, float r) {
+  vec2 d = abs(vec2(length(p.xy), p.z)) - vec2(r, h);
+  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+}
+float sdTorusZ(vec3 p, float R, float r) {
+  return length(vec2(length(p.xy) - R, p.z)) - r;
+}
+float sdOcta(vec3 p, float s) {
+  p = abs(p);
+  return (p.x + p.y + p.z - s) * 0.57735027;
+}
+float sdConeY(vec3 p, float h, float r1, float r2) {
+  // capped cone along y, base r1 at y=0 up to r2 at y=h
+  float t = clamp(p.y / h, 0.0, 1.0);
+  float r = mix(r1, r2, t);
+  vec2 d = vec2(length(p.xz) - r, max(-p.y, p.y - h));
+  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) * 0.9;
+}
+vec2 opU(vec2 a, vec2 b) { return a.x < b.x ? a : b; }
+
+vec2 mapSword(vec3 p) {
+  // -- blade (bent space, tapered rhombus cross-section) --
+  float t = clamp((p.y - u_bladeRoot) / u_bladeLen, 0.0, 1.0);
+  vec3 q = p;
+  q.x -= u_curve * t * t * u_bladeLen;
+
+  float wProf = 1.0 - u_taper * t;
+  wProf = mix(wProf, wProf * (0.62 + 3.2 * t * (1.0 - t) * (1.0 - t * 0.35)), u_leaf);
+  float tipT = smoothstep(1.0, 1.0 - u_tipFrac, t);
+  float tipMul = (u_tipStyle > 1.5) ? sqrt(tipT) : tipT;   // round keeps shoulders
+  float w = max(u_bladeW * wProf * tipMul, 1e-4);
+
+  float th = u_bladeTh * (0.55 + 0.45 * wProf) * max(tipMul, 0.15);
+  if (u_fullerN > 0.5) {
+    float fx = u_fullerN < 1.5 ? abs(q.x) : abs(abs(q.x) - w * 0.38);
+    float groove = smoothstep(w * 0.5, 0.0, fx)
+                 * u_fullerDepth
+                 * smoothstep(0.02, 0.12, t) * smoothstep(1.0, 0.8, t);
+    th *= 1.0 - 0.55 * groove;
+  }
+
+  float cs = (abs(q.x) / w + abs(q.z) / th - 1.0) * min(w, th) * 0.62;
+  float yb = max(u_bladeRoot - p.y, p.y - (u_bladeRoot + u_bladeLen));
+  float dBlade = max(cs, yb);
+  if (u_tipStyle > 0.5 && u_tipStyle < 1.5) {
+    // clip point: shear the last stretch of the spine with a plane
+    vec2 tp = q.xy - vec2(0.0, u_bladeRoot + u_bladeLen);
+    dBlade = max(dBlade, dot(tp, normalize(vec2(0.72, 0.35))) - u_bladeLen * u_tipFrac * 0.55);
+  }
+  vec2 res = vec2(dBlade * 0.85, MAT_STEEL);
+
+  // -- guard --
+  float g = 1e9;
+  if (u_guardType < 0.5) {                       // bar
+    g = sdBox(p, vec3(u_guardSpan, u_guardThick, u_guardThick * 1.5));
+  } else if (u_guardType < 1.5) {                // quillons
+    vec3 pm = vec3(abs(p.x), p.y, p.z);
+    g = sdCapsule(pm, vec3(0.0), vec3(u_guardSpan, u_guardDroop * u_guardSpan, 0.0), u_guardThick);
+  } else if (u_guardType < 2.5) {                // disc
+    g = sdCylY(p, u_guardThick * 0.9, u_guardSpan * 0.62);
+  } else {                                       // crescent
+    float d1 = sdCylZ(p, u_guardThick * 1.1, u_guardSpan * 0.72);
+    float d2 = sdCylZ(p - vec3(0.0, u_guardSpan * 0.5, 0.0), u_guardThick * 2.2, u_guardSpan * 0.72);
+    g = max(d1, -d2);
+  }
+  res = opU(res, vec2(g, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+
+  // -- grip --
+  float gr = u_gripR;
+  if (u_wrapBands > 0.5) {
+    gr += 0.0035 * sin(p.y / u_gripLen * u_wrapBands * 6.28318);
+  }
+  float dGrip = sdCapsule(p, vec3(0.0, -0.01, 0.0), vec3(0.0, -u_gripLen, 0.0), gr);
+  res = opU(res, vec2(dGrip, MAT_GRIP));
+
+  // -- pommel --
+  vec3 pp = p - vec3(0.0, u_pommelY, 0.0);
+  float pm = 1e9;
+  if (u_pommelType < 0.5)      pm = sdCylZ(pp, u_pommelR * 0.34, u_pommelR);
+  else if (u_pommelType < 1.5) pm = sdSphere(pp, u_pommelR);
+  else if (u_pommelType < 2.5) pm = sdConeY(pp - vec3(0.0, -u_pommelR, 0.0), u_pommelR * 2.0, u_pommelR, u_pommelR * 0.45);
+  else if (u_pommelType < 3.5) pm = sdOcta(pp, u_pommelR * 1.25);
+  else                         pm = sdTorusZ(pp, u_pommelR * 0.72, u_pommelR * 0.34);
+  res = opU(res, vec2(pm, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  return res;
+}
+
+vec2 mapAxe(vec3 p) {
+  // -- haft (bent space) --
+  float t = clamp(p.y / u_haftLen, 0.0, 1.0);
+  vec3 q = p;
+  q.x -= u_haftCurve * t * t * u_haftLen;
+  float hr = u_haftR * (1.0 + 0.18 * (1.0 - t));
+  if (u_haftWrap > 0.5) {
+    float band = smoothstep(0.02, 0.0, abs(t - 0.16)) + smoothstep(0.02, 0.0, abs(t - 0.86));
+    hr += 0.004 * band * sin(p.y * 260.0);
+  }
+  float dHaft = sdCapsule(q, vec3(0.0), vec3(0.0, u_haftLen, 0.0), hr) * 0.9;
+  vec2 res = vec2(dHaft, MAT_WOOD);
+
+  // -- head: disc-cut wedge, optionally mirrored (double bit) --
+  vec3 h = p - vec3(0.0, u_headY, 0.0);
+  if (u_headType > 1.5 && u_headType < 2.5) h.x = abs(h.x);   // double_bit
+
+  float broad = (u_headType > 0.5 && u_headType < 1.5) ? 1.35 : 1.0;   // broad
+  float war   = (u_headType > 2.5) ? 0.72 : 1.0;                       // war: compact
+  float halfH = u_headHalfH * broad * war;
+
+  float R = mix(2.6, 0.55, u_edgeSweep) * halfH + u_edgeReach;
+  vec2 c = vec2(u_edgeReach - R, 0.0);
+  float dDisc = length(h.xy - c) - R;
+  float sx = clamp(h.x / u_edgeReach, 0.0, 1.0);
+  float vLim = abs(h.y) - mix(halfH * 0.42, halfH, sx);
+  float dBody = max(dDisc, max(vLim, -h.x - u_haftR * 1.6));
+  // beard: hook carved from the lower front
+  float dBeard = length(h.xy - vec2(u_edgeReach * 0.42, -halfH * (0.2 + u_beardDepth)))
+               - halfH * (0.55 + u_beardDepth * 0.5);
+  dBody = max(dBody, -mix(1e9, dBeard, step(0.05, u_beardDepth)));
+  float thick = mix(u_cheek, 0.004, sx);
+  float dHead = max(dBody, abs(h.z) - thick);
+  res = opU(res, vec2(dHead * 0.8, MAT_STEEL));
+
+  // -- eye collar --
+  float dEye = sdCylY(h, halfH * 0.5, u_haftR * 1.9);
+  res = opU(res, vec2(dEye, MAT_STEEL));
+
+  // -- poll (skip on double bit) --
+  if (u_headType < 1.5 || u_headType > 2.5) {
+    float pl = 1e9;
+    if (u_pollType > 1.5) {          // spike
+      float tt = clamp(-h.x / (u_edgeReach * 0.5), 0.0, 1.0);
+      vec2 d = vec2(length(h.yz) - mix(halfH * 0.22, 0.002, tt), max(h.x, -h.x - u_edgeReach * 0.5));
+      pl = min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) * 0.85;
+    } else if (u_pollType > 0.5) {   // hammer: stubby block, must not read as a second blade
+      pl = sdBox(h - vec3(-u_haftR * 2.2, 0.0, 0.0), vec3(u_haftR * 1.05, halfH * 0.26, u_cheek * 1.2));
+    }
+    res = opU(res, vec2(pl, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  }
+  return res;
+}
+
+vec2 map(vec3 p) { return u_class < 0.5 ? mapSword(p) : mapAxe(p); }
+
+vec3 calcNormal(vec3 p) {
+  const vec2 e = vec2(0.0008, -0.0008);
+  return normalize(
+    e.xyy * map(p + e.xyy).x + e.yyx * map(p + e.yyx).x +
+    e.yxy * map(p + e.yxy).x + e.xxx * map(p + e.xxx).x);
+}
+
+float calcAO(vec3 p, vec3 n) {
+  float occ = 0.0, sca = 1.0;
+  for (int i = 0; i < 5; i++) {
+    float hh = 0.01 + 0.05 * float(i);
+    occ += (hh - map(p + n * hh).x) * sca;
+    sca *= 0.6;
+  }
+  return clamp(1.0 - 2.2 * occ, 0.0, 1.0);
+}
+
+float hash21(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
+
+void main() {
+  vec2 uv = (2.0 * gl_FragCoord.xy - u_res) / u_res.y;
+
+  vec3 target = vec3(0.0, u_centerY, 0.0);
+  float cp = cos(u_pitch), sp = sin(u_pitch);
+  float cy = cos(u_yaw),  sy = sin(u_yaw);
+  vec3 ro = target + u_dist * vec3(sy * cp, sp, cy * cp);
+  vec3 fw = normalize(target - ro);
+  vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(rt, fw);
+  vec3 rd = normalize(fw + 0.62 * (uv.x * rt + uv.y * up));
+
+  // background: near-black with faint vignette (linear values chosen so the
+  // final gamma-corrected color lands on the page's #0b0d12 stage tone)
+  float vig = 1.0 - 0.35 * length(uv * 0.6);
+  vec3 col = vec3(0.0010, 0.0014, 0.0030) * vig;
+
+  float tt = 0.0; float mat = -1.0;
+  for (int i = 0; i < 100; i++) {
+    vec3 pos = ro + rd * tt;
+    vec2 h = map(pos);
+    if (h.x < 0.0008 * tt) { mat = h.y; break; }
+    tt += h.x;
+    if (tt > 20.0) break;
+  }
+
+  if (mat > 0.0) {
+    vec3 pos = ro + rd * tt;
+    vec3 n = calcNormal(pos);
+    float ao = calcAO(pos, n);
+
+    vec3 albedo; float specPow; float specK; float metal;
+    if (mat < 1.5)      { albedo = u_steelCol;  specPow = 42.0; specK = 1.0;  metal = 0.85; }
+    else if (mat < 2.5) { albedo = u_accentCol; specPow = 26.0; specK = 0.8;  metal = 0.7; }
+    else if (mat < 3.5) { albedo = vec3(0.16, 0.11, 0.08); specPow = 8.0; specK = 0.15; metal = 0.0; }
+    else                { albedo = vec3(0.30, 0.20, 0.12); specPow = 10.0; specK = 0.2;  metal = 0.0; }
+
+    // brushed streaks along the long axis, metals only
+    float brush = 0.9 + 0.2 * hash21(vec2(floor(pos.y * 340.0), mat));
+    vec3 L = normalize(u_lightDir);
+    float dif = clamp(dot(n, L), 0.0, 1.0);
+    vec3 hv = normalize(L - rd);
+    float spec = pow(clamp(dot(n, hv), 0.0, 1.0), specPow) * specK * brush;
+    float fre = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
+    // fake vertical env gradient for metallic sheen
+    vec3 refl = reflect(rd, n);
+    float env = 0.25 + 0.75 * clamp(refl.y * 0.5 + 0.5, 0.0, 1.0);
+
+    vec3 c = albedo * (0.20 * ao + 0.85 * dif);
+    c += metal * env * albedo * fre * 1.6 * ao;
+    c += spec * dif * vec3(1.0);
+    c += 0.18 * fre * vec3(0.55, 0.62, 0.75) * ao;
+    col = c;
+  }
+
+  col = pow(col, vec3(0.4545));
+  col += (hash21(gl_FragCoord.xy) - 0.5) / 255.0;
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Renderer
+// ---------------------------------------------------------------------------
+const BLADE_TYPES = ['arming', 'longsword', 'falchion', 'scimitar', 'leaf', 'estoc'];
+const TIP_STYLES = ['point', 'clip', 'round'];
+const GUARD_TYPES = ['bar', 'quillons', 'disc', 'crescent'];
+const POMMEL_TYPES = ['disc', 'sphere', 'scent_stopper', 'faceted', 'ring'];
+const HEAD_TYPES = ['bearded', 'broad', 'double_bit', 'war'];
+const POLL_TYPES = ['flat', 'hammer', 'spike'];
+
+function hsl2rgb(h, s, l) {
+  h = ((h % 360) + 360) % 360; s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g] = [c, x]; else if (h < 120) [r, g] = [x, c];
+  else if (h < 180) [g, b] = [c, x]; else if (h < 240) [g, b] = [x, c];
+  else if (h < 300) [r, b] = [x, c]; else [r, b] = [c, x];
+  return [r + m, g + m, b + m];
+}
+
+// blade_type expresses itself through width / thickness / curve / tip emphasis
+function bladeTypeMods(p) {
+  switch (p.blade_type) {
+    case 'longsword': return { wMul: 0.90, thMul: 1.05, curveMul: 0.12 };
+    case 'falchion':  return { wMul: 1.22, thMul: 0.85, curveMul: 1.0 };
+    case 'scimitar':  return { wMul: 0.95, thMul: 0.80, curveMul: 1.25 };
+    case 'leaf':      return { wMul: 1.10, thMul: 0.95, curveMul: 0.25 };
+    case 'estoc':     return { wMul: 0.58, thMul: 1.55, curveMul: 0.08 };
+    default:          return { wMul: 1.0, thMul: 1.0, curveMul: 0.18 };   // arming
+  }
+}
+
+function createRenderer(canvas) {
+  const gl = canvas.getContext('webgl', { antialias: false, preserveDrawingBuffer: true });
+  if (!gl) throw new Error('WebGL unavailable');
+
+  function sh(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      throw new Error(gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(prog));
+  }
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  const U = {};
+  const n = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) U[gl.getActiveUniform(prog, i).name] = gl.getUniformLocation(prog, gl.getActiveUniform(prog, i).name);
+  const f = (name, v) => U[name] && gl.uniform1f(U[name], v);
+  const v3 = (name, a) => U[name] && gl.uniform3f(U[name], a[0], a[1], a[2]);
+
+  function render(p, pose, w, h) {
+    canvas.width = w; canvas.height = h;
+    gl.viewport(0, 0, w, h);
+    const L = deriveLayout(p);
+
+    gl.uniform2f(U.u_res, w, h);
+    f('u_yaw', pose.yaw); f('u_pitch', pose.pitch);
+    f('u_class', p.weapon_class === 'axe' ? 1 : 0);
+
+    let centerY, span;
+    if (L.kind === 'sword') {
+      centerY = (L.tipY + L.pommelY - p.pommel_r) / 2;
+      span = L.totalLen;
+    } else {
+      centerY = p.haft_len * 0.52;
+      span = Math.max(p.haft_len, 2 * L.edgeReach * 1.6);
+    }
+    f('u_centerY', centerY);
+    f('u_dist', span * 1.12 * pose.zoom);
+
+    const m = bladeTypeMods(p);
+    f('u_bladeRoot', p.guard_thick / 2);
+    f('u_bladeLen', p.blade_len);
+    f('u_bladeW', p.blade_w * m.wMul);
+    f('u_bladeTh', p.blade_w * 0.34 * m.thMul);
+    f('u_taper', p.blade_taper);
+    f('u_curve', p.blade_curve * m.curveMul);
+    f('u_leaf', p.blade_type === 'leaf' ? 1 : 0);
+    f('u_tipFrac', p.tip_style === 'round' ? 0.06 : p.tip_style === 'clip' ? 0.16 : 0.11);
+    f('u_tipStyle', TIP_STYLES.indexOf(p.tip_style));
+    f('u_fullerN', p.fuller_n);
+    f('u_fullerDepth', p.fuller_depth);
+    f('u_guardType', GUARD_TYPES.indexOf(p.guard_type));
+    f('u_guardSpan', p.guard_span);
+    f('u_guardThick', p.guard_thick);
+    f('u_guardDroop', p.guard_droop);
+    f('u_gripLen', p.grip_len);
+    f('u_gripR', p.grip_r);
+    f('u_wrapBands', p.wrap_bands);
+    f('u_pommelType', POMMEL_TYPES.indexOf(p.pommel_type));
+    f('u_pommelR', p.pommel_r);
+    f('u_pommelY', L.kind === 'sword' ? L.pommelY : 0);
+
+    f('u_haftLen', p.haft_len);
+    f('u_haftR', p.haft_r);
+    f('u_haftCurve', p.haft_curve);
+    f('u_haftWrap', p.haft_wrap);
+    f('u_headType', HEAD_TYPES.indexOf(p.head_type));
+    f('u_headY', L.kind === 'axe' ? L.headY : 0);
+    f('u_headHalfH', p.head_w / 2);
+    f('u_edgeReach', L.kind === 'axe' ? L.edgeReach : 0.2);
+    f('u_edgeSweep', p.edge_sweep);
+    f('u_beardDepth', p.head_type === 'bearded' ? Math.max(p.beard_depth, 0.18) : p.beard_depth * 0.4);
+    f('u_cheek', p.cheek_thick);
+    f('u_pollType', POLL_TYPES.indexOf(p.poll_type));
+
+    v3('u_steelCol', hsl2rgb(p.steel_hue, p.steel_sat, 62));
+    v3('u_accentCol', hsl2rgb(p.accent_hue, 58, 48));
+    f('u_accentOn', p.accent_on);
+    const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
+    v3('u_lightDir', [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)]);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  return { render, canvas };
+}
+
+// ---------------------------------------------------------------------------
+// App state + UI
+// ---------------------------------------------------------------------------
+const stageCanvas = document.getElementById('stage-canvas');
+const stage = createRenderer(stageCanvas);
+const thumbGL = createRenderer(document.createElement('canvas'));
+
+const state = {
+  token: null, params: null,
+  pose: { yaw: 0.55, pitch: 0.08, zoom: 1.0 },
+  filter: 'all',
+  gridTokens: [],
+};
+
+function paramsFromToken(token) {
+  const { baseHash, overrides } = decodeToken(token);
+  return applyOverrides(paramsFromHash(baseHash), overrides);
+}
+
+function renderStage() {
+  const rect = stageCanvas.getBoundingClientRect();
+  const w = CFG.stageRes;
+  const h = Math.round(w * rect.height / Math.max(rect.width, 1));
+  stage.render(state.params, state.pose, w, h);
+  document.getElementById('stage-hash').textContent =
+    '#' + state.token + ' · ' + state.params.weapon_class + ' · ' +
+    (state.params.weapon_class === 'sword' ? state.params.blade_type : state.params.head_type);
+}
+
+function select(token, { fromGrid = false } = {}) {
+  state.token = token;
+  state.params = paramsFromToken(token);
+  state.pose = { yaw: 0.55, pitch: 0.08, zoom: 1.0 };
+  history.replaceState(null, '', '#' + token);
+  document.getElementById('hash-input').value = token;
+  renderStage();
+  document.querySelectorAll('.cell').forEach(c => c.classList.toggle('sel', c.dataset.token === token));
+  if (!fromGrid && !state.gridTokens.includes(token)) rebuildGrid(token);
+}
+
+function randomHashFor(filter) {
+  for (let i = 0; i < 200; i++) {
+    const hh = randHex(8);
+    if (filter === 'all' || paramsFromHash(hh).weapon_class === filter) return hh;
+  }
+  return randHex(8);
+}
+
+function rebuildGrid(firstToken = null) {
+  state.gridTokens = [];
+  if (firstToken) state.gridTokens.push(firstToken);
+  while (state.gridTokens.length < CFG.gridCount) state.gridTokens.push(randomHashFor(state.filter));
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  const tw = CFG.thumbRes, thh = Math.round(CFG.thumbRes * CFG.thumbAspect);
+  for (const token of state.gridTokens) {
+    const cell = document.createElement('div');
+    cell.className = 'cell' + (token === state.token ? ' sel' : '');
+    cell.dataset.token = token;
+    const cv = document.createElement('canvas');
+    cv.width = tw; cv.height = thh;
+    const cap = document.createElement('div');
+    cap.className = 'cap mono';
+    cap.textContent = '#' + token;
+    cell.append(cv, cap);
+    cell.addEventListener('click', () => select(token, { fromGrid: true }));
+    grid.appendChild(cell);
+
+    const p = paramsFromToken(token);
+    thumbGL.render(p, { yaw: 0.55, pitch: 0.06, zoom: 1.0 }, tw, thh);
+    cv.getContext('2d').drawImage(thumbGL.canvas, 0, 0);
+  }
+}
+
+// -- stage interaction --
+let drag = null;
+stageCanvas.addEventListener('pointerdown', e => {
+  drag = { x: e.clientX, y: e.clientY, yaw: state.pose.yaw, pitch: state.pose.pitch };
+  stageCanvas.setPointerCapture(e.pointerId);
+});
+stageCanvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  state.pose.yaw = drag.yaw + (e.clientX - drag.x) * 0.011;
+  state.pose.pitch = clamp(drag.pitch + (e.clientY - drag.y) * 0.009, -1.35, 1.35);
+  renderStage();
+});
+stageCanvas.addEventListener('pointerup', () => { drag = null; });
+stageCanvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  state.pose.zoom = clamp(state.pose.zoom * (e.deltaY > 0 ? 1.09 : 0.92), 0.45, 2.6);
+  renderStage();
+}, { passive: false });
+
+// -- toolbar --
+document.getElementById('btn-random').addEventListener('click', () => {
+  state.filter === 'all' ? rebuildGrid() : rebuildGrid();
+  select(state.gridTokens[0], { fromGrid: true });
+});
+document.getElementById('btn-load').addEventListener('click', () => {
+  const v = document.getElementById('hash-input').value.trim().replace(/^#/, '');
+  if (v) select(v);
+});
+document.getElementById('hash-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('btn-load').click();
+});
+for (const [id, val] of [['f-all', 'all'], ['f-sword', 'sword'], ['f-axe', 'axe']]) {
+  document.getElementById(id).addEventListener('click', () => {
+    state.filter = val;
+    for (const other of ['f-all', 'f-sword', 'f-axe']) {
+      document.getElementById(other).classList.toggle('on', other === id);
+    }
+    rebuildGrid();
+    select(state.gridTokens[0], { fromGrid: true });
+  });
+}
+document.getElementById('btn-link').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(location.href.split('#')[0] + '#' + state.token);
+  const b = document.getElementById('btn-link');
+  b.textContent = 'Copied ✓'; setTimeout(() => { b.textContent = 'Copy Link'; }, 1200);
+});
+document.getElementById('btn-png').addEventListener('click', () => {
+  renderStage();
+  const a = document.createElement('a');
+  a.download = 'forge-' + state.token.slice(0, 12) + '.png';
+  a.href = stageCanvas.toDataURL('image/png');
+  a.click();
+});
+
+window.addEventListener('resize', renderStage);
+window.addEventListener('hashchange', () => {
+  const t = location.hash.replace(/^#/, '');
+  if (t && t !== state.token) select(t);
+});
+
+// -- boot --
+const boot = location.hash.replace(/^#/, '') || randHex(8);
+rebuildGrid(boot);
+select(boot, { fromGrid: true });
+</script>
+</body>
+</html>
