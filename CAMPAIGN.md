@@ -1,12 +1,12 @@
 # sketches — Campaign Log
 
 ## Active Thread
-_Checkpoint: 2026-07-03T21:35:00Z_
+_Checkpoint: 2026-07-03T22:05:00Z_
 
-**In progress:** forge/ (procedural sword & axe generator) shipped functionally — commit `04ca66a`, all clean.
-**Context:** Built via `/usul-idea-to-design`: reverse-engineered noahsprerogative.com/prism's live JS (hex hash → DNA params → GLSL SDF raymarcher) to confirm the architecture, then built the same pipeline for swords/axes as one combined generator (weapon_class rolled from the seed, not two separate sketches). Tested core (`params.mjs`, 5 behaviors green) + WebGL view (`index.html`). Two browser-verify passes caught and fixed a washed-out background (gamma applied twice) and a hammer-poll that read as a second blade.
-**Next action:** Usul reviews the visual craft (open gate — headless confirmed it renders correctly, not that it looks good). Serve over http (ES modules need a server, not `file://`) and direct tuning in words: blade profiles / head silhouettes / metal tone / accent frequency are all named params in `params.mjs`'s DNA table or the type-mod tables at the top of `index.html`.
-**Suggested skills:** none needed — direct craft-loop tuning, same pattern as weirding-synth audio-feel gate.
+**In progress:** forge/ v1 iteration CLOSED — craft gate passed. Usul reviewed live via cloudflared quick tunnel 2026-07-03: "very interesting patterns for an initial version", no tuning notes. Tunnel + throwaway server torn down.
+**Context:** v1 = hex hash → 36-param DNA → GLSL SDF raymarcher, 12-specimen grid, share tokens, 5/5 tests. Next iteration is v2 advanced graphics ("end-level details"). Technique source: the 27-technique catalog at `~/relay-archive/operations/relay-recon-0002/field_report_docint-C.md` (domain warping, fBm, procedural texture cookbook, SDF idioms all cataloged).
+**Next action:** Usul picks from the v2 graphics proposal (anisotropic GGX + procedural env reflections, curvature-based edge wear, damascus domain-warp bands, soft shadows, wood/leather materials, rune engravings). DNA is append-only — v2 params append to the table so every v1 hash keeps its existing rolls.
+**Suggested skills:** `/usul-idea-to-design` for the v2 slice once techniques are picked.
 **Files in flight:** none (all committed)
 
 ## Status
