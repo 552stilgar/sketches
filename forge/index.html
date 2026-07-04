@@ -230,6 +230,13 @@ float sdConeY(vec3 p, float h, float r1, float r2) {
   return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) * 0.9;
 }
 vec2 opU(vec2 a, vec2 b) { return a.x < b.x ? a : b; }
+// v6: polynomial smooth-min — blends a new part into an existing surface with no
+// hard seam (iq's smin). Used where a discrete piece (langet strap, haft butt-cap)
+// is laid onto a continuous body instead of two independent primitives meeting edge-on.
+float smin(float a, float b, float k) {
+  float t6 = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, t6) - k * t6 * (1.0 - t6);
+}
 
 float hash21(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
 
@@ -338,23 +345,53 @@ vec2 mapAxe(vec3 p) {
   vec3 q = p;
   q.x -= u_haftCurve * t * t * u_haftLen;
   float hr = u_haftR * (1.0 + 0.18 * (1.0 - t));
-  if (u_haftWrap > 0.5) {
-    float band = smoothstep(0.02, 0.0, abs(t - 0.16)) + smoothstep(0.02, 0.0, abs(t - 0.86));
-    hr += 0.004 * band * sin(p.y * 260.0);
-  }
   float dHaft = sdCapsule(q, vec3(0.0), vec3(0.0, u_haftLen, 0.0), hr) * 0.9;
   vec2 res = vec2(dHaft, MAT_WOOD);
 
+  // v6: haft_wrap — a real cord-wrapped band at two hand positions (the same
+  // MAT_GRIP treatment the sword grip already gets), replacing the old
+  // sub-pixel radius ripple that never touched surfaceMat's wood-grain response.
+  if (u_haftWrap > 0.5) {
+    const float WRAP_HALF_WIDTH = 0.11;  // half-width of each band, haft-length fraction
+    const float WRAP_BULGE = 1.22;       // cord radius vs bare haft radius
+    const float WRAP_COIL_FREQ = 46.0;   // helical coil count along the band
+    const float WRAP_COIL_AMP = 0.0012;
+    float wMask = max(smoothstep(WRAP_HALF_WIDTH, 0.0, abs(t - 0.16)),
+                       smoothstep(WRAP_HALF_WIDTH, 0.0, abs(t - 0.86)));
+    if (wMask > 0.002) {
+      float coil = 0.5 + 0.5 * sin(p.y * WRAP_COIL_FREQ);
+      float wr = hr * mix(1.0, WRAP_BULGE, wMask) + WRAP_COIL_AMP * coil * wMask;
+      float dWrap = sdCapsule(q, vec3(0.0), vec3(0.0, u_haftLen, 0.0), wr) * 0.9;
+      res = opU(res, vec2(mix(1e9, dWrap, step(0.02, wMask)), MAT_GRIP));
+    }
+  }
+
+  // v6: haft_butt — a flared cap knob unioned onto the haft's base end.
+  if (u_haftButt > 0.5) {
+    const float BUTT_HALF_H = 0.028;
+    const float BUTT_FLARE = 1.35;
+    float dButt = smin(sdCylY(q, BUTT_HALF_H, hr * BUTT_FLARE), dHaft, 0.02);
+    res = opU(res, vec2(dButt, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  }
+
   // -- head: disc-cut wedge, optionally mirrored (double bit) --
   vec3 h = p - vec3(0.0, u_headY, 0.0);
-  if (u_headType > 1.5 && u_headType < 2.5) h.x = abs(h.x);   // double_bit
+  float side = h.x < 0.0 ? -1.0 : 1.0;                 // which bit, retained through the mirror
+  bool isDoubleBit = (u_headType > 1.5 && u_headType < 2.5);
+  if (isDoubleBit) h.x = abs(h.x);   // double_bit
 
   float broad = (u_headType > 0.5 && u_headType < 1.5) ? 1.35 : 1.0;   // broad
   float war   = (u_headType > 2.5) ? 0.72 : 1.0;                       // war: compact
   float halfH = u_headHalfH * broad * war;
 
-  float R = mix(2.6, 0.55, u_edgeSweep) * halfH + u_edgeReach;
-  vec2 c = vec2(u_edgeReach - R, 0.0);
+  // v6: poll_type's roll was dead on double_bit heads (no poll geometry ever
+  // renders there — see below). Repurpose it to skew reach/sweep between the
+  // two bits instead of leaving the draw with zero visual effect: real
+  // double-bits are rarely perfectly symmetric.
+  float pollAsym = isDoubleBit ? u_pollType * 0.14 : 0.0;   // 0 / 0.14 / 0.28
+  float edgeReachA = u_edgeReach * (1.0 + pollAsym * side);
+  float R = mix(2.6, 0.55, u_edgeSweep) * halfH * (1.0 - 0.12 * pollAsym * side) + edgeReachA;
+  vec2 c = vec2(edgeReachA - R, 0.0);
   float dDisc = length(h.xy - c) - R;
   // v4: edge nicks — bites along the edge arc once wear is heavy
   if (u_wear > 0.55) {
@@ -362,30 +399,64 @@ vec2 mapAxe(vec3 p) {
     float nick = smoothstep(0.75, 1.0, vnoise(vec2(ea * 14.0, 2.3)));
     dDisc += nick * (u_wear - 0.55) * halfH * 0.18;
   }
-  float sx = clamp(h.x / u_edgeReach, 0.0, 1.0);
+  float sx = clamp(h.x / edgeReachA, 0.0, 1.0);
   float vLim = abs(h.y) - mix(halfH * 0.42, halfH, sx);
   float dBody = max(dDisc, max(vLim, -h.x - u_haftR * 1.6));
-  // beard: hook carved from the lower front
-  float dBeard = length(h.xy - vec2(u_edgeReach * 0.42, -halfH * (0.2 + u_beardDepth)))
-               - halfH * (0.55 + u_beardDepth * 0.5);
-  dBody = max(dBody, -mix(1e9, dBeard, step(0.05, u_beardDepth)));
+
+  // v6: beard is gated fully to bearded heads (0 elsewhere) — the other three
+  // head types no longer get a dampened partial hook indistinguishable from
+  // "no beard." beard_depth's reclaimed roll is spent below (war poll spike).
+  bool isBearded = u_headType < 0.5;
+  float beard = isBearded ? max(u_beardDepth, 0.18) : 0.0;
+  float dBeard = length(h.xy - vec2(edgeReachA * 0.42, -halfH * (0.2 + beard)))
+               - halfH * (0.55 + beard * 0.5);
+  dBody = max(dBody, -mix(1e9, dBeard, step(0.05, beard)));
+
   float thick = mix(u_cheek, 0.004, sx);
-  float dHead = max(dBody, abs(h.z) - thick);
+  // v6: cheek_profile bows the face radially from the eye instead of the old
+  // flat-slab clamp — concave (hollow-ground hewing face) or convex (forged
+  // bulge). Falls off toward the thin outer edge so the silhouette is unchanged.
+  float rFromEye = length(h.xy) / max(halfH * 1.8, 1e-4);
+  float bowFall = 1.0 - smoothstep(0.0, 1.0, rFromEye);
+  float cheekBow = 0.0;
+  if (u_cheekProfile > 1.5)      cheekBow =  thick * 0.60 * bowFall;   // convex
+  else if (u_cheekProfile > 0.5) cheekBow = -thick * 0.50 * bowFall;   // concave
+  float dHead = max(dBody, abs(h.z) - (thick + cheekBow));
   res = opU(res, vec2(dHead * 0.8, MAT_STEEL));
 
   // -- eye collar --
   float dEye = sdCylY(h, halfH * 0.5, u_haftR * 1.9);
   res = opU(res, vec2(dEye, MAT_STEEL));
 
-  // -- poll (skip on double bit) --
-  if (u_headType < 1.5 || u_headType > 2.5) {
+  // v6: langets — metal straps from the eye collar running down the haft,
+  // hugging its surface front and back via the same abs-fold the eye collar's
+  // radial symmetry already relies on.
+  if (u_langetLen > 0.015) {
+    float lTopY = u_headY - halfH * 0.55;
+    float lMidY = lTopY - u_langetLen * 0.5;
+    float ltt = clamp(lMidY / u_haftLen, 0.0, 1.0);
+    float lhr = u_haftR * (1.0 + 0.18 * (1.0 - ltt));
+    vec3 lp = p - vec3(u_haftCurve * ltt * ltt * u_haftLen, lMidY, 0.0);
+    lp.z = abs(lp.z) - (lhr + 0.006);
+    float dLanget = sdBox(lp, vec3(u_haftR * 1.4, u_langetLen * 0.5, u_haftR * 0.28));
+    res = opU(res, vec2(smin(dLanget, dHaft, 0.018), u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  }
+
+  // -- poll (skip on double bit — a real double-bit has an edge on both ends) --
+  if (!isDoubleBit) {
     float pl = 1e9;
     if (u_pollType > 1.5) {          // spike
-      float tt = clamp(-h.x / (u_edgeReach * 0.5), 0.0, 1.0);
-      vec2 d = vec2(length(h.yz) - mix(halfH * 0.22, 0.002, tt), max(h.x, -h.x - u_edgeReach * 0.5));
+      // v6: war axes reclaim the beard_depth roll (dead on every non-bearded
+      // head) to drive poll spike length — a longer reach on the war-pick.
+      float spikeMul = (u_headType > 2.5) ? (1.0 + u_beardDepth * 1.3) : 1.0;
+      float spikeReach = edgeReachA * 0.5 * spikeMul;
+      float tt = clamp(-h.x / spikeReach, 0.0, 1.0);
+      vec2 d = vec2(length(h.yz) - mix(halfH * 0.22, 0.002, tt), max(h.x, -h.x - spikeReach));
       pl = min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) * 0.85;
     } else if (u_pollType > 0.5) {   // hammer: stubby block, must not read as a second blade
       pl = sdBox(h - vec3(-u_haftR * 2.2, 0.0, 0.0), vec3(u_haftR * 1.05, halfH * 0.26, u_cheek * 1.2));
+    } else {                        // flat: a deliberate flat poll plate, not just bare head-back
+      pl = sdBox(h - vec3(-u_haftR * 1.5, 0.0, 0.0), vec3(u_haftR * 0.85, halfH * 0.30, u_cheek * 1.3));
     }
     res = opU(res, vec2(pl, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
   }
@@ -1041,7 +1112,11 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_headHalfH', p.head_w / 2);
     f('u_edgeReach', L.kind === 'axe' ? L.edgeReach : 0.2);
     f('u_edgeSweep', p.edge_sweep);
-    f('u_beardDepth', p.head_type === 'bearded' ? Math.max(p.beard_depth, 0.18) : p.beard_depth * 0.4);
+    // v6: beard_depth's roll is gated fully to bearded axes in-shader (0 elsewhere is
+    // enforced by u_headType branching, not here) — send the raw roll through so the
+    // war/double_bit branches can reclaim it (poll spike length / bit asymmetry) instead
+    // of the old blanket 0.4x "fake partial beard" on every non-bearded head.
+    f('u_beardDepth', p.beard_depth);
     f('u_cheek', p.cheek_thick);
     f('u_pollType', POLL_TYPES.indexOf(p.poll_type));
     f('u_langetLen', p.langet_len);
