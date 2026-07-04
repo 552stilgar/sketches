@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>forge — loot cards</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: dark;
+    --page-bg: #0d0e12;
+    --card-bg: #16181f;
+    --card-bg-2: #1b1e27;
+    --ink: #d8dbe4;
+    --ink-dim: #7a7f8f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--page-bg);
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
+    min-height: 100%;
+  }
+  header {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 1rem 1.25rem 0.5rem;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 0.95rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-dim); margin: 0;
+  }
+  button {
+    font-family: inherit; font-size: 0.8rem; color: var(--ink);
+    background: var(--card-bg-2); border: 1px solid #2a2e3a; border-radius: 6px;
+    padding: 0.4rem 0.75rem; cursor: pointer;
+  }
+  button:hover { border-color: #3d4356; }
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+    padding: 0.75rem 1.25rem 2rem;
+  }
+  #stage {
+    display: flex; justify-content: center; padding: 1.5rem 1.25rem 2rem;
+  }
+  #stage .card-wrap { width: min(420px, 90vw); }
+  .card-wrap { cursor: pointer; }
+  .card-wrap svg { width: 100%; height: auto; display: block; }
+  .card-bg { fill: var(--card-bg); }
+  .card-bg-inner { fill: var(--card-bg-2); }
+  .card-frame { stroke-width: 1.5; }
+  .card-hash { font-size: 9px; fill: var(--ink-dim); font-family: ui-monospace, monospace; }
+  .card-kind { font-size: 8px; fill: var(--ink-dim); letter-spacing: 0.12em; }
+  #stage .card-hash { font-size: 11px; }
+  #stage .card-kind { font-size: 10px; }
+  #empty-note { padding: 0 1.25rem; color: var(--ink-dim); font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>forge :: loot cards</h1>
+  <button id="btn-grid">new grid</button>
+  <span id="empty-note"></span>
+</header>
+<div id="stage" hidden></div>
+<div id="grid"></div>
+
+<script type="module">
+import { paramsFromHash, decodeToken, applyOverrides, randHex } from './params.mjs';
+import { buildWeapon, derivePalette, hslCss } from './card-geo.mjs';
+
+// ---------------------------------------------------------------------------
+// config — mirrors index.html's seeding flow (randHex(8) hashes, decodeToken
+// share tokens); grid count matches the 12-card brief.
+// ---------------------------------------------------------------------------
+
+const GRID_COUNT = 12;
+const CARD_W = 200;
+const CARD_H = 300;
+const PAD = 20;
+const CARD_RADIUS = 10;
+
+function paramsFromToken(token) {
+  const { baseHash, overrides } = decodeToken(token);
+  return applyOverrides(paramsFromHash(baseHash), overrides);
+}
+
+function randomToken() {
+  return randHex(8);
+}
+
+// ---------------------------------------------------------------------------
+// theming — resolves card-geo's semantic var(--slot) fills/strokes against a
+// palette derived from this weapon's material genes. card-geo stays agnostic
+// of final colors; this is the only place that knows what --blade-fill etc mean.
+// ---------------------------------------------------------------------------
+
+function varMapFor(palette) {
+  const gripStroke = { h: palette.grip.h, s: palette.grip.s, l: Math.max(4, palette.grip.l - 15) };
+  return {
+    '--blade-fill': hslCss(palette.base),
+    '--blade-stroke': hslCss(palette.shade),
+    '--blade-shade': hslCss(palette.shade),
+    '--blade-highlight': hslCss(palette.highlight),
+    '--guard-fill': hslCss(palette.base),
+    '--guard-stroke': hslCss(palette.shade),
+    '--grip-fill': hslCss(palette.grip),
+    '--grip-stroke': hslCss(gripStroke),
+    '--haft-fill': hslCss(palette.grip),
+    '--haft-stroke': hslCss(palette.shade),
+    '--haft-shade': hslCss(palette.shade),
+    '--accent': hslCss(palette.accent),
+    '--trim': hslCss(palette.trim),
+  };
+}
+
+function resolveColor(value, varMap) {
+  if (!value || value === 'none') return value;
+  const m = /^var\((--[\w-]+)\)$/.exec(value);
+  return m ? (varMap[m[1]] ?? '#888') : value;
+}
+
+function escapeText(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// model-space (y-up, deriveLayout convention) -> card viewBox ("contain" fit, centered)
+function viewTransform(bounds) {
+  const w = Math.max(bounds.maxX - bounds.minX, 1e-4);
+  const h = Math.max(bounds.maxY - bounds.minY, 1e-4);
+  const scale = Math.min((CARD_W - PAD * 2) / w, (CARD_H - PAD * 2) / h);
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cy = (bounds.minY + bounds.maxY) / 2;
+  const tx = CARD_W / 2 - cx * scale;
+  const ty = CARD_H / 2 + cy * scale; // + because SVG y grows downward, model y grows upward
+  return `matrix(${scale} 0 0 ${-scale} ${tx} ${ty})`;
+}
+
+function cardSvg(token, { big = false } = {}) {
+  const params = paramsFromToken(token);
+  const { kind, layers, bounds } = buildWeapon(params);
+  const palette = derivePalette(params);
+  const varMap = varMapFor(palette);
+  const transform = viewTransform(bounds);
+  const borderColor = hslCss(palette.base, 0.55);
+  const paths = layers.map(l => {
+    const fill = resolveColor(l.fill, varMap);
+    const stroke = resolveColor(l.stroke, varMap);
+    return `<path d="${l.d}" fill="${fill}" stroke="${stroke}" stroke-width="${l.strokeWidth}" opacity="${l.opacity}"/>`;
+  }).join('');
+  const hashLabel = escapeText(token);
+  const kindLabel = kind.toUpperCase();
+  return `<svg viewBox="0 0 ${CARD_W} ${CARD_H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${kindLabel} ${hashLabel}">
+    <rect class="card-bg" x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="${CARD_RADIUS}"/>
+    <rect class="card-bg-inner" x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}"/>
+    <g transform="${transform}">${paths}</g>
+    <rect class="card-frame" x="2" y="2" width="${CARD_W - 4}" height="${CARD_H - 4}" rx="${CARD_RADIUS - 1}"
+      fill="none" stroke="${borderColor}"/>
+    <text class="card-kind" x="10" y="16">${kindLabel}</text>
+    <text class="card-hash" x="${CARD_W / 2}" y="${CARD_H - 9}" text-anchor="middle">${hashLabel}</text>
+  </svg>`;
+}
+
+function cardWrap(token, { big = false } = {}) {
+  const wrap = document.createElement('div');
+  wrap.className = 'card-wrap';
+  wrap.dataset.token = token;
+  wrap.innerHTML = cardSvg(token, { big });
+  wrap.addEventListener('click', () => { location.hash = token; });
+  return wrap;
+}
+
+// ---------------------------------------------------------------------------
+// render
+// ---------------------------------------------------------------------------
+
+const gridEl = document.getElementById('grid');
+const stageEl = document.getElementById('stage');
+const emptyNote = document.getElementById('empty-note');
+
+function currentToken() {
+  return location.hash.replace(/^#/, '');
+}
+
+function renderGrid() {
+  stageEl.hidden = true;
+  gridEl.hidden = false;
+  emptyNote.textContent = `${GRID_COUNT} random weapons — click a card to inspect, or drop a hash in the URL (#<hash>)`;
+  gridEl.innerHTML = '';
+  for (let i = 0; i < GRID_COUNT; i++) {
+    gridEl.appendChild(cardWrap(randomToken()));
+  }
+}
+
+function renderBig(token) {
+  gridEl.hidden = true;
+  stageEl.hidden = false;
+  emptyNote.textContent = '';
+  stageEl.innerHTML = '';
+  stageEl.appendChild(cardWrap(token, { big: true }));
+}
+
+function render() {
+  const token = currentToken();
+  if (token) renderBig(token);
+  else renderGrid();
+}
+
+document.getElementById('btn-grid').addEventListener('click', () => {
+  if (location.hash) location.hash = '';
+  else render();
+});
+
+window.addEventListener('hashchange', render);
+render();
+</script>
+</body>
+</html>
