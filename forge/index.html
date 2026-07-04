@@ -66,6 +66,60 @@ button.btn.on { border-color: #6b7280; color: #fff; }
 .cell.sel { border-color: #8a93a6; }
 .cell canvas { width: 100%; display: block; border-radius: 6px; }
 .cell .cap { color: var(--mut); font-size: 11px; text-align: center; padding-top: 6px; }
+
+/* -- DNA editor panel — fixed overlay, never reflows the grid/stage -- */
+.editor-panel {
+  position: fixed; top: 0; right: 0; height: 100%; width: min(340px, 92vw);
+  background: var(--panel); border-left: 1px solid var(--line);
+  box-shadow: -16px 0 48px rgba(0,0,0,.35);
+  transform: translateX(100%); transition: transform .18s ease;
+  z-index: 40; display: flex; flex-direction: column;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.editor-panel.open { transform: translateX(0); }
+.editor-panel .ep-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 14px 14px; border-bottom: 1px solid var(--line);
+  font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--ink);
+}
+.editor-panel .ep-body { flex: 1; overflow-y: auto; padding: 4px 0 12px; }
+.ep-section { border-bottom: 1px solid var(--line); }
+.ep-section-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 9px 14px; cursor: pointer; color: var(--mut); user-select: none;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+}
+.ep-section-head:hover { color: var(--ink); }
+.ep-section-body { padding: 2px 14px 10px; display: flex; flex-direction: column; gap: 10px; }
+.ep-section.collapsed .ep-section-body { display: none; }
+.ep-gene { display: flex; flex-direction: column; gap: 3px; border-radius: 6px; padding: 4px 6px; margin: 0 -6px; }
+.ep-gene.overridden { background: rgba(215, 162, 74, 0.08); }
+.ep-gene-row { display: flex; align-items: center; gap: 6px; }
+.ep-gene-label {
+  flex: 1; color: var(--ink); font-size: 11px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ep-gene.overridden .ep-gene-label { color: #d7a24a; }
+.ep-gene-val { color: var(--mut); font-size: 10px; min-width: 40px; text-align: right; }
+.ep-gene input[type=range] { flex: 1; accent-color: #8a93a6; }
+.ep-gene select {
+  flex: 1; background: var(--stage-bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 5px; font: 11px ui-monospace, Consolas, monospace; padding: 3px 4px;
+}
+.ep-icon-btn {
+  background: transparent; border: 1px solid var(--line); color: var(--mut);
+  width: 22px; height: 22px; min-width: 22px; border-radius: 5px; cursor: pointer;
+  font-size: 11px; line-height: 1; display: flex; align-items: center; justify-content: center;
+  transition: border-color .12s, color .12s;
+}
+.ep-icon-btn:hover { border-color: #4a505c; color: #fff; }
+.ep-icon-btn.locked { border-color: #d7a24a; color: #d7a24a; }
+.ep-reset-btn {
+  align-self: flex-start; background: none; border: none; color: #d7a24a; cursor: pointer;
+  font-size: 10px; text-decoration: underline; padding: 0; font-family: inherit;
+}
+.editor-panel .ep-foot { padding: 10px 14px; border-top: 1px solid var(--line); }
+.editor-panel .ep-foot button { width: 100%; }
 </style>
 </head>
 <body>
@@ -88,6 +142,7 @@ button.btn.on { border-color: #6b7280; color: #fff; }
   <button class="btn" id="r-styl" title="3 — toon ramp + ink rim (preview pipeline)">Stylized</button>
   <button class="btn" id="btn-link">Copy Link</button>
   <button class="btn" id="btn-png">PNG</button>
+  <button class="btn" id="btn-edit" title="Edit DNA gene-by-gene (e)">✎ Edit</button>
 </div>
 
 <div class="stage-wrap">
@@ -99,11 +154,25 @@ button.btn.on { border-color: #6b7280; color: #fff; }
 
 <div class="grid" id="grid"></div>
 
+<aside class="editor-panel" id="editor-panel">
+  <div class="ep-head">
+    <span>DNA EDITOR</span>
+    <button class="ep-icon-btn" id="ep-close" title="Close (e)" type="button">✕</button>
+  </div>
+  <div class="ep-body" id="ep-body"></div>
+  <div class="ep-foot">
+    <button class="btn" id="ep-reroll-unlocked" type="button">🎲 Reroll Unlocked</button>
+  </div>
+</aside>
+
 <script type="module">
 import {
   paramsFromHash, deriveLayout, deriveMaterial, randHex, hashToSeed, mulberry32,
-  encodeToken, decodeToken, applyOverrides, clamp,
+  encodeToken, decodeToken, applyOverrides, clamp, DNA,
 } from './params.mjs';
+import {
+  groupGenesBySection, rollGeneValue, rerollUnlocked,
+} from './editor-logic.mjs';
 
 const CFG = {
   gridCount: 12,
@@ -1164,10 +1233,14 @@ const thumbGL = createRenderer(document.createElement('canvas'));
 
 const state = {
   token: null, params: null,
+  baseHash: null, baseParams: null,   // un-edited roll — diffed for override highlighting + share tokens
   pose: { yaw: 0.55, pitch: 0.08, zoom: 1.0 },
   filter: 'all',
   register: 0,        // v5 presentation register: 0 museum, 1 loot-card, 2 stylized
   gridTokens: [],
+  editorOpen: false,
+  locked: new Set(),      // gene keys excluded from "reroll unlocked" — resets on a new base weapon
+  collapsed: new Set(),   // collapsed editor section names
 };
 
 function paramsFromToken(token) {
@@ -1226,12 +1299,18 @@ window.addEventListener('keydown', e => {
 });
 
 function select(token, { fromGrid = false } = {}) {
+  const { baseHash, overrides } = decodeToken(token);
+  const newWeapon = baseHash !== state.baseHash;
   state.token = token;
-  state.params = paramsFromToken(token);
+  state.baseHash = baseHash;
+  state.baseParams = paramsFromHash(baseHash);
+  state.params = applyOverrides(state.baseParams, overrides);
+  if (newWeapon) state.locked = new Set();   // locks are scoped to the weapon being edited
   state.pose = { yaw: 0.55, pitch: 0.08, zoom: 1.0 };
   history.replaceState(null, '', '#' + token);
   document.getElementById('hash-input').value = token;
   renderStage();
+  if (state.editorOpen) buildEditorPanel();
   document.querySelectorAll('.cell').forEach(c => c.classList.toggle('sel', c.dataset.token === token));
   if (!fromGrid && !state.gridTokens.includes(token)) rebuildGrid(token);
 }
@@ -1323,6 +1402,166 @@ document.getElementById('btn-png').addEventListener('click', () => {
   a.download = 'forge-' + state.token.slice(0, 12) + '.png';
   a.href = stageCanvas.toDataURL('image/png');
   a.click();
+});
+
+// ---------------------------------------------------------------------------
+// DNA editor panel — built 100% off DNA metadata (editor-logic.mjs), so a
+// future appended gene shows up with zero changes here. Panel structure is
+// rebuilt on open / weapon-class change / reroll-unlocked (visible-gene set
+// or many values change); individual edits patch just that gene's row so
+// active slider drags never get their DOM element replaced mid-gesture.
+// ---------------------------------------------------------------------------
+const geneEls = new Map(); // DNA index -> { root, control, valueEl, resetBtn, lockBtn }
+
+function keyLabel(key) { return key.replace(/_/g, ' '); }
+
+function setGeneValue(index, domainValue) {
+  const spec = DNA[index];
+  const classChanging = spec.key === 'weapon_class' && domainValue !== state.params.weapon_class;
+  state.params = { ...state.params, [spec.key]: domainValue };
+  state.token = encodeToken(state.baseHash, state.params, state.baseParams);
+  history.replaceState(null, '', '#' + state.token);
+  document.getElementById('hash-input').value = state.token;
+  renderStage();
+  // weapon_class changing swaps which sections/genes are visible -> full rebuild;
+  // everything else patches its own row in place.
+  if (classChanging) buildEditorPanel(); else syncGeneRow(index);
+}
+
+function syncGeneRow(index) {
+  const els = geneEls.get(index);
+  if (!els) return;
+  const spec = DNA[index];
+  const val = state.params[spec.key];
+  if (spec.options) {
+    els.control.value = String(val);
+    els.valueEl.textContent = String(val);
+  } else {
+    els.control.value = val;
+    els.valueEl.textContent = Number(val).toFixed(spec.decimals ?? 3);
+  }
+  const overridden = !!state.baseParams && val !== state.baseParams[spec.key];
+  els.root.classList.toggle('overridden', overridden);
+  els.resetBtn.style.display = overridden ? '' : 'none';
+  els.lockBtn.classList.toggle('locked', state.locked.has(spec.key));
+  els.lockBtn.textContent = state.locked.has(spec.key) ? '🔒' : '🔓';
+}
+
+function buildGeneRow(index) {
+  const spec = DNA[index];
+  const root = document.createElement('div');
+  root.className = 'ep-gene';
+
+  const row = document.createElement('div');
+  row.className = 'ep-gene-row';
+  const label = document.createElement('span');
+  label.className = 'ep-gene-label';
+  label.textContent = keyLabel(spec.key);
+  label.title = spec.key;
+  const lockBtn = document.createElement('button');
+  lockBtn.className = 'ep-icon-btn'; lockBtn.type = 'button'; lockBtn.title = 'Lock gene';
+  const rerollBtn = document.createElement('button');
+  rerollBtn.className = 'ep-icon-btn'; rerollBtn.type = 'button'; rerollBtn.title = 'Reroll gene';
+  rerollBtn.textContent = '🎲';
+  row.append(label, lockBtn, rerollBtn);
+
+  const ctrlRow = document.createElement('div');
+  ctrlRow.className = 'ep-gene-row';
+  const valueEl = document.createElement('span');
+  valueEl.className = 'ep-gene-val';
+
+  let control;
+  if (spec.options) {
+    control = document.createElement('select');
+    for (const opt of [...new Set(spec.options)]) {
+      const o = document.createElement('option');
+      o.value = String(opt);
+      o.textContent = String(opt);
+      control.appendChild(o);
+    }
+    control.addEventListener('change', () => {
+      const raw = control.value;
+      const isNumeric = typeof spec.options[0] === 'number';
+      setGeneValue(index, isNumeric ? Number(raw) : raw);
+    });
+  } else {
+    control = document.createElement('input');
+    control.type = 'range';
+    control.min = spec.min; control.max = spec.max;
+    const f = 10 ** (spec.decimals ?? 3);
+    control.step = 1 / f;
+    control.addEventListener('input', () => {
+      const rounded = Math.round(parseFloat(control.value) * f) / f;
+      setGeneValue(index, rounded);
+    });
+  }
+  ctrlRow.append(control, valueEl);
+
+  const resetBtn = document.createElement('button');
+  resetBtn.className = 'ep-reset-btn'; resetBtn.type = 'button'; resetBtn.textContent = 'reset';
+  resetBtn.addEventListener('click', () => setGeneValue(index, state.baseParams[spec.key]));
+
+  lockBtn.addEventListener('click', () => {
+    if (state.locked.has(spec.key)) state.locked.delete(spec.key);
+    else state.locked.add(spec.key);
+    syncGeneRow(index);
+  });
+  rerollBtn.addEventListener('click', () => setGeneValue(index, rollGeneValue(spec, Math.random)));
+
+  root.append(row, ctrlRow, resetBtn);
+  geneEls.set(index, { root, control, valueEl, resetBtn, lockBtn });
+  syncGeneRow(index);
+  return root;
+}
+
+function buildEditorPanel() {
+  geneEls.clear();
+  const body = document.getElementById('ep-body');
+  body.innerHTML = '';
+  for (const { section, indices } of groupGenesBySection(state.params.weapon_class)) {
+    if (!indices.length) continue;
+    const sec = document.createElement('div');
+    sec.className = 'ep-section' + (state.collapsed.has(section) ? ' collapsed' : '');
+    const head = document.createElement('div');
+    head.className = 'ep-section-head';
+    const caret = document.createElement('span');
+    caret.textContent = state.collapsed.has(section) ? '▸' : '▾';
+    const title = document.createElement('span');
+    title.textContent = section;
+    head.append(title, caret);
+    head.addEventListener('click', () => {
+      if (state.collapsed.has(section)) state.collapsed.delete(section);
+      else state.collapsed.add(section);
+      sec.classList.toggle('collapsed');
+      caret.textContent = state.collapsed.has(section) ? '▸' : '▾';
+    });
+    const secBody = document.createElement('div');
+    secBody.className = 'ep-section-body';
+    for (const i of indices) secBody.appendChild(buildGeneRow(i));
+    sec.append(head, secBody);
+    body.appendChild(sec);
+  }
+}
+
+function setEditorOpen(open) {
+  state.editorOpen = open;
+  document.getElementById('editor-panel').classList.toggle('open', open);
+  document.getElementById('btn-edit').classList.toggle('on', open);
+  if (open) buildEditorPanel();
+}
+document.getElementById('btn-edit').addEventListener('click', () => setEditorOpen(!state.editorOpen));
+document.getElementById('ep-close').addEventListener('click', () => setEditorOpen(false));
+document.getElementById('ep-reroll-unlocked').addEventListener('click', () => {
+  state.params = rerollUnlocked(state.params, state.locked, Math.random);
+  state.token = encodeToken(state.baseHash, state.params, state.baseParams);
+  history.replaceState(null, '', '#' + state.token);
+  document.getElementById('hash-input').value = state.token;
+  renderStage();
+  buildEditorPanel();   // reroll can touch every gene incl. weapon_class -> full rebuild
+});
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'e' || e.key === 'E') setEditorOpen(!state.editorOpen);
 });
 
 window.addEventListener('resize', renderStage);
