@@ -84,6 +84,13 @@ export const DNA = [
   { key: 'accent_hue', section: 'Material', min: 22, max: 48, decimals: 0 },
   { key: 'light_az', section: 'Lighting', min: -80, max: 80, decimals: 0 },
   { key: 'light_el', section: 'Lighting', min: 15, max: 65, decimals: 0 },
+
+  // -- v2 finish (2026-07-04) — APPENDED so every v1 hash keeps its 36 rolls --
+  // brushed listed twice: weighted 2/4 so the v1 look stays the common case
+  { key: 'steel_finish', section: 'Material', options: ['brushed', 'brushed', 'damascus', 'blued'] },
+  { key: 'wear_amount', section: 'Material', min: 0.0, max: 1.0, decimals: 2 },
+  { key: 'damascus_scale', section: 'Material', min: 18, max: 60, decimals: 0 },
+  { key: 'damascus_warp', section: 'Material', min: 0.15, max: 0.85, decimals: 2 },
 ];
 
 function rollParam(spec, rng) {
@@ -152,6 +159,40 @@ export function applyOverrides(params, overrides) {
       : clamp(v, spec.min, spec.max);
   }
   return p;
+}
+
+// ---------------------------------------------------------------------------
+// v2 material derivation — the shader-facing finish block, mirroring
+// deriveLayout's role. All craft-tunable values are named constants here so
+// the feel loop edits numbers, not logic.
+// ---------------------------------------------------------------------------
+
+const FINISH_INDEX = { brushed: 0, damascus: 1, blued: 2 };
+
+// microsurface roughness per archetype: thrusters are polished, choppers rough
+const SWORD_ROUGHNESS = { arming: 0.30, longsword: 0.25, falchion: 0.36, scimitar: 0.29, leaf: 0.32, estoc: 0.16 };
+const AXE_ROUGHNESS = { bearded: 0.38, broad: 0.34, double_bit: 0.31, war: 0.44 };
+
+// grind-line anisotropy: blades are drawn lengthwise on the stone, axe cheeks less so
+const SWORD_ANISO = 0.65;
+const AXE_ANISO = 0.42;
+
+// blued steel is polished before oxidizing — tighter highlight than raw brushed
+const BLUED_ROUGHNESS_MUL = 0.72;
+
+export function deriveMaterial(p) {
+  let baseRoughness = p.weapon_class === 'sword'
+    ? SWORD_ROUGHNESS[p.blade_type]
+    : AXE_ROUGHNESS[p.head_type];
+  if (p.steel_finish === 'blued') baseRoughness *= BLUED_ROUGHNESS_MUL;
+  return {
+    finishIdx: FINISH_INDEX[p.steel_finish],
+    wear: p.wear_amount,
+    damascusScale: p.damascus_scale,
+    damascusWarp: p.damascus_warp,
+    anisoStrength: p.weapon_class === 'sword' ? SWORD_ANISO : AXE_ANISO,
+    baseRoughness: Math.round(baseRoughness * 1000) / 1000,
+  };
 }
 
 // Assembly geometry shared by the shader (uniforms) and the tests (invariants).
