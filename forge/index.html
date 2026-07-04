@@ -83,6 +83,9 @@ button.btn.on { border-color: #6b7280; color: #fff; }
   <button class="btn on" id="f-all">All</button>
   <button class="btn" id="f-sword">Swords</button>
   <button class="btn" id="f-axe">Axes</button>
+  <button class="btn on" id="r-museum" title="1 — neutral studio, macro DoF">Museum</button>
+  <button class="btn" id="r-loot" title="2 — warm rim, pedestal glow, bloom">Loot-card</button>
+  <button class="btn" id="r-styl" title="3 — toon ramp + ink rim (preview pipeline)">Stylized</button>
   <button class="btn" id="btn-link">Copy Link</button>
   <button class="btn" id="btn-png">PNG</button>
 </div>
@@ -128,11 +131,30 @@ in vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
 `;
 
-// filmic tonemap shared by preview + display passes
+// filmic tonemap + register post-grade shared by preview + display passes.
+// v5 registers: 0 museum (neutral macro), 1 loot-card (warm dramatic), 2 stylized (toon).
+// u_register is declared by each including program BEFORE this chunk (SCENE's
+// uniform block / DISPLAY_FRAG prefix) so env functions defined above TONE see it.
 const TONE = `
 const float EXPOSURE = 1.25;
 vec3 aces(vec3 x) {
   return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+// post-tonemap grade; suv = centered screen uv (y in [-1,1])
+vec3 postGrade(vec3 c, vec2 suv) {
+  float r2 = dot(suv, suv);
+  if (u_register < 0.5) {                        // museum: barely-there vignette
+    c *= 1.0 - 0.10 * r2;
+  } else if (u_register < 1.5) {                 // loot-card: warm lift, deep vignette, contrast
+    c *= vec3(1.07, 1.00, 0.90);
+    c = clamp(c * c * (3.0 - 2.0 * c) * 0.25 + c * 0.75, 0.0, 1.0);
+    c *= 1.0 - 0.32 * r2;
+  } else {                                       // stylized: saturation push, mild vignette
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    c = clamp(mix(vec3(l), c, 1.45), 0.0, 1.0);
+    c *= 1.0 - 0.14 * r2;
+  }
+  return c;
 }
 `;
 
@@ -165,6 +187,9 @@ uniform float u_finish, u_wear, u_damScale, u_damWarp, u_aniso, u_rough;
 // v4 variability: family 0 steel / 1 iron / 2 bronze; grip 0 leather / 1 cord / 2 wire;
 // guardExt 0 inherit / 1 swept / 2 ring
 uniform float u_family, u_gripMat, u_guardExt, u_engraveOn, u_engraveDens;
+
+// v5 presentation register (not DNA): 0 museum, 1 loot-card, 2 stylized
+uniform float u_register;
 
 const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
 
@@ -400,6 +425,16 @@ vec3 procEnv(vec3 rd, float rough) {
                * smoothstep(1.8 + soft, 0.5, abs(az + 1.7));
   env += (vec3(1.0, 0.98, 0.92) * strip1 * 2.2 + vec3(0.85, 0.90, 1.0) * strip2 * 1.1)
        / (1.0 + 6.0 * soft);
+  // v5 loot-card: warm rim strip opposite the key light — ember edge highlights
+  if (u_register > 0.5 && u_register < 1.5) {
+    vec3 L = normalize(u_lightDir);
+    float raz = atan(-L.x, -L.z);
+    float dAz = abs(atan(sin(az - raz), cos(az - raz)));
+    float rim = smoothstep(1.0 + soft, 0.25, dAz)
+              * smoothstep(0.50 + soft * 0.9, 0.10 + soft * 0.3, abs(up - 0.40));
+    env += vec3(1.0, 0.58, 0.26) * rim * 2.8 / (1.0 + 6.0 * soft);
+    env *= vec3(1.04, 0.99, 0.90);
+  }
   return env;
 }
 
@@ -459,7 +494,13 @@ float calcCurv(vec3 p) {
 // gamma-corrected color lands near the page's #0b0d12 stage tone)
 vec3 bgColor(vec2 uv) {
   float vig = 1.0 - 0.35 * length(uv * 0.6);
-  return vec3(0.0010, 0.0014, 0.0030) * vig;
+  vec3 c = vec3(0.0010, 0.0014, 0.0030) * vig;
+  // v5 loot-card: warm ember pool low behind the piece — pedestal glow
+  if (u_register > 0.5 && u_register < 1.5) {
+    float g = exp(-2.4 * length(uv - vec2(0.0, -0.62)));
+    c = vec3(0.0008, 0.0009, 0.0016) * vig + vec3(0.060, 0.030, 0.011) * g;
+  }
+  return c;
 }
 
 // the studio env doubles as the path tracer's light field
@@ -647,7 +688,8 @@ void main() {
     vec3 tan1 = surfTangent(pos, n, mat);
     vec3 albedo; float rough; float metal; float brush;
     surfaceMat(pos, mat, albedo, rough, metal, brush);
-    n = microNormal(pos, n, tan1, mat, rough);
+    // stylized keeps the raw normal — micro scratches speckle the toon bands
+    if (u_register < 1.5) n = microNormal(pos, n, tan1, mat, rough);
     tan1 = normalize(tan1 - n * dot(n, tan1));
 
     vec3 L = normalize(u_lightDir);
@@ -657,15 +699,26 @@ void main() {
     float fre = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
     vec3 env = procEnv(reflect(rd, n), rough);
 
+    if (u_register > 1.5) {          // v5 stylized: banded light, stepped highlight
+      dif = floor(dif * 3.0 + 0.35) / 3.0;
+      spec = smoothstep(0.30, 0.45, spec) * 1.1;
+      env = mix(vec3(dot(env, vec3(0.333))), env, 0.35) * 0.8;
+      fre *= 0.4;
+    }
+
     vec3 c = albedo * (0.16 * ao + 0.80 * dif);
     c += metal * env * (albedo * 0.7 + 0.3) * (0.30 + 0.70 * fre) * 2.4 * ao;
     c += spec * vec3(1.0, 0.985, 0.95) * (0.35 + 0.65 * dif) * mix(0.02, 0.16, isMetal);
     c += (1.0 - metal) * env * fre * 0.5 * ao;
+    if (u_register > 1.5) {          // ink silhouette rim
+      c *= 0.15 + 0.85 * smoothstep(0.04, 0.30, dot(n, -rd));
+    }
     col = c;
   }
 
   col = aces(col * EXPOSURE);
   col = pow(col, vec3(0.4545));
+  col = postGrade(col, uv);
   col += (hash21(gl_FragCoord.xy) - 0.5) / 255.0;
   gl_FragColor = vec4(col, 1.0);
 }
@@ -701,6 +754,16 @@ void main() {
   vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
   vec3 up = cross(rt, fw);
   vec3 rd = normalize(fw + 0.62 * (uv.x * rt + uv.y * up));
+
+  // v5: thin-lens DoF — focal plane through the orbit target. Museum opens the
+  // aperture for a macro-photo feel; loot-card keeps most of the piece sharp.
+  {
+    float aperture = u_register < 0.5 ? 0.030 : 0.014;
+    float lr = sqrt(rnd(seed)) * aperture, lphi = 6.2831853 * rnd(seed);
+    vec3 fp = ro + rd * (u_dist / max(dot(rd, fw), 1e-3));
+    ro += (cos(lphi) * rt + sin(lphi) * up) * lr;
+    rd = normalize(fp - ro);
+  }
 
   vec3 col = vec3(0.0), thr = vec3(1.0);
   for (int b = 0; b < 3; b++) {
@@ -784,15 +847,35 @@ void main() {
 }
 `;
 
-const DISPLAY_FRAG = '#version 300 es\nprecision highp float;\n' + TONE + `
+const DISPLAY_FRAG = '#version 300 es\nprecision highp float;\nuniform float u_register;\n' + TONE + `
 uniform sampler2D u_acc;
 uniform float u_n;
 out vec4 fragOut;
 float dhash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
 void main() {
-  vec3 c = texelFetch(u_acc, ivec2(gl_FragCoord.xy), 0).rgb / max(u_n, 1.0);
+  ivec2 pc = ivec2(gl_FragCoord.xy);
+  ivec2 rs = textureSize(u_acc, 0);
+  vec3 c = texelFetch(u_acc, pc, 0).rgb / max(u_n, 1.0);
+  // v5: cheap two-ring threshold bloom straight off the HDR accumulation —
+  // highlights past BLOOM_KNEE bleed; loot-card leans on it, museum barely
+  float bw = u_register < 0.5 ? 0.10 : (u_register < 1.5 ? 0.34 : 0.0);
+  if (bw > 0.0) {
+    const float BLOOM_KNEE = 1.15;
+    vec3 bl = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+      float a = 0.7853982 * float(i);
+      vec2 d = vec2(cos(a), sin(a));
+      ivec2 p1 = clamp(pc + ivec2(d * 4.0), ivec2(0), rs - 1);
+      ivec2 p2 = clamp(pc + ivec2(d * 10.0), ivec2(0), rs - 1);
+      bl += max(texelFetch(u_acc, p1, 0).rgb / max(u_n, 1.0) - BLOOM_KNEE, 0.0)
+          + max(texelFetch(u_acc, p2, 0).rgb / max(u_n, 1.0) - BLOOM_KNEE, 0.0) * 0.6;
+    }
+    c += bl * bw / 8.0;
+  }
   c = aces(c * EXPOSURE);
   c = pow(c, vec3(0.4545));
+  vec2 suv = (2.0 * gl_FragCoord.xy - vec2(rs)) / float(rs.y);
+  c = postGrade(c, suv);
   c += (dhash(gl_FragCoord.xy) - 0.5) / 255.0;
   fragOut = vec4(c, 1.0);
 }
@@ -959,6 +1042,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_guardExt', GUARD_EXTS.indexOf(p.guard_ext));
     f('u_engraveOn', M.engraveOn);
     f('u_engraveDens', M.engraveDensity);
+    f('u_register', state.register);
     const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
     v3('u_lightDir', [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)]);
   }
@@ -1012,6 +1096,8 @@ function createRenderer(canvas, { progressive = false } = {}) {
     }
     gl.useProgram(pt.prog);
     setScene(pt.U, p, pose, w, h);
+    gl.useProgram(disp.prog);
+    if (disp.U.u_register != null) gl.uniform1f(disp.U.u_register, state.register);
 
     let sample = 0, src = 0;
     running = true;
@@ -1059,6 +1145,7 @@ const state = {
   token: null, params: null,
   pose: { yaw: 0.55, pitch: 0.08, zoom: 1.0 },
   filter: 'all',
+  register: 0,        // v5 presentation register: 0 museum, 1 loot-card, 2 stylized
   gridTokens: [],
 };
 
@@ -1078,14 +1165,44 @@ function renderStage() {
   const capEl = document.getElementById('stage-hash');
   stage.render(state.params, state.pose, w, h);
   capEl.textContent = cap;
-  // camera at rest -> hand the stage to the path tracer
+  // camera at rest -> hand the stage to the path tracer.
+  // stylized register stays on the preview pipeline — toon shading is not a
+  // light-transport problem, and PT jitter would soften the ink lines.
   clearTimeout(idleTimer);
+  if (state.register === 2) return;
   idleTimer = setTimeout(() => {
     stage.begin(state.params, state.pose, w, h, n => {
       if (n % 30 === 0 || n === CFG.ptMaxSamples) capEl.textContent = cap + ' · ✦ ' + n + ' spp';
     });
   }, CFG.ptIdleMs);
 }
+
+// v5: re-render existing thumbnails in place (register switch — same tokens)
+function repaintGrid() {
+  const tw = CFG.thumbRes, thh = Math.round(CFG.thumbRes * CFG.thumbAspect);
+  document.querySelectorAll('#grid .cell').forEach(cell => {
+    thumbGL.render(paramsFromToken(cell.dataset.token),
+      { yaw: 0.55, pitch: 0.06, zoom: 1.0 }, tw, thh);
+    cell.querySelector('canvas').getContext('2d').drawImage(thumbGL.canvas, 0, 0);
+  });
+}
+
+const REGISTERS = ['r-museum', 'r-loot', 'r-styl'];
+function setRegister(i) {
+  if (i === state.register) return;
+  state.register = i;
+  REGISTERS.forEach((id, k) =>
+    document.getElementById(id).classList.toggle('on', k === i));
+  stage.stop();
+  renderStage();
+  repaintGrid();
+}
+REGISTERS.forEach((id, i) =>
+  document.getElementById(id).addEventListener('click', () => setRegister(i)));
+window.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key >= '1' && e.key <= '3') setRegister(+e.key - 1);
+});
 
 function select(token, { fromGrid = false } = {}) {
   state.token = token;
