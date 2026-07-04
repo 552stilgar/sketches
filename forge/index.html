@@ -486,6 +486,35 @@ vec3 microNormal(vec3 pos, vec3 n, vec3 t, float m, float rough) {
   return normalize(n - (g.x * t + g.y * b) * amp);
 }
 
+// -- v4: engraving — a chiseled inscription band along the blade flat / axe
+// cheek. Per-cell hashed tilted strokes (runic variety) between two border
+// rails. Returns groove intensity 0..1; consumed as albedo darkening + rough.
+float engraveG(vec3 pos) {
+  if (u_engraveOn < 0.5) return 0.0;
+  float lx, ly;                          // lx across (-1..1 of local width), ly along
+  if (u_class < 0.5) {
+    float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
+    if (bt < 0.10 || bt > 0.70) return 0.0;
+    float bx = pos.x - u_curve * bt * bt * u_bladeLen;
+    lx = bx / max(u_bladeW * (1.0 - u_taper * bt), 1e-4);
+    ly = bt * 22.0;
+  } else {
+    vec2 hc = pos.xy - vec2(0.0, u_headY);
+    if (abs(hc.x - u_edgeReach * 0.30) > u_edgeReach * 0.35) return 0.0;
+    lx = hc.y / max(u_headHalfH * 0.6, 1e-4);
+    ly = hc.x * 26.0;
+  }
+  if (abs(lx) > 0.8) return 0.0;
+  float cells = ly * (0.5 + u_engraveDens);
+  float cell = floor(cells);
+  float on = step(0.3, hash21(vec2(cell, 7.7)));
+  float tilt = (hash21(vec2(cell, 3.1)) - 0.5) * 1.6;
+  float stroke = smoothstep(0.30, 0.10, abs(fract(cells) - 0.5 + tilt * lx * 0.5)) * on
+               * smoothstep(0.62, 0.50, abs(lx));
+  float rail = smoothstep(0.10, 0.03, abs(abs(lx) - 0.70));
+  return max(stroke, rail * 0.8);
+}
+
 // finish layer + curvature wear -> material response (shared preview / PT)
 void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float metal, out float brush) {
   if (m < 1.5) {
@@ -547,6 +576,14 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
       // bronze doesn't blue — it antiques to a browned dark patina instead
       vec3 oxide = u_family > 1.5 ? vec3(0.52, 0.40, 0.28) : vec3(0.34, 0.42, 0.66);
       albedo = mix(albedo * oxide * 0.6, albedo, 0.12);
+    }
+
+    // -- v4: engraved band — chiseled grooves darken and dull the floor.
+    // Applied before wear so a polished edge can still cut across the band.
+    if (m < 1.5) {
+      float eg = engraveG(pos);
+      albedo *= 1.0 - 0.55 * eg;
+      rough = mix(rough, 0.55, eg * 0.7);
     }
 
     // -- curvature wear: convex edges polish bright, hollows collect grime --
