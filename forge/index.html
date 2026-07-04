@@ -53,6 +53,9 @@ button.btn.on { border-color: #6b7280; color: #fff; }
 #stage-hash {
   position: absolute; left: 12px; bottom: 10px; color: var(--mut); font-size: 12px;
   pointer-events: none;
+  /* caption plate: the same framing strip the SVG cards use */
+  background: rgba(8, 10, 16, 0.72); border: 1px solid rgba(120, 130, 150, 0.18);
+  border-radius: 6px; padding: 4px 9px;
 }
 .grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -600,7 +603,11 @@ vec2 mapAxe(vec3 p) {
   if (u_haftButt > 0.5) {
     const float BUTT_HALF_H = 0.028;
     const float BUTT_FLARE = 1.35;
-    float dButt = smin(sdCylY(q, BUTT_HALF_H, hr * BUTT_FLARE), dHaft, 0.02);
+    float dButtCap = sdCylY(q, BUTT_HALF_H, hr * BUTT_FLARE);
+    // clamp the fillet to the cap's neighborhood: raw smin(x, dHaft) <= dHaft
+    // along the ENTIRE haft, so this steel branch used to win the material
+    // union over the wood everywhere (whole haft rendered steel).
+    float dButt = max(smin(dButtCap, dHaft, 0.02), dButtCap - 0.03);
     res = opU(res, vec2(dButt, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
   }
 
@@ -669,7 +676,10 @@ vec2 mapAxe(vec3 p) {
     vec3 lp = p - vec3(u_haftCurve * ltt * ltt * u_haftLen, lMidY, 0.0);
     lp.z = abs(lp.z) - (lhr + 0.006);
     float dLanget = sdBox(lp, vec3(u_haftR * 1.4, u_langetLen * 0.5, u_haftR * 0.28));
-    res = opU(res, vec2(smin(dLanget, dHaft, 0.018), u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+    // clamp the fillet to the strap's neighborhood (same bug as the butt cap:
+    // unbounded smin vs dHaft made this steel branch win the whole haft).
+    float dLangetU = max(smin(dLanget, dHaft, 0.018), dLanget - 0.022);
+    res = opU(res, vec2(dLangetU, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
   }
 
   // -- poll (skip on double bit — a real double-bit has an edge on both ends) --
@@ -730,6 +740,16 @@ vec3 procEnv(vec3 rd, float rough) {
                * smoothstep(1.8 + soft, 0.5, abs(az + 1.7));
   env += (vec3(1.0, 0.98, 0.92) * strip1 * 2.2 + vec3(0.85, 0.90, 1.0) * strip2 * 1.1)
        / (1.0 + 6.0 * soft);
+  // presentation: cool rim strip opposite the key — separates the silhouette
+  // from the void in the museum register (loot gets its own warm rim below)
+  if (u_register < 0.5) {
+    vec3 Lm = normalize(u_lightDir);
+    float mraz = atan(-Lm.x, -Lm.z);
+    float mdAz = abs(atan(sin(az - mraz), cos(az - mraz)));
+    float mrim = smoothstep(1.1 + soft, 0.3, mdAz)
+               * smoothstep(0.55 + soft * 0.9, 0.12 + soft * 0.3, abs(up - 0.42));
+    env += vec3(0.42, 0.58, 0.95) * mrim * 1.5 / (1.0 + 6.0 * soft);
+  }
   // v5 loot-card: warm rim strip opposite the key light — ember edge highlights
   if (u_register > 0.5 && u_register < 1.5) {
     vec3 L = normalize(u_lightDir);
@@ -800,11 +820,17 @@ float calcCurv(vec3 p) {
 vec3 bgColor(vec2 uv) {
   float vig = 1.0 - 0.35 * length(uv * 0.6);
   vec3 c = vec3(0.0010, 0.0014, 0.0030) * vig;
-  // v5 loot-card: warm ember pool low behind the piece — pedestal glow
+  // presentation: a soft floor pool + a flattened contact shadow under the
+  // piece, so it reads as grounded loot instead of floating in the void.
+  float pool = exp(-2.6 * length((uv - vec2(0.0, -0.66)) * vec2(1.0, 2.2)));
+  float contact = exp(-14.0 * length((uv - vec2(0.0, -0.52)) * vec2(1.6, 7.0)));
   if (u_register > 0.5 && u_register < 1.5) {
-    float g = exp(-2.4 * length(uv - vec2(0.0, -0.62)));
-    c = vec3(0.0008, 0.0009, 0.0016) * vig + vec3(0.060, 0.030, 0.011) * g;
+    // loot-card: warm ember pool low behind the piece — pedestal glow
+    c = vec3(0.0008, 0.0009, 0.0016) * vig + vec3(0.060, 0.030, 0.011) * pool;
+  } else {
+    c += vec3(0.016, 0.020, 0.030) * pool;
   }
+  c *= 1.0 - 0.55 * contact;
   return c;
 }
 
@@ -1053,9 +1079,13 @@ float rnd(inout uint s) {
 }
 
 void main() {
-  uint seed = uint(gl_FragCoord.x) + uint(gl_FragCoord.y) * 8192u
-            + (uint(u_frame) + 1u) * 2654435761u;
-  rnd(seed);
+  // decorrelate neighboring pixels: sequential seeds (x + y*W) through the
+  // one-step PCG stay correlated, and the DOF disc sampling turns that into
+  // visible dashed bokeh rings of the env strips at low sample counts.
+  uint seed = uint(gl_FragCoord.x) * 1973u
+            ^ uint(gl_FragCoord.y) * 9277u
+            ^ (uint(u_frame) + 1u) * 26699u;
+  rnd(seed); rnd(seed);
   vec2 jit = vec2(rnd(seed), rnd(seed)) - 0.5;
   vec2 uv = (2.0 * (gl_FragCoord.xy + jit) - u_res) / u_res.y;
 
@@ -1612,7 +1642,11 @@ function select(token, { fromGrid = false } = {}) {
   state.baseParams = paramsFromHash(baseHash);
   state.params = applyOverrides(state.baseParams, overrides);
   if (newWeapon) state.locked = new Set();   // locks are scoped to the weapon being edited
-  state.pose = { yaw: 0.55, pitch: 0.08, zoom: 1.0 };
+  // per-class hero pose: axes need a more frontal, slightly higher angle or
+  // the head foreshortens into a "T"; swords read best at the classic 3/4.
+  state.pose = state.params.weapon_class === 'axe'
+    ? { yaw: 0.30, pitch: 0.14, zoom: 1.0 }
+    : { yaw: 0.55, pitch: 0.08, zoom: 1.0 };
   history.replaceState(null, '', '#' + token);
   document.getElementById('hash-input').value = token;
   renderStage();

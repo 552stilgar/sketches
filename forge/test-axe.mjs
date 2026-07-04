@@ -116,7 +116,10 @@ test('AX6: langets are real strap geometry unioned onto the haft', () => {
 
 test('AX7: haft_butt caps the haft base with a blended union, not a hard seam', () => {
   assert.match(MAP_AXE, /u_haftButt\s*>\s*0\.5/);
-  assert.match(MAP_AXE, /smin\(sdCylY\(q,\s*BUTT_HALF_H/);
+  // blended into the haft (smin) AND clamped to the cap's neighborhood so the
+  // steel material can't claim the whole shaft (see test-zoning.mjs)
+  assert.match(MAP_AXE, /smin\(dButtCap,\s*dHaft/);
+  assert.match(MAP_AXE, /max\(smin\(dButtCap,\s*dHaft,\s*0\.02\),\s*dButtCap\s*-\s*0\.03\)/);
 });
 
 test('AX8: poll geometry stays flat/hammer/spike-distinct and skips double_bit', () => {
