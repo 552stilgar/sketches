@@ -470,7 +470,22 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
     metal = u_family > 1.5 ? 0.94 : (u_family > 0.5 ? 0.82 : 0.88);
   }
   else if (m < 2.5) { albedo = u_accentCol; rough = min(u_rough * 1.35, 0.6);  metal = 0.72; }
-  else if (m < 3.5) { albedo = vec3(0.16, 0.11, 0.08); rough = 0.62; metal = 0.0; }
+  else if (m < 3.5) {
+    // grip material: leather / helical cord wrap / wound wire (metallic)
+    float gang = atan(pos.z, pos.x);
+    if (u_gripMat < 0.5) {
+      albedo = vec3(0.16, 0.11, 0.08) * (0.85 + 0.30 * fbm(vec2(pos.y * 14.0, gang * 2.0)));
+      rough = 0.62; metal = 0.0;
+    } else if (u_gripMat < 1.5) {
+      float band = 0.5 + 0.5 * sin(pos.y * 230.0 + gang);
+      albedo = vec3(0.23, 0.17, 0.10) * (0.75 + 0.45 * band);
+      rough = 0.75 - 0.10 * band; metal = 0.0;
+    } else {
+      float band = 0.5 + 0.5 * sin(pos.y * 420.0 + gang);
+      albedo = mix(vec3(0.45, 0.42, 0.38), vec3(0.62, 0.55, 0.42), band);
+      rough = 0.38; metal = 0.85;
+    }
+  }
   else {
     // wood: lengthwise grain (fast around the shaft, slow along it) + tone patches
     float ang = atan(pos.z, pos.x);
