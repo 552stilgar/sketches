@@ -105,9 +105,28 @@ const fmt = (v) => {
   return String(r === 0 ? 0 : r); // normalize -0
 };
 
-/** Outline → SVG path string ("M … L … Z"), coordinates rounded to 3 decimals
- *  so identical geometry yields byte-identical strings. */
+// rings = [outer, ...holes] (an array of outlines); a bare outline's first
+// element is a coordinate pair, a rings array's first element is an outline
+const isRings = (o) => Array.isArray(o[0]) && Array.isArray(o[0][0]);
+
+/** Cut `hole` out of `outline`. Returns rings [outer, hole] for evenodd
+ *  rendering / subtraction-SDF queries. Throws if any hole vertex is not
+ *  strictly inside the outer ring — a breached cutout is an authoring error,
+ *  never silent geometry. */
+export function pierce(outline, hole) {
+  for (const v of hole) {
+    if (!(distanceTo(outline, v) < 0)) {
+      throw new Error(`pierce: hole vertex [${v}] is not strictly inside the outer ring`);
+    }
+  }
+  return [outline, hole];
+}
+
+/** Outline (or rings) → SVG path string, coordinates rounded to 3 decimals so
+ *  identical geometry yields byte-identical strings. Rings emit one subpath
+ *  each — render with fill-rule="evenodd" so holes read as holes. */
 export function toPath(outline) {
+  if (isRings(outline)) return outline.map(toPath).join(' ');
   const parts = outline.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${fmt(x)} ${fmt(y)}`);
   return `${parts.join(' ')} Z`;
 }
@@ -121,8 +140,15 @@ function pointSegDist(p, a, b) {
 }
 
 /** Signed distance from point p to the outline: negative inside, positive
- *  outside, magnitude = distance to the nearest boundary segment. */
+ *  outside, magnitude = distance to the nearest boundary segment.
+ *  Rings [outer, ...holes] use subtraction semantics — max(dOuter, -dHole) —
+ *  the exact JS mirror of the Stage C SDF opSubtract. */
 export function distanceTo(outline, p) {
+  if (isRings(outline)) {
+    let d = distanceTo(outline[0], p);
+    for (let i = 1; i < outline.length; i++) d = Math.max(d, -distanceTo(outline[i], p));
+    return d;
+  }
   const n = outline.length;
   let minD = Infinity;
   let inside = false;
