@@ -19,6 +19,7 @@
 // are pulled from deriveLayout() so the two mediums agree on "where things are."
 
 import { clamp, deriveLayout } from './params.mjs';
+import { bend, sweep, collar } from './craft-geo.mjs';
 
 // ---------------------------------------------------------------------------
 // numeric hygiene + path-building primitives
@@ -439,11 +440,11 @@ function buildGuard(p, palette, bounds) {
 // grip — body (grip_profile), wrap_bands, grip_risers ripple, ferrule_on
 // ---------------------------------------------------------------------------
 
-const GRIP_SAMPLES = 14;
 const GRIP_WAIST_AMOUNT = 0.35;
 const GRIP_BARREL_AMOUNT = 0.30;
 const RISER_RIPPLE_AMP = 0.06;
-const FERRULE_HEIGHT_MUL = 0.5; // relative to grip_r
+export const FERRULE_HEIGHT_MUL = 0.5; // relative to grip_r
+const FERRULE_COLLAR_WIDEN_MUL = 1.05; // ferrule reads slightly proud of the grip body
 
 function gripWidthMul(u, profile) {
   if (profile === 'waisted') return 1 - GRIP_WAIST_AMOUNT * Math.sin(Math.PI * u);
@@ -451,36 +452,56 @@ function gripWidthMul(u, profile) {
   return 1;
 }
 
+// straight spine (sagitta 0) from guard end (t=0) to pommel end (t=1) — grips don't bow.
+export function gripSpine(p, gripTopY, gripBotY) {
+  return bend([0, gripTopY], [0, gripBotY], 0);
+}
+
+// HALF-width at parametric t: grip_profile shape x optional riser ripple, scaled by grip_r.
+export function gripHalfWidthAt(p, t) {
+  let mul = gripWidthMul(t, p.grip_profile);
+  if (p.grip_risers > 0) mul *= 1 + RISER_RIPPLE_AMP * Math.sin(t * Math.PI * 2 * p.grip_risers);
+  return p.grip_r * mul;
+}
+
+export function gripOutline(p, gripTopY, gripBotY) {
+  return sweep(gripSpine(p, gripTopY, gripBotY), t => gripHalfWidthAt(p, t));
+}
+
+// ferrule band: a collar() at the guard end, sized to roughly match the old tapered rect
+// (same height + a representative width — collar can't carry the old top/bottom taper).
+export function gripFerruleOutline(p, gripTopY, gripBotY) {
+  const spine = gripSpine(p, gripTopY, gripBotY);
+  const len = gripTopY - gripBotY;
+  const h = p.grip_r * FERRULE_HEIGHT_MUL;
+  const tCenter = clamp((h / 2) / len, 0, 1);
+  const w = p.grip_r * gripWidthMul(0, p.grip_profile) * FERRULE_COLLAR_WIDEN_MUL;
+  return collar(spine, tCenter, w, h);
+}
+
 function buildGrip(p, gripTopY, gripBotY, bounds) {
   const layers = [];
-  const len = gripTopY - gripBotY;
-  const yFn = t => gripTopY - t * len; // t=0 at guard end, t=1 at pommel end
-  const widthFn = t => {
-    let mul = gripWidthMul(t, p.grip_profile);
-    if (p.grip_risers > 0) mul *= 1 + RISER_RIPPLE_AMP * Math.sin(t * Math.PI * 2 * p.grip_risers);
-    const w = p.grip_r * mul;
-    return [w, w];
-  };
-  const d = buildOutline(GRIP_SAMPLES, yFn, widthFn, () => 0, bounds);
-  layers.push({ d, fill: 'var(--grip-fill)', stroke: 'var(--grip-stroke)', strokeWidth: 0.004, opacity: 1 });
+  const spine = gripSpine(p, gripTopY, gripBotY);
+  const outline = sweep(spine, t => gripHalfWidthAt(p, t));
+  bounds.noteAll(outline);
+  layers.push({ d: polygonPath(outline), fill: 'var(--grip-fill)', stroke: 'var(--grip-stroke)', strokeWidth: 0.004, opacity: 1 });
 
   if (p.wrap_bands > 0) {
     for (let i = 1; i <= p.wrap_bands; i++) {
       const t = i / (p.wrap_bands + 1);
-      const y = yFn(t);
+      const c = spine.evalAt(t);
+      const n = spine.normalAt(t);
       const w = p.grip_r * gripWidthMul(t, p.grip_profile);
-      layers.push({ d: polylinePath([[-w, y], [w, y]]), fill: 'none', stroke: 'var(--grip-stroke)', strokeWidth: 0.0035, opacity: 0.7 });
+      const a = [c[0] - n[0] * w, c[1] - n[1] * w];
+      const b = [c[0] + n[0] * w, c[1] + n[1] * w];
+      layers.push({ d: polylinePath([a, b]), fill: 'none', stroke: 'var(--grip-stroke)', strokeWidth: 0.0035, opacity: 0.7 });
     }
   }
 
   if (p.ferrule_on === 1) {
-    const h = p.grip_r * FERRULE_HEIGHT_MUL;
-    const yTop = gripTopY, yBot = gripTopY - h;
-    const wTop = p.grip_r * gripWidthMul(0, p.grip_profile) * 1.05;
-    const wBot = p.grip_r * gripWidthMul(h / len, p.grip_profile) * 1.05;
-    const rect = [[-wTop, yTop], [wTop, yTop], [wBot, yBot], [-wBot, yBot]];
-    bounds.noteAll(rect);
-    layers.push({ d: polygonPath(rect), fill: 'var(--trim)', stroke: 'none', strokeWidth: 0, opacity: 1 });
+    const band = gripFerruleOutline(p, gripTopY, gripBotY);
+    bounds.noteAll(band);
+    layers.push({ d: polygonPath(band), fill: 'var(--trim)', stroke: 'none', strokeWidth: 0, opacity: 1 });
   }
 
   return layers;
@@ -554,11 +575,13 @@ function buildSword(p, palette, bounds) {
 // langets, haft_butt, haft_wrap
 // ---------------------------------------------------------------------------
 
-const HAFT_SAMPLES = 20;
-const HAFT_BUTT_EXTEND = 0.035;
-const HAFT_BUTT_R_MUL = 1.6;
+export const HAFT_BUTT_EXTEND = 0.035;
+export const HAFT_BUTT_R_MUL = 1.6;
 const HAFT_WRAP_ZONE = [0.02, 0.22]; // fraction of haft length near the base, grip zone
 const HAFT_WRAP_BANDS = 5;
+const HAFT_SAGITTA_MUL = 0.35; // fraction of tip lateral offset used as the bend's sagitta —
+                                // approximates the old t^1.6 cantilever bow, exactness not required
+const HAFT_BUTT_COLLAR_T = 0.01; // near-base anchor for the butt-cap collar
 
 const LANGET_X_OFFSET_MUL = 1.15; // relative to haft_r
 const LANGET_WIDTH_MUL = 0.55;
@@ -571,28 +594,49 @@ const EYE_COLLAR_R_MUL = 1.35; // relative to haft_r — the eye/haft-collar alw
 
 const DOUBLE_BIT_ASYM_BY_POLL = { flat: 0, hammer: 0.12, spike: -0.12 };
 
+// spine from the haft base [0,0] to the tip [haft_curve*haft_len, haft_len], bowed by a
+// sagitta chosen as a fraction of the tip's lateral offset — stands in for the old
+// power-curve cantilever (off = haft_curve * haft_len * t^CURVE_EXP) closely enough that
+// craft-loop directives ("bow the haft more") map onto sagitta, not ad-hoc offset math.
+export function haftSpine(p) {
+  const tipOffset = p.haft_curve * p.haft_len;
+  return bend([0, 0], [tipOffset, p.haft_len], tipOffset * HAFT_SAGITTA_MUL);
+}
+
+export function haftOutline(p) {
+  return sweep(haftSpine(p), () => p.haft_r);
+}
+
+// butt cap: a collar() near the very base, sized to roughly match the old flared trim rect
+// (collar can't carry the old top/bottom flare, so width uses the flare's max).
+export function haftButtCapOutline(p) {
+  const spine = haftSpine(p);
+  const r = p.haft_r * HAFT_BUTT_R_MUL;
+  return collar(spine, HAFT_BUTT_COLLAR_T, r, HAFT_BUTT_EXTEND);
+}
+
 function buildHaft(p, bounds) {
-  const yFn = t => t * p.haft_len;
-  const offsetXFn = t => p.haft_curve * p.haft_len * Math.pow(t, CURVE_EXP);
-  const widthFn = () => [p.haft_r, p.haft_r];
-  const d = buildOutline(HAFT_SAMPLES, yFn, widthFn, offsetXFn, bounds);
-  const layers = [{ d, fill: 'var(--haft-fill)', stroke: 'var(--haft-stroke)', strokeWidth: 0.004, opacity: 1 }];
+  const spine = haftSpine(p);
+  const outline = sweep(spine, () => p.haft_r);
+  bounds.noteAll(outline);
+  const layers = [{ d: polygonPath(outline), fill: 'var(--haft-fill)', stroke: 'var(--haft-stroke)', strokeWidth: 0.004, opacity: 1 }];
 
   if (p.haft_wrap === 1) {
     const [t0, t1] = HAFT_WRAP_ZONE;
     for (let i = 1; i <= HAFT_WRAP_BANDS; i++) {
       const t = t0 + (t1 - t0) * (i / (HAFT_WRAP_BANDS + 1));
-      const y = yFn(t);
-      const off = p.haft_curve * p.haft_len * Math.pow(t, CURVE_EXP);
-      layers.push({ d: polylinePath([[off - p.haft_r, y], [off + p.haft_r, y]]), fill: 'none', stroke: 'var(--trim)', strokeWidth: 0.003, opacity: 0.6 });
+      const c = spine.evalAt(t);
+      const n = spine.normalAt(t);
+      const a = [c[0] - n[0] * p.haft_r, c[1] - n[1] * p.haft_r];
+      const b = [c[0] + n[0] * p.haft_r, c[1] + n[1] * p.haft_r];
+      layers.push({ d: polylinePath([a, b]), fill: 'none', stroke: 'var(--trim)', strokeWidth: 0.003, opacity: 0.6 });
     }
   }
 
   if (p.haft_butt === 1) {
-    const r = p.haft_r * HAFT_BUTT_R_MUL;
-    const rect = [[-r, 0], [r, 0], [p.haft_r, HAFT_BUTT_EXTEND * -1], [-p.haft_r, HAFT_BUTT_EXTEND * -1]];
-    bounds.noteAll(rect);
-    layers.push({ d: polygonPath(rect), fill: 'var(--trim)', stroke: 'none', strokeWidth: 0, opacity: 1 });
+    const cap = haftButtCapOutline(p);
+    bounds.noteAll(cap);
+    layers.push({ d: polygonPath(cap), fill: 'var(--trim)', stroke: 'none', strokeWidth: 0, opacity: 1 });
   }
 
   return layers;

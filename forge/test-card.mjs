@@ -20,9 +20,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { paramsFromHash, randHex, mulberry32, DNA } from './params.mjs';
-import { buildWeapon, derivePalette, hslCss } from './card-geo.mjs';
+import {
+  buildWeapon, derivePalette, hslCss,
+  haftSpine, haftOutline, haftButtCapOutline, HAFT_BUTT_R_MUL, HAFT_BUTT_EXTEND,
+  gripSpine, gripOutline, gripHalfWidthAt, gripFerruleOutline, FERRULE_HEIGHT_MUL,
+} from './card-geo.mjs';
+import { assertShapeRules } from './craft-geo.mjs';
 
 const SAMPLE_HASHES = ['8b96b1b9', '30e2ebf4', '0', 'ffffffff', 'deadbeef', 'a1', '552usul'];
+
+// segment-intersection helper (proper crossings only, shared endpoints excluded) —
+// mirrors test-craft.mjs's own isSimplePolygon idiom, duplicated here since it's a
+// small self-contained test check and these files don't share a test-utils module.
+function segsCross(a, b, c, d) {
+  const o = (p, q, r) => Math.sign((q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]));
+  const o1 = o(a, b, c), o2 = o(a, b, d), o3 = o(c, d, a), o4 = o(c, d, b);
+  return o1 !== o2 && o3 !== o4 && o1 !== 0 && o2 !== 0 && o3 !== 0 && o4 !== 0;
+}
+
+function isSimplePolygon(pts) {
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (j === i || j === (i + 1) % n || (j + 1) % n === i) continue;
+      if (segsCross(pts[i], pts[(i + 1) % n], pts[j], pts[(j + 1) % n])) return false;
+    }
+  }
+  return true;
+}
 
 function numericTokensOf(d) {
   return (d.match(/-?\d+(\.\d+)?/g) || []).map(Number);
@@ -146,4 +171,76 @@ test('C5: v6 genes visibly change the SVG output relative to their neutral value
   const facet6 = buildWeapon({ ...base, weapon_class: 'sword', pommel_type: 'faceted', pommel_facets: 6 });
   const facet10 = buildWeapon({ ...base, weapon_class: 'sword', pommel_type: 'faceted', pommel_facets: 10 });
   assert.notEqual(facet6.layers[0].d, facet10.layers[0].d, 'pommel_facets did not change the pommel polygon');
+});
+
+// ---------------------------------------------------------------------------
+// Stage B — card-geo now flows its SPINED parts through craft-geo.mjs (bend/
+// sweep/collar). These tests cover the craft-geo integration itself: the haft
+// spine's curved outline still obeys the shape rule, the grip's swept outline
+// stays simple and its width profile still orders waisted < straight < barrel,
+// and the collar-derived trim layers (butt cap, ferrule) stay local to their
+// anchor point — the same "zoning" invariant craft-geo's own B4 test encodes,
+// re-checked here at card-geo's two concrete call sites.
+// ---------------------------------------------------------------------------
+
+test('D1: a curved haft outline (haft_curve well above 0) passes assertShapeRules clean', () => {
+  const base = paramsFromHash('8b96b1b9');
+  const p = { ...base, weapon_class: 'axe', haft_curve: 0.14, haft_len: 1.0 };
+  const outline = haftOutline(p);
+  assert.ok(Array.isArray(outline) && outline.length >= 16, 'haftOutline must return a sampled polygon');
+  assert.deepEqual(assertShapeRules(outline), [], 'a genuinely curved haft must pass the straight-run shape rule');
+});
+
+test('D2: grip outline is a simple polygon (straight profile, curved risers)', () => {
+  const base = paramsFromHash('8b96b1b9');
+  const p = { ...base, weapon_class: 'sword', grip_profile: 'straight', grip_risers: 6, grip_r: 0.03, grip_len: 0.3, guard_thick: 0.03 };
+  const outline = gripOutline(p, -p.guard_thick / 2, -p.grip_len);
+  assert.ok(isSimplePolygon(outline), 'grip outline must not self-intersect');
+
+  // also check the waisted profile — its narrower waist is the shape most likely
+  // to pinch into a self-intersection if the sweep math were wrong
+  const waisted = { ...p, grip_profile: 'waisted' };
+  assert.ok(isSimplePolygon(gripOutline(waisted, -waisted.guard_thick / 2, -waisted.grip_len)));
+});
+
+test('D2b: grip half-width at mid-grip orders waisted < straight < barrel', () => {
+  const base = paramsFromHash('8b96b1b9');
+  const mk = grip_profile => ({ ...base, weapon_class: 'sword', grip_profile, grip_risers: 0, grip_r: 0.03 });
+  const waisted = gripHalfWidthAt(mk('waisted'), 0.5);
+  const straight = gripHalfWidthAt(mk('straight'), 0.5);
+  const barrel = gripHalfWidthAt(mk('barrel'), 0.5);
+  assert.ok(waisted < straight, `waisted half-width ${waisted} must be < straight ${straight} at mid-grip`);
+  assert.ok(straight < barrel, `straight half-width ${straight} must be < barrel ${barrel} at mid-grip`);
+});
+
+test('D3: collar-derived layers (haft butt cap, grip ferrule) stay within a local neighborhood of their anchor', () => {
+  const base = paramsFromHash('8b96b1b9');
+
+  // haft butt cap: anchored near the very base of the haft spine
+  const axeP = { ...base, weapon_class: 'axe', haft_curve: 0.1, haft_len: 1.0, haft_butt: 1 };
+  const haftAnchor = haftSpine(axeP).evalAt(0.01);
+  const capW = axeP.haft_r * HAFT_BUTT_R_MUL;
+  const capReach = Math.hypot(HAFT_BUTT_EXTEND / 2, capW) + 0.01; // corner radius + slack
+  const cap = haftButtCapOutline(axeP);
+  assert.ok(cap.length >= 4);
+  for (const pt of cap) {
+    const d = Math.hypot(pt[0] - haftAnchor[0], pt[1] - haftAnchor[1]);
+    assert.ok(d <= capReach, `butt cap point ${pt} is ${d} from anchor — beyond reach ${capReach}`);
+  }
+
+  // grip ferrule: anchored near the guard end of the grip spine
+  const swordP = { ...base, weapon_class: 'sword', ferrule_on: 1, grip_r: 0.03, grip_len: 0.3, guard_thick: 0.03, grip_profile: 'straight' };
+  const gripTopY = -swordP.guard_thick / 2, gripBotY = -swordP.grip_len;
+  const len = gripTopY - gripBotY;
+  const h = swordP.grip_r * FERRULE_HEIGHT_MUL;
+  const tCenter = (h / 2) / len;
+  const ferruleAnchor = gripSpine(swordP, gripTopY, gripBotY).evalAt(tCenter);
+  const ferruleW = swordP.grip_r * 1.05;
+  const ferruleReach = Math.hypot(h / 2, ferruleW) + 0.01;
+  const ferrule = gripFerruleOutline(swordP, gripTopY, gripBotY);
+  assert.ok(ferrule.length >= 4);
+  for (const pt of ferrule) {
+    const d = Math.hypot(pt[0] - ferruleAnchor[0], pt[1] - ferruleAnchor[1]);
+    assert.ok(d <= ferruleReach, `ferrule point ${pt} is ${d} from anchor — beyond reach ${ferruleReach}`);
+  }
 });
