@@ -182,6 +182,7 @@ const CFG = {
   fov: 0.62,
   ptIdleMs: 250,        // camera stillness before the path tracer starts accumulating
   ptMaxSamples: 360,    // accumulation budget per view
+  ptPixelsPerDraw: 90000, // max pixels per PT draw call (band tiling keeps each draw under the GPU watchdog / TDR budget)
 };
 
 // ---------------------------------------------------------------------------
@@ -1432,11 +1433,15 @@ function createRenderer(canvas, { progressive = false } = {}) {
     gl.useProgram(disp.prog);
     if (disp.U.u_register != null) gl.uniform1f(disp.U.u_register, state.register);
 
-    let sample = 0, src = 0;
+    let sample = 0, src = 0, tile = 0;
+    // v6 hotfix: one full-res path-trace draw can exceed the GPU watchdog
+    // budget (Windows TDR ~2s -> context loss) now that the SDF is heavier.
+    // Render each sample in horizontal bands so no single draw is ever big.
+    const tiles = Math.max(1, Math.ceil((w * h) / CFG.ptPixelsPerDraw));
     running = true;
     const tick = () => {
       if (!running) return;
-      // one path-trace sample: read texs[src], write sum into texs[1-src]
+      // one band of the current sample: read texs[src], write sum into texs[1-src]
       gl.useProgram(pt.prog);
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texs[1 - src], 0);
@@ -1445,8 +1450,15 @@ function createRenderer(canvas, { progressive = false } = {}) {
       gl.bindTexture(gl.TEXTURE_2D, texs[src]);
       gl.uniform1i(pt.U.u_prev, 0);
       gl.uniform1f(pt.U.u_frame, sample);
+      const y0 = Math.floor(h * tile / tiles), y1 = Math.floor(h * (tile + 1) / tiles);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, y0, w, y1 - y0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      // display: accumulated / N -> ACES -> screen
+      gl.disable(gl.SCISSOR_TEST);
+      tile++;
+      if (tile < tiles) { raf = requestAnimationFrame(tick); return; }
+      tile = 0;
+      // sample complete -> display: accumulated / N -> ACES -> screen
       gl.useProgram(disp.prog);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, w, h);
