@@ -314,6 +314,19 @@ vec3 rotX(vec3 p, float a) {
   return vec3(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
 }
 
+// v6 geometry-depth: smooth max paired with the shared smin helper above.
+float smax(float a, float b, float k) { return -smin(-a, -b, k); }
+
+// -- v6 blade-depth constants (forge/docs/v6-research.md secs 2 & 4) --------
+const float FULLER_WIDTH_FRAC   = 0.34;  // groove half-width, fraction of local blade half-width w
+const float FULLER_DEPTH_SCALE  = 0.85;  // fuller_depth (0-1 gene) -> channel half-depth, fraction of th
+const float FULLER_RIM_K        = 0.012; // smooth-subtraction blend radius -> rounded floor + rim highlight
+const float FULLER_FADE_BIG     = 10.0;  // sentinel multiplier: "no cavity here" near root/tip fade-out
+const float HOLLOW_FLUTE_DEPTH  = 0.16;  // hollow_ground: concave flute depth, fraction of th
+const float EDGE_BEVEL_TH_SCALE = 0.55;  // edge_bevel_w: z-extent scale inside the outer edge-bevel band
+const float TIP_ROUND_R_FRAC    = 0.42;  // tip_style=round: cap-sphere radius, fraction of tip-root width
+const float TIP_ROUND_BLEND_K   = 0.012; // tip_style=round: smooth-union blend radius into the taper
+
 float hash21(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
 
 // -- v2: value noise + fBm (damascus banding + v4 nicks/rust run on these) ----
@@ -330,25 +343,25 @@ float fbm(vec2 p) {
 }
 
 vec2 mapSword(vec3 p) {
-  // -- blade (bent space, tapered rhombus cross-section) --
+  // -- blade (bent space; cross-section per blade_section; taper per blade_taper
+  //    with an optional flat ricasso_len root before the taper begins) --
   float t = clamp((p.y - u_bladeRoot) / u_bladeLen, 0.0, 1.0);
   vec3 q = p;
   q.x -= u_curve * t * t * u_bladeLen;
 
-  float wProf = 1.0 - u_taper * t;
+  // ricasso_len: freeze the taper ramp for the first ricasso_len fraction of the
+  // blade (a flat, unsharpened root strip) before the existing linear taper
+  // begins. ricasso_len == 0 reduces exactly to the legacy tTaper == t behavior.
+  float tTaper = u_ricassoLen > 1e-4
+    ? clamp((t - u_ricassoLen) / max(1.0 - u_ricassoLen, 1e-4), 0.0, 1.0)
+    : t;
+  float wProf = 1.0 - u_taper * tTaper;
   wProf = mix(wProf, wProf * (0.62 + 3.2 * t * (1.0 - t) * (1.0 - t * 0.35)), u_leaf);
   float tipT = smoothstep(1.0, 1.0 - u_tipFrac, t);
-  float tipMul = (u_tipStyle > 1.5) ? sqrt(tipT) : tipT;   // round keeps shoulders
+  float tipMul = tipT;   // point + round share one taper curve; round gets a real cap sphere below
   float w = max(u_bladeW * wProf * tipMul, 1e-4);
 
   float th = u_bladeTh * (0.55 + 0.45 * wProf) * max(tipMul, 0.15);
-  if (u_fullerN > 0.5) {
-    float fx = u_fullerN < 1.5 ? abs(q.x) : abs(abs(q.x) - w * 0.38);
-    float groove = smoothstep(w * 0.5, 0.0, fx)
-                 * u_fullerDepth
-                 * smoothstep(0.02, 0.12, t) * smoothstep(1.0, 0.8, t);
-    th *= 1.0 - 0.55 * groove;
-  }
 
   // v4: edge nicks — sparse bites out of the working edge once wear is heavy.
   // sign(q.x) decorrelates the two edges; only w shrinks so the spine is untouched.
@@ -357,13 +370,59 @@ vec2 mapSword(vec3 p) {
     w *= 1.0 - nick * (u_wear - 0.55) * 0.5;
   }
 
-  float cs = (abs(q.x) / w + abs(q.z) / th - 1.0) * min(w, th) * 0.62;
+  // edge_bevel_w: a distinct secondary facet near the outer edge (the z-extent
+  // steps down inside the bevel band) instead of one flat facet from spine to
+  // edge — reads as a ground bevel line, and the existing curvature-driven wear
+  // hooks (calcCurv) pick up the crease as a highlight/grime edge for free.
+  float edgeU = clamp(abs(q.x) / w, 0.0, 1.0);
+  float bevelMix = smoothstep(clamp(1.0 - u_edgeBevelW, 0.0, 1.0), 1.0, edgeU);
+  float thEdge = th * mix(1.0, EDGE_BEVEL_TH_SCALE, bevelMix);
+
+  // blade_section: 0 diamond (legacy rhombic ridge), 1 lenticular (softened,
+  // flattened-oval lens — Oakeshott XIII), 2 hollow_ground (diamond ridge kept,
+  // concave flute scooped into the flat between spine and edge).
+  float csDiamond = (abs(q.x) / w + abs(q.z) / thEdge - 1.0) * min(w, thEdge) * 0.62;
+  float cs;
+  if (u_bladeSection < 0.5) {
+    cs = csDiamond;
+  } else if (u_bladeSection < 1.5) {
+    cs = (length(vec2(q.x / w, q.z / thEdge)) - 1.0) * min(w, thEdge) * 0.62;
+  } else {
+    float flute = HOLLOW_FLUTE_DEPTH * thEdge * sin(clamp(abs(q.x) / w, 0.0, 1.0) * 3.14159265);
+    cs = csDiamond + flute;
+  }
+
   float yb = max(u_bladeRoot - p.y, p.y - (u_bladeRoot + u_bladeLen));
   float dBlade = max(cs, yb);
+
+  // fuller_depth: a real carved channel — smooth-subtract an elongated lozenge
+  // (an ellipse in the lateral/thickness plane) along the blade midline instead
+  // of thinning a thickness scalar, so the groove gets its own rounded floor and
+  // a visible rim highlight where it meets the flat. fuller_n==2 mirrors two
+  // off-center grooves via the existing abs(abs(q.x)-w*0.38) pattern.
+  if (u_fullerN > 0.5) {
+    float fMask = smoothstep(0.02, 0.12, t) * smoothstep(1.0, 0.8, t);
+    float gx = u_fullerN < 1.5 ? q.x : (abs(q.x) - w * 0.38);
+    float grooveHalfW = max(w * FULLER_WIDTH_FRAC, 1e-5);
+    float grooveHalfD = max(th * u_fullerDepth * FULLER_DEPTH_SCALE, 1e-5);
+    float cavFull = (length(vec2(gx / grooveHalfW, q.z / grooveHalfD)) - 1.0)
+                  * min(grooveHalfW, grooveHalfD);
+    // fMask -> 0 near root/tip blends the cavity to a large positive ("no groove
+    // here") distance instead of shrinking its shape, avoiding a division blowup.
+    float cav = mix(FULLER_FADE_BIG * grooveHalfW, cavFull, fMask);
+    dBlade = smax(dBlade, -cav, FULLER_RIM_K);
+  }
+
   if (u_tipStyle > 0.5 && u_tipStyle < 1.5) {
     // clip point: shear the last stretch of the spine with a plane
     vec2 tp = q.xy - vec2(0.0, u_bladeRoot + u_bladeLen);
     dBlade = max(dBlade, dot(tp, normalize(vec2(0.72, 0.35))) - u_bladeLen * u_tipFrac * 0.55);
+  } else if (u_tipStyle > 1.5) {
+    // round: smooth-union a small cap sphere at the true tip vertex so the
+    // silhouette actually rounds off instead of just tapering to zero faster.
+    vec3 tipC = vec3(0.0, u_bladeRoot + u_bladeLen, 0.0);
+    float tipR = max(u_bladeW * (1.0 - u_taper) * TIP_ROUND_R_FRAC, 1e-4);
+    dBlade = smin(dBlade, sdSphere(q - tipC, tipR), TIP_ROUND_BLEND_K);
   }
   vec2 res = vec2(dBlade * 0.85, MAT_STEEL);
 
