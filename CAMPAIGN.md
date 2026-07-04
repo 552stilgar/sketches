@@ -1,13 +1,13 @@
 # sketches — Campaign Log
 
 ## Active Thread
-_Checkpoint: 2026-07-03T22:05:00Z_
+_Checkpoint: 2026-07-04T01:10:00Z_
 
-**In progress:** forge/ v1 iteration CLOSED — craft gate passed. Usul reviewed live via cloudflared quick tunnel 2026-07-03: "very interesting patterns for an initial version", no tuning notes. Tunnel + throwaway server torn down.
-**Context:** v1 = hex hash → 36-param DNA → GLSL SDF raymarcher, 12-specimen grid, share tokens, 5/5 tests. Next iteration is v2 advanced graphics ("end-level details"). Technique source: the 27-technique catalog at `~/relay-archive/operations/relay-recon-0002/field_report_docint-C.md` (domain warping, fBm, procedural texture cookbook, SDF idioms all cataloged).
-**Next action:** Usul picks from the v2 graphics proposal (anisotropic GGX + procedural env reflections, curvature-based edge wear, damascus domain-warp bands, soft shadows, wood/leather materials, rune engravings). DNA is append-only — v2 params append to the table so every v1 hash keeps its existing rolls.
-**Suggested skills:** `/usul-idea-to-design` for the v2 slice once techniques are picked.
-**Files in flight:** none (all committed)
+**In progress:** forge/ v2 (finish system) + v3 (progressive path tracer) both shipped and headless-verified; craft gate on v3 is OPEN — tunnel is live, awaiting Usul's verdict.
+**Context:** v2 shipped `deriveMaterial()` (steel_finish brushed/damascus/blued, wear_amount, DNA appended at indices 36-39, append-only preserved — golden-fixture test B6 pins 3 v1 hashes) + shader stack (procEnv reflections, anisotropic GGX with per-part tangent frames, SDF-curvature edge wear, domain-warped damascus banding). Usul's v2 verdict: "does look a bit more like metal" — read as a real but partial win, gap = dynamic range (single-bounce + gamma-only clamps highlights). Usul's stated endgame: not AAA/Diablo-II fidelity, but "several steps higher than minecraft" — real-life-*like*. That reframed the next move from a cheap ACES+bloom tuning pass to a technique-class jump: v3 = WebGL2 progressive path tracer (3 programs: preview/pathtrace/display sharing one SCENE glsl chunk) that accumulates true multi-bounce light + soft shadows via next-event estimation once the camera idles 250ms, plus tangent-aligned micro-normal scratches/pitting, plus native-resolution stage (dropped the pixelated 220px upscale). 9/9 node tests still green (pure core untouched). browser-verify PASS on all checks: console clean, native res confirmed (518×488 native vs old fixed-220), accumulation counter climbing (✦ N spp caption), pixel sanity on 3 finish×class combos, drag correctly resets to preview then re-accumulates, 12/12 thumbnails at 240px.
+**Next action:** Usul reviews v3 live at the tunnel (hard-refresh for new shader) — same 4 review hashes (d740b6e3/8833f287/b24e896d/dc97372e), this time let it sit still and resolve before judging. Named tuning knobs already in place if something's off: `EXPOSURE`, `MICRO_AMP`, `ENV_GAIN`, `ptMaxSamples` (resolve time). On PASS: close the iteration + decide push (repo still local-only, 8 forge-related commits since v1).
+**Suggested skills:** none needed — this is a direct craft-loop conversation, not a new skill invocation.
+**Files in flight:** none (all committed: 1cef7e6 v2 core, 9057417 v2 shader, acdd915 v3 path tracer)
 
 ## Status
 Active. Creative coding sandbox — generative art experiments in self-contained HTML/JS files.
