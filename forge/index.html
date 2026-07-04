@@ -456,7 +456,8 @@ vec3 microNormal(vec3 pos, vec3 n, vec3 t, float m, float rough) {
   float e = 0.05;
   float h0 = microH(uv);
   vec2 g = vec2(microH(uv + vec2(e, 0.0)) - h0, microH(uv + vec2(0.0, e)) - h0) / e;
-  float amp = MICRO_AMP * (0.30 + 0.70 * rough) * (m < 2.5 ? 1.0 : 0.45);
+  // metals get full scratch depth; leather grip is smoother; wood grain bumps hard
+  float amp = MICRO_AMP * (0.30 + 0.70 * rough) * (m < 2.5 ? 1.0 : (m > 3.5 ? 0.85 : 0.45));
   return normalize(n - (g.x * t + g.y * b) * amp);
 }
 
@@ -470,7 +471,15 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
   }
   else if (m < 2.5) { albedo = u_accentCol; rough = min(u_rough * 1.35, 0.6);  metal = 0.72; }
   else if (m < 3.5) { albedo = vec3(0.16, 0.11, 0.08); rough = 0.62; metal = 0.0; }
-  else              { albedo = vec3(0.30, 0.20, 0.12); rough = 0.58; metal = 0.0; }
+  else {
+    // wood: lengthwise grain (fast around the shaft, slow along it) + tone patches
+    float ang = atan(pos.z, pos.x);
+    float streak = fbm(vec2(ang * 5.0, pos.y * 2.4) * 4.0);
+    float patch  = fbm(vec2(pos.y * 1.6, ang * 0.8) + 5.7);
+    albedo = vec3(0.30, 0.20, 0.12) * (0.72 + 0.42 * streak) * (0.85 + 0.30 * patch);
+    rough = 0.58 - 0.12 * streak;
+    metal = 0.0;
+  }
 
   brush = 1.0;
   if (m < 2.5) {
