@@ -162,6 +162,10 @@ uniform vec3  u_lightDir;
 // v2 finish (from deriveMaterial): 0 brushed, 1 damascus, 2 blued
 uniform float u_finish, u_wear, u_damScale, u_damWarp, u_aniso, u_rough;
 
+// v4 variability: family 0 steel / 1 iron / 2 bronze; grip 0 leather / 1 cord / 2 wire;
+// guardExt 0 inherit / 1 swept / 2 ring
+uniform float u_family, u_gripMat, u_guardExt, u_engraveOn, u_engraveDens;
+
 const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
 
 float sdSphere(vec3 p, float r) { return length(p) - r; }
@@ -458,7 +462,12 @@ vec3 microNormal(vec3 pos, vec3 n, vec3 t, float m, float rough) {
 
 // finish layer + curvature wear -> material response (shared preview / PT)
 void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float metal, out float brush) {
-  if (m < 1.5)      { albedo = u_steelCol;  rough = u_rough;                   metal = 0.88; }
+  if (m < 1.5) {
+    albedo = u_steelCol;  rough = u_rough;
+    // family F0 response: bronze is intensely metallic (colored reflections),
+    // iron a duller working metal, steel in between
+    metal = u_family > 1.5 ? 0.94 : (u_family > 0.5 ? 0.82 : 0.88);
+  }
   else if (m < 2.5) { albedo = u_accentCol; rough = min(u_rough * 1.35, 0.6);  metal = 0.72; }
   else if (m < 3.5) { albedo = vec3(0.16, 0.11, 0.08); rough = 0.62; metal = 0.0; }
   else              { albedo = vec3(0.30, 0.20, 0.12); rough = 0.58; metal = 0.0; }
@@ -486,7 +495,9 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
         rough = clamp(mix(rough * 0.8, rough * 1.3, dam), 0.05, 0.7);
       }
     } else {                              // blued: oxidized blue-black, tight sheen
-      albedo = mix(albedo * vec3(0.34, 0.42, 0.66) * 0.6, albedo, 0.12);
+      // bronze doesn't blue — it antiques to a browned dark patina instead
+      vec3 oxide = u_family > 1.5 ? vec3(0.52, 0.40, 0.28) : vec3(0.34, 0.42, 0.66);
+      albedo = mix(albedo * oxide * 0.6, albedo, 0.12);
     }
 
     // -- curvature wear: convex edges polish bright, hollows collect grime --
@@ -694,6 +705,16 @@ const POMMEL_TYPES = ['disc', 'sphere', 'scent_stopper', 'faceted', 'ring'];
 const HEAD_TYPES = ['bearded', 'broad', 'double_bit', 'war'];
 const POLL_TYPES = ['flat', 'hammer', 'spike'];
 
+const GUARD_EXTS = ['inherit', 'swept', 'ring'];
+
+// v4 family color (craft knobs): iron dark + desaturated, bronze warm copper-gold.
+// steel_hue (185-235) leaks a little into bronze so bronzes vary hash to hash.
+const FAMILY_COLOR = {
+  steel: p => hsl2rgb(p.steel_hue, p.steel_sat, 62),
+  iron: p => hsl2rgb(p.steel_hue, p.steel_sat * 0.35, 45),
+  bronze: p => hsl2rgb(26 + (p.steel_hue - 185) * 0.14, 46, 48),
+};
+
 function hsl2rgb(h, s, l) {
   h = ((h % 360) + 360) % 360; s /= 100; l /= 100;
   const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -820,7 +841,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_cheek', p.cheek_thick);
     f('u_pollType', POLL_TYPES.indexOf(p.poll_type));
 
-    v3('u_steelCol', hsl2rgb(p.steel_hue, p.steel_sat, 62));
+    v3('u_steelCol', FAMILY_COLOR[p.metal_family](p));
     v3('u_accentCol', hsl2rgb(p.accent_hue, 58, 48));
     f('u_accentOn', p.accent_on);
     const M = deriveMaterial(p);
@@ -830,6 +851,11 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_damWarp', M.damascusWarp);
     f('u_aniso', M.anisoStrength);
     f('u_rough', M.baseRoughness);
+    f('u_family', M.familyIdx);
+    f('u_gripMat', M.gripIdx);
+    f('u_guardExt', GUARD_EXTS.indexOf(p.guard_ext));
+    f('u_engraveOn', M.engraveOn);
+    f('u_engraveDens', M.engraveDensity);
     const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
     v3('u_lightDir', [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)]);
   }
