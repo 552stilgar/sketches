@@ -1278,9 +1278,50 @@ function createRenderer(canvas, { progressive = false } = {}) {
 
   const preview = makeProg(VERT, PREVIEW_FRAG);
   const canPT = progressive && isGL2 && !!gl.getExtension('EXT_color_buffer_float');
-  const pt = canPT ? makeProg(VERT3, PT_FRAG) : null;
-  const disp = canPT ? makeProg(VERT3, DISPLAY_FRAG) : null;
   if (progressive && !canPT) console.warn('forge: WebGL2/float buffers unavailable — preview-only stage');
+
+  // v6 hotfix: the PT program's driver compile (ANGLE/D3D loop unrolling over
+  // the enlarged SDF) can take minutes and used to block the page at init.
+  // Compile it in the background instead: issue compile+link without any
+  // status query (queries force a sync wait), poll COMPLETION_STATUS_KHR when
+  // available, and let the path tracer take over whenever the link lands.
+  let pt = null, disp = null, ptPending = null;
+  if (canPT) {
+    const par = gl.getExtension('KHR_parallel_shader_compile');
+    const start = (vsrc, fsrc) => {
+      const prog = gl.createProgram();
+      const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, vsrc); gl.compileShader(vs);
+      const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, fsrc); gl.compileShader(fs);
+      gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+      gl.bindAttribLocation(prog, 0, 'a_pos');
+      gl.linkProgram(prog);
+      return { prog, fs };
+    };
+    const jobs = [start(VERT3, PT_FRAG), start(VERT3, DISPLAY_FRAG)];
+    const finish = (job) => {
+      if (!gl.getProgramParameter(job.prog, gl.LINK_STATUS)) {
+        console.error('forge: PT program link failed — staying on preview.',
+          gl.getShaderInfoLog(job.fs) || gl.getProgramInfoLog(job.prog));
+        return null;
+      }
+      const U = {};
+      const nU = gl.getProgramParameter(job.prog, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < nU; i++) {
+        const info = gl.getActiveUniform(job.prog, i);
+        U[info.name] = gl.getUniformLocation(job.prog, info.name);
+      }
+      return { prog: job.prog, U };
+    };
+    ptPending = () => {
+      if (par && !jobs.every(j => gl.getProgramParameter(j.prog, gl.COMPLETION_STATUS_KHR))) return true;
+      // ready (or no ext: first call pays the sync wait — but off the init path)
+      pt = finish(jobs[0]);
+      disp = pt ? finish(jobs[1]) : null;
+      if (!disp) pt = null;
+      ptPending = null;
+      return false;
+    };
+  }
 
   const buf = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -1395,10 +1436,13 @@ function createRenderer(canvas, { progressive = false } = {}) {
     return t;
   }
 
+  let ptRetry = 0;
   function stop() {
     running = false;
     if (raf) cancelAnimationFrame(raf);
     raf = 0;
+    if (ptRetry) clearTimeout(ptRetry);
+    ptRetry = 0;
   }
 
   function render(p, pose, w, h) {
@@ -1414,6 +1458,13 @@ function createRenderer(canvas, { progressive = false } = {}) {
   function begin(p, pose, w, h, onProgress) {
     if (!canPT) return false;
     stop();
+    if (ptPending && ptPending()) {
+      // PT program still compiling in driver threads — preview stays up,
+      // re-check shortly and take over when the link lands.
+      ptRetry = setTimeout(() => begin(p, pose, w, h, onProgress), 400);
+      return false;
+    }
+    if (!pt) return false;  // link failed — disclosed above, preview-only
     canvas.width = w; canvas.height = h;
     if (w !== accW || h !== accH || !texs) {
       if (texs) texs.forEach(t => gl.deleteTexture(t));
