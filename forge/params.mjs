@@ -91,6 +91,16 @@ export const DNA = [
   { key: 'wear_amount', section: 'Material', min: 0.0, max: 1.0, decimals: 2 },
   { key: 'damascus_scale', section: 'Material', min: 18, max: 60, decimals: 0 },
   { key: 'damascus_warp', section: 'Material', min: 0.15, max: 0.85, decimals: 2 },
+
+  // -- v4 variability (2026-07-04) — APPENDED so every v1/v2 hash keeps its 40 rolls --
+  // steel listed 3×: weighted 3/5 so the established look stays the common case
+  { key: 'metal_family', section: 'Material', options: ['steel', 'steel', 'steel', 'iron', 'bronze'] },
+  { key: 'grip_material', section: 'Grip', options: ['leather', 'leather', 'cord', 'wire'] },
+  // guard_type's option list can't grow (option count changes every existing roll);
+  // new silhouettes ride a separate override param instead. inherit = keep guard_type.
+  { key: 'guard_ext', section: 'Guard', options: ['inherit', 'inherit', 'swept', 'ring'] },
+  { key: 'engrave_on', section: 'Detail', options: [0, 0, 0, 1] },
+  { key: 'engrave_density', section: 'Detail', min: 0.30, max: 1.00, decimals: 2 },
 ];
 
 function rollParam(spec, rng) {
@@ -180,11 +190,17 @@ const AXE_ANISO = 0.42;
 // blued steel is polished before oxidizing — tighter highlight than raw brushed
 const BLUED_ROUGHNESS_MUL = 0.72;
 
+// v4 metal families: iron is a rougher working metal, bronze casts slightly matte
+const FAMILY_INDEX = { steel: 0, iron: 1, bronze: 2 };
+const FAMILY_ROUGHNESS_ADD = { steel: 0.0, iron: 0.10, bronze: 0.05 };
+const GRIP_INDEX = { leather: 0, cord: 1, wire: 2 };
+
 export function deriveMaterial(p) {
   let baseRoughness = p.weapon_class === 'sword'
     ? SWORD_ROUGHNESS[p.blade_type]
     : AXE_ROUGHNESS[p.head_type];
   if (p.steel_finish === 'blued') baseRoughness *= BLUED_ROUGHNESS_MUL;
+  baseRoughness = clamp(baseRoughness + FAMILY_ROUGHNESS_ADD[p.metal_family], 0.1, 0.6);
   return {
     finishIdx: FINISH_INDEX[p.steel_finish],
     wear: p.wear_amount,
@@ -192,6 +208,10 @@ export function deriveMaterial(p) {
     damascusWarp: p.damascus_warp,
     anisoStrength: p.weapon_class === 'sword' ? SWORD_ANISO : AXE_ANISO,
     baseRoughness: Math.round(baseRoughness * 1000) / 1000,
+    familyIdx: FAMILY_INDEX[p.metal_family],
+    gripIdx: GRIP_INDEX[p.grip_material],
+    engraveOn: p.engrave_on,
+    engraveDensity: p.engrave_density,
   };
 }
 

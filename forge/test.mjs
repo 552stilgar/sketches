@@ -35,6 +35,21 @@
 //
 // Out of scope for v2 (eyes-gated): env reflection look, GGX lobe shape, wear placement,
 //   damascus band aesthetics — the shader layer is verified in browser, not here.
+//
+// v4 additions (2026-07-04) — variability + detail slice:
+//   DNA appends (indices 40-44): metal_family (steel×3 weighted / iron / bronze),
+//     grip_material (leather×2 / cord / wire), guard_ext (inherit×2 / swept / ring),
+//     engrave_on (0×3 / 1), engrave_density — appended AFTER damascus_warp so every
+//     v1/v2 hash keeps its existing 40 rolls bit-identical.
+//   deriveMaterial gains: familyIdx (0 steel / 1 iron / 2 bronze), gripIdx
+//     (0 leather / 1 cord / 2 wire), engraveOn, engraveDensity; iron adds roughness.
+//
+//   B10 append-only v4 — golden fixtures: v2 finish rolls unchanged, 5 new keys appended
+//   B11 v4 params valid — every new option rolled in 800 seeds, density in range
+//   B12 material v4     — familyIdx/gripIdx contracts, iron rougher than steel, bounded
+//
+// Out of scope for v4 (eyes-gated): family color feel, wood grain, engraving aesthetics,
+//   nick/rust/patina placement — shader layer, verified in browser.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -198,6 +213,74 @@ test('B9: v2 finish params override + round-trip via share token', async () => {
   const v1restored = applyOverrides(paramsFromHash('8b96b1b9'),
     decodeToken(encodeToken('8b96b1b9', v1edited, base)).overrides);
   assert.deepEqual(v1restored, v1edited);
+});
+
+// Golden v2 fixtures — captured from params.mjs BEFORE the v4 DNA append.
+const V2_GOLDEN = {
+  '8b96b1b9': { steel_finish: 'blued', wear_amount: 0.48, damascus_scale: 27, damascus_warp: 0.76 },
+  'd740b6e3': { steel_finish: 'brushed', wear_amount: 0.19, damascus_scale: 37, damascus_warp: 0.34 },
+  '00c0ffee': { steel_finish: 'brushed', wear_amount: 0.77, damascus_scale: 54, damascus_warp: 0.16 },
+};
+
+test('B10: v4 DNA append preserves every v1+v2 roll and adds the variability params', () => {
+  const keys = DNA.map(s => s.key);
+  const warpIdx = keys.indexOf('damascus_warp');
+  for (const k of ['metal_family', 'grip_material', 'guard_ext', 'engrave_on', 'engrave_density']) {
+    assert.ok(keys.indexOf(k) > warpIdx, `${k} missing or not appended after damascus_warp`);
+  }
+
+  for (const [hash, golden] of Object.entries({ ...V1_GOLDEN })) {
+    const p = paramsFromHash(hash);
+    for (const [k, v] of Object.entries(golden)) {
+      assert.deepEqual(p[k], v, `${hash} ${k}: v1 roll changed (${v} -> ${p[k]})`);
+    }
+    for (const [k, v] of Object.entries(V2_GOLDEN[hash])) {
+      assert.deepEqual(p[k], v, `${hash} ${k}: v2 roll changed (${v} -> ${p[k]})`);
+    }
+  }
+});
+
+test('B11: v4 params valid + every new option rolled in 800 seeds', () => {
+  const rng = mulberry32(0x44444);
+  const seen = { metal_family: new Set(), grip_material: new Set(), guard_ext: new Set(), engrave_on: new Set() };
+  for (let i = 0; i < 800; i++) {
+    const p = paramsFromHash(randHex(8, rng));
+    for (const k of Object.keys(seen)) seen[k].add(p[k]);
+    assert.ok(p.engrave_density >= 0.3 && p.engrave_density <= 1.0, `${p.hash} engrave_density=${p.engrave_density}`);
+  }
+  for (const fam of ['steel', 'iron', 'bronze']) assert.ok(seen.metal_family.has(fam), `metal_family=${fam} never rolled`);
+  for (const g of ['leather', 'cord', 'wire']) assert.ok(seen.grip_material.has(g), `grip_material=${g} never rolled`);
+  for (const g of ['inherit', 'swept', 'ring']) assert.ok(seen.guard_ext.has(g), `guard_ext=${g} never rolled`);
+  for (const e of [0, 1]) assert.ok(seen.engrave_on.has(e), `engrave_on=${e} never rolled`);
+});
+
+test('B12: deriveMaterial v4 — family/grip index contracts, iron rougher, still bounded', async () => {
+  const { deriveMaterial } = await import('./params.mjs');
+  const base = paramsFromHash('8b96b1b9');
+
+  assert.equal(deriveMaterial({ ...base, metal_family: 'steel' }).familyIdx, 0);
+  assert.equal(deriveMaterial({ ...base, metal_family: 'iron' }).familyIdx, 1);
+  assert.equal(deriveMaterial({ ...base, metal_family: 'bronze' }).familyIdx, 2);
+  assert.equal(deriveMaterial({ ...base, grip_material: 'leather' }).gripIdx, 0);
+  assert.equal(deriveMaterial({ ...base, grip_material: 'cord' }).gripIdx, 1);
+  assert.equal(deriveMaterial({ ...base, grip_material: 'wire' }).gripIdx, 2);
+
+  // iron is a rougher working metal than polished steel, same weapon
+  const steel = deriveMaterial({ ...base, weapon_class: 'sword', blade_type: 'arming', steel_finish: 'brushed', metal_family: 'steel' });
+  const iron = deriveMaterial({ ...base, weapon_class: 'sword', blade_type: 'arming', steel_finish: 'brushed', metal_family: 'iron' });
+  assert.ok(iron.baseRoughness > steel.baseRoughness, 'iron should be rougher than steel');
+
+  // engrave passthrough + global bounds over many seeds
+  const rng = mulberry32(0x12e4a);
+  for (let i = 0; i < 300; i++) {
+    const p = paramsFromHash(randHex(8, rng));
+    const M = deriveMaterial(p);
+    assert.equal(M.engraveOn, p.engrave_on);
+    assert.equal(M.engraveDensity, p.engrave_density);
+    assert.ok(M.baseRoughness >= 0.1 && M.baseRoughness <= 0.6, `${p.hash} roughness=${M.baseRoughness}`);
+    assert.ok(Number.isInteger(M.familyIdx) && M.familyIdx >= 0 && M.familyIdx <= 2, `${p.hash} familyIdx=${M.familyIdx}`);
+    assert.ok(Number.isInteger(M.gripIdx) && M.gripIdx >= 0 && M.gripIdx <= 2, `${p.hash} gripIdx=${M.gripIdx}`);
+  }
 });
 
 test('B5: share token round-trips hash + overrides exactly', async () => {
