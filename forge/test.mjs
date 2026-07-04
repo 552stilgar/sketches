@@ -55,6 +55,65 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { paramsFromHash, DNA, randHex, mulberry32, deriveLayout } from './params.mjs';
 
+const LEGACY_DNA_PREFIX = [
+  { key: 'weapon_class', section: 'Class', options: ['sword', 'axe'] },
+  { key: 'blade_type', section: 'Blade', options: ['arming', 'longsword', 'falchion', 'scimitar', 'leaf', 'estoc'] },
+  { key: 'blade_len', section: 'Blade', min: 0.70, max: 1.30, decimals: 3 },
+  { key: 'blade_w', section: 'Blade', min: 0.045, max: 0.115, decimals: 3 },
+  { key: 'blade_taper', section: 'Blade', min: 0.15, max: 0.90, decimals: 2 },
+  { key: 'blade_curve', section: 'Blade', min: 0.0, max: 0.30, decimals: 3 },
+  { key: 'fuller_n', section: 'Blade', options: [0, 1, 2] },
+  { key: 'fuller_depth', section: 'Blade', min: 0.15, max: 0.60, decimals: 2 },
+  { key: 'tip_style', section: 'Blade', options: ['point', 'clip', 'round'] },
+  { key: 'guard_type', section: 'Guard', options: ['bar', 'quillons', 'disc', 'crescent'] },
+  { key: 'guard_span', section: 'Guard', min: 0.14, max: 0.34, decimals: 3 },
+  { key: 'guard_thick', section: 'Guard', min: 0.018, max: 0.042, decimals: 3 },
+  { key: 'guard_droop', section: 'Guard', min: -0.35, max: 0.55, decimals: 2 },
+  { key: 'grip_len', section: 'Grip', min: 0.14, max: 0.34, decimals: 3 },
+  { key: 'grip_r', section: 'Grip', min: 0.022, max: 0.038, decimals: 3 },
+  { key: 'wrap_bands', section: 'Grip', options: [0, 3, 4, 5, 6, 7, 8] },
+  { key: 'pommel_type', section: 'Grip', options: ['disc', 'sphere', 'scent_stopper', 'faceted', 'ring'] },
+  { key: 'pommel_r', section: 'Grip', min: 0.035, max: 0.065, decimals: 3 },
+  { key: 'haft_len', section: 'Haft', min: 0.60, max: 1.25, decimals: 3 },
+  { key: 'haft_r', section: 'Haft', min: 0.020, max: 0.036, decimals: 3 },
+  { key: 'haft_curve', section: 'Haft', min: 0.0, max: 0.14, decimals: 3 },
+  { key: 'haft_wrap', section: 'Haft', options: [0, 1] },
+  { key: 'head_type', section: 'Head', options: ['bearded', 'broad', 'double_bit', 'war'] },
+  { key: 'head_w', section: 'Head', min: 0.16, max: 0.34, decimals: 3 },
+  { key: 'edge_sweep', section: 'Head', min: 0.25, max: 0.95, decimals: 2 },
+  { key: 'beard_depth', section: 'Head', min: 0.0, max: 0.55, decimals: 2 },
+  { key: 'cheek_thick', section: 'Head', min: 0.028, max: 0.060, decimals: 3 },
+  { key: 'poll_type', section: 'Head', options: ['flat', 'hammer', 'spike'] },
+  { key: 'head_drop', section: 'Head', min: 0.02, max: 0.10, decimals: 3 },
+  { key: 'steel_hue', section: 'Material', min: 185, max: 235, decimals: 0 },
+  { key: 'steel_sat', section: 'Material', min: 2, max: 16, decimals: 0 },
+  { key: 'accent_on', section: 'Material', options: [0, 1] },
+  { key: 'accent_hue', section: 'Material', min: 22, max: 48, decimals: 0 },
+  { key: 'light_az', section: 'Lighting', min: -80, max: 80, decimals: 0 },
+  { key: 'light_el', section: 'Lighting', min: 15, max: 65, decimals: 0 },
+  { key: 'steel_finish', section: 'Material', options: ['brushed', 'brushed', 'damascus', 'blued'] },
+  { key: 'wear_amount', section: 'Material', min: 0.0, max: 1.0, decimals: 2 },
+  { key: 'damascus_scale', section: 'Material', min: 18, max: 60, decimals: 0 },
+  { key: 'damascus_warp', section: 'Material', min: 0.15, max: 0.85, decimals: 2 },
+  { key: 'metal_family', section: 'Material', options: ['steel', 'steel', 'steel', 'iron', 'bronze'] },
+  { key: 'grip_material', section: 'Grip', options: ['leather', 'leather', 'cord', 'wire'] },
+  { key: 'guard_ext', section: 'Guard', options: ['inherit', 'inherit', 'swept', 'ring'] },
+  { key: 'engrave_on', section: 'Detail', options: [0, 0, 0, 1] },
+  { key: 'engrave_density', section: 'Detail', min: 0.30, max: 1.00, decimals: 2 },
+];
+
+const V6_KEYS = [
+  'blade_section', 'ricasso_len', 'edge_bevel_w', 'quillon_curl', 'quillon_tip',
+  'guard_shell', 'grip_profile', 'grip_risers', 'ferrule_on', 'pommel_facets',
+  'langet_len', 'cheek_profile', 'haft_butt',
+];
+
+test('B0: v6 DNA is append-only after the 44-gene legacy prefix', () => {
+  assert.equal(DNA.length, 57);
+  assert.deepEqual(DNA.slice(0, LEGACY_DNA_PREFIX.length), LEGACY_DNA_PREFIX);
+  assert.deepEqual(DNA.slice(LEGACY_DNA_PREFIX.length).map(s => s.key), V6_KEYS);
+});
+
 test('B1: same hash yields deeply identical params on every call', () => {
   const a = paramsFromHash('8b96b1b9');
   const b = paramsFromHash('8b96b1b9');
@@ -281,6 +340,69 @@ test('B12: deriveMaterial v4 — family/grip index contracts, iron rougher, stil
     assert.ok(Number.isInteger(M.familyIdx) && M.familyIdx >= 0 && M.familyIdx <= 2, `${p.hash} familyIdx=${M.familyIdx}`);
     assert.ok(Number.isInteger(M.gripIdx) && M.gripIdx >= 0 && M.gripIdx <= 2, `${p.hash} gripIdx=${M.gripIdx}`);
   }
+});
+
+test('B13: v6 geometry params are appended, valid, and round-trip through share tokens', async () => {
+  const { encodeToken, decodeToken, applyOverrides } = await import('./params.mjs');
+  const keys = DNA.map(s => s.key);
+  const legacyEnd = keys.indexOf('engrave_density');
+  for (const k of V6_KEYS) {
+    assert.ok(keys.indexOf(k) > legacyEnd, `${k} missing or not appended after engrave_density`);
+  }
+
+  const rng = mulberry32(0x6006e0);
+  const seen = {
+    blade_section: new Set(),
+    quillon_tip: new Set(),
+    guard_shell: new Set(),
+    grip_profile: new Set(),
+    grip_risers: new Set(),
+    ferrule_on: new Set(),
+    pommel_facets: new Set(),
+    cheek_profile: new Set(),
+    haft_butt: new Set(),
+  };
+  for (let i = 0; i < 800; i++) {
+    const p = paramsFromHash(randHex(8, rng));
+    for (const k of Object.keys(seen)) seen[k].add(p[k]);
+    assert.ok(p.ricasso_len >= 0 && p.ricasso_len <= 0.16, `${p.hash} ricasso_len=${p.ricasso_len}`);
+    assert.ok(p.edge_bevel_w >= 0.05 && p.edge_bevel_w <= 0.40, `${p.hash} edge_bevel_w=${p.edge_bevel_w}`);
+    assert.ok(p.quillon_curl >= -0.50 && p.quillon_curl <= 0.80, `${p.hash} quillon_curl=${p.quillon_curl}`);
+    assert.ok(p.langet_len >= 0 && p.langet_len <= 0.28, `${p.hash} langet_len=${p.langet_len}`);
+  }
+  for (const opt of ['diamond', 'lenticular', 'hollow_ground']) assert.ok(seen.blade_section.has(opt), `blade_section=${opt} never rolled`);
+  for (const opt of ['ball', 'flare', 'spatulate']) assert.ok(seen.quillon_tip.has(opt), `quillon_tip=${opt} never rolled`);
+  for (const opt of [0, 1]) assert.ok(seen.guard_shell.has(opt), `guard_shell=${opt} never rolled`);
+  for (const opt of ['straight', 'waisted', 'barrel']) assert.ok(seen.grip_profile.has(opt), `grip_profile=${opt} never rolled`);
+  for (const opt of [0, 4, 6]) assert.ok(seen.grip_risers.has(opt), `grip_risers=${opt} never rolled`);
+  for (const opt of [0, 1]) assert.ok(seen.ferrule_on.has(opt), `ferrule_on=${opt} never rolled`);
+  for (const opt of [0, 6, 10]) assert.ok(seen.pommel_facets.has(opt), `pommel_facets=${opt} never rolled`);
+  for (const opt of ['flat', 'concave', 'convex']) assert.ok(seen.cheek_profile.has(opt), `cheek_profile=${opt} never rolled`);
+  for (const opt of [0, 1]) assert.ok(seen.haft_butt.has(opt), `haft_butt=${opt} never rolled`);
+
+  const base = paramsFromHash('8b96b1b9');
+  const edited = {
+    ...base,
+    blade_section: 'hollow_ground',
+    ricasso_len: 0.13,
+    edge_bevel_w: 0.33,
+    quillon_curl: -0.25,
+    quillon_tip: 'flare',
+    guard_shell: 1,
+    grip_profile: 'barrel',
+    grip_risers: 6,
+    ferrule_on: 1,
+    pommel_facets: 10,
+    langet_len: 0.24,
+    cheek_profile: 'convex',
+    haft_butt: 0,
+  };
+  const tok = decodeToken(encodeToken('8b96b1b9', edited, base));
+  assert.equal(tok.baseHash, '8b96b1b9');
+  assert.equal(tok.overrides.length, V6_KEYS.length);
+  assert.ok(tok.overrides.every(([i]) => i >= LEGACY_DNA_PREFIX.length), 'v6 token overrides should point at appended indices');
+  const restored = applyOverrides(paramsFromHash(tok.baseHash), tok.overrides);
+  assert.deepEqual(restored, edited);
 });
 
 test('B5: share token round-trips hash + overrides exactly', async () => {

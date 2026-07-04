@@ -101,6 +101,22 @@ export const DNA = [
   { key: 'guard_ext', section: 'Guard', options: ['inherit', 'inherit', 'swept', 'ring'] },
   { key: 'engrave_on', section: 'Detail', options: [0, 0, 0, 1] },
   { key: 'engrave_density', section: 'Detail', min: 0.30, max: 1.00, decimals: 2 },
+
+  // -- v6 geometry depth (2026-07-04) — APPENDED so every v1/v2/v4 hash keeps its 44 rolls --
+  // neutral/legacy values are repeated so the established silhouettes stay the common case.
+  { key: 'blade_section', section: 'Blade', options: ['diamond', 'diamond', 'diamond', 'lenticular', 'hollow_ground'] },
+  { key: 'ricasso_len', section: 'Blade', min: 0.0, max: 0.16, decimals: 3 },
+  { key: 'edge_bevel_w', section: 'Blade', min: 0.05, max: 0.40, decimals: 2 },
+  { key: 'quillon_curl', section: 'Guard', min: -0.50, max: 0.80, decimals: 2 },
+  { key: 'quillon_tip', section: 'Guard', options: ['ball', 'ball', 'ball', 'flare', 'spatulate'] },
+  { key: 'guard_shell', section: 'Guard', options: [0, 0, 0, 1] },
+  { key: 'grip_profile', section: 'Grip', options: ['straight', 'straight', 'straight', 'waisted', 'barrel'] },
+  { key: 'grip_risers', section: 'Grip', options: [0, 0, 0, 4, 6] },
+  { key: 'ferrule_on', section: 'Grip', options: [0, 0, 0, 1] },
+  { key: 'pommel_facets', section: 'Grip', options: [0, 0, 0, 6, 10] },
+  { key: 'langet_len', section: 'Head', min: 0.0, max: 0.28, decimals: 2 },
+  { key: 'cheek_profile', section: 'Head', options: ['flat', 'flat', 'flat', 'concave', 'convex'] },
+  { key: 'haft_butt', section: 'Haft', options: [0, 0, 0, 1] },
 ];
 
 function rollParam(spec, rng) {

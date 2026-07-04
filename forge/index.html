@@ -167,14 +167,18 @@ uniform float u_class;            // 0 sword, 1 axe
 uniform float u_bladeRoot, u_bladeLen, u_bladeW, u_bladeTh, u_taper, u_curve;
 uniform float u_leaf, u_tipFrac, u_tipStyle;         // tipStyle: 0 point, 1 clip, 2 round
 uniform float u_fullerN, u_fullerDepth;
+uniform float u_bladeSection, u_ricassoLen, u_edgeBevelW;
 uniform float u_guardType, u_guardSpan, u_guardThick, u_guardDroop;
+uniform float u_quillonCurl, u_quillonTip, u_guardShell;
 uniform float u_gripLen, u_gripR, u_wrapBands;
-uniform float u_pommelType, u_pommelR, u_pommelY;
+uniform float u_gripProfile, u_gripRisers, u_ferruleOn;
+uniform float u_pommelType, u_pommelR, u_pommelY, u_pommelFacets;
 
 // axe
 uniform float u_haftLen, u_haftR, u_haftCurve, u_haftWrap;
 uniform float u_headType, u_headY, u_headHalfH, u_edgeReach, u_edgeSweep;
 uniform float u_beardDepth, u_cheek, u_pollType;
+uniform float u_langetLen, u_cheekProfile, u_haftButt;
 
 // material + light
 uniform vec3  u_steelCol, u_accentCol;
@@ -886,9 +890,13 @@ void main() {
 // ---------------------------------------------------------------------------
 const BLADE_TYPES = ['arming', 'longsword', 'falchion', 'scimitar', 'leaf', 'estoc'];
 const TIP_STYLES = ['point', 'clip', 'round'];
+const BLADE_SECTIONS = ['diamond', 'lenticular', 'hollow_ground'];
 const GUARD_TYPES = ['bar', 'quillons', 'disc', 'crescent'];
+const QUILLON_TIPS = ['ball', 'flare', 'spatulate'];
+const GRIP_PROFILES = ['straight', 'waisted', 'barrel'];
 const POMMEL_TYPES = ['disc', 'sphere', 'scent_stopper', 'faceted', 'ring'];
 const HEAD_TYPES = ['bearded', 'broad', 'double_bit', 'war'];
+const CHEEK_PROFILES = ['flat', 'concave', 'convex'];
 const POLL_TYPES = ['flat', 'hammer', 'spike'];
 
 const GUARD_EXTS = ['inherit', 'swept', 'ring'];
@@ -1003,16 +1011,26 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_tipStyle', TIP_STYLES.indexOf(p.tip_style));
     f('u_fullerN', p.fuller_n);
     f('u_fullerDepth', p.fuller_depth);
+    f('u_bladeSection', BLADE_SECTIONS.indexOf(p.blade_section));
+    f('u_ricassoLen', p.ricasso_len);
+    f('u_edgeBevelW', p.edge_bevel_w);
     f('u_guardType', GUARD_TYPES.indexOf(p.guard_type));
     f('u_guardSpan', p.guard_span);
     f('u_guardThick', p.guard_thick);
     f('u_guardDroop', p.guard_droop);
+    f('u_quillonCurl', p.quillon_curl);
+    f('u_quillonTip', QUILLON_TIPS.indexOf(p.quillon_tip));
+    f('u_guardShell', p.guard_shell);
     f('u_gripLen', p.grip_len);
     f('u_gripR', p.grip_r);
     f('u_wrapBands', p.wrap_bands);
+    f('u_gripProfile', GRIP_PROFILES.indexOf(p.grip_profile));
+    f('u_gripRisers', p.grip_risers);
+    f('u_ferruleOn', p.ferrule_on);
     f('u_pommelType', POMMEL_TYPES.indexOf(p.pommel_type));
     f('u_pommelR', p.pommel_r);
     f('u_pommelY', L.kind === 'sword' ? L.pommelY : 0);
+    f('u_pommelFacets', p.pommel_facets);
 
     f('u_haftLen', p.haft_len);
     f('u_haftR', p.haft_r);
@@ -1026,6 +1044,9 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_beardDepth', p.head_type === 'bearded' ? Math.max(p.beard_depth, 0.18) : p.beard_depth * 0.4);
     f('u_cheek', p.cheek_thick);
     f('u_pollType', POLL_TYPES.indexOf(p.poll_type));
+    f('u_langetLen', p.langet_len);
+    f('u_cheekProfile', CHEEK_PROFILES.indexOf(p.cheek_profile));
+    f('u_haftButt', p.haft_butt);
 
     v3('u_steelCol', FAMILY_COLOR[p.metal_family](p));
     v3('u_accentCol', hsl2rgb(p.accent_hue, 58, 48));
