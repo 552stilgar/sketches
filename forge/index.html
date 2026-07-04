@@ -98,7 +98,7 @@ button.btn.on { border-color: #6b7280; color: #fff; }
 
 <script type="module">
 import {
-  paramsFromHash, deriveLayout, randHex, hashToSeed, mulberry32,
+  paramsFromHash, deriveLayout, deriveMaterial, randHex, hashToSeed, mulberry32,
   encodeToken, decodeToken, applyOverrides, clamp,
 } from './params.mjs';
 
@@ -142,6 +142,9 @@ uniform float u_beardDepth, u_cheek, u_pollType;
 uniform vec3  u_steelCol, u_accentCol;
 uniform float u_accentOn;
 uniform vec3  u_lightDir;
+
+// v2 finish (from deriveMaterial): 0 brushed, 1 damascus, 2 blued
+uniform float u_finish, u_wear, u_damScale, u_damWarp, u_aniso, u_rough;
 
 const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
 
@@ -321,6 +324,92 @@ float calcAO(vec3 p, vec3 n) {
 
 float hash21(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
 
+// -- v2: value noise + fBm (damascus banding runs on these) ------------------
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), u.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * vnoise(p); p = p * 2.03 + 17.7; a *= 0.5; }
+  return v;
+}
+
+// -- v2: procedural studio environment, blurred analytically by roughness ----
+// dark floor + cool dome + horizon glow + two softbox strips; the strips are
+// what sells the metal. Rough surfaces widen and dim every edge (soft term).
+vec3 procEnv(vec3 rd, float rough) {
+  float soft = rough * rough;
+  float up = rd.y;
+  vec3 sky = mix(vec3(0.045, 0.055, 0.075), vec3(0.012, 0.016, 0.028),
+                 clamp(up * 1.4 + 0.4, 0.0, 1.0));
+  vec3 env = mix(vec3(0.020, 0.016, 0.013), sky,
+                 smoothstep(-0.12 - soft * 0.4, 0.10 + soft * 0.4, up));
+  env += vec3(0.050, 0.055, 0.065) * 0.6 * smoothstep(0.25 + soft, 0.0, abs(up));
+  float az = atan(rd.x, rd.z);
+  float strip1 = smoothstep(0.22 + soft * 0.9, 0.06 + soft * 0.3, abs(up - 0.55))
+               * smoothstep(1.5 + soft, 0.4, abs(az - 0.9));
+  float strip2 = smoothstep(0.30 + soft * 0.9, 0.08 + soft * 0.3, abs(up - 0.30))
+               * smoothstep(1.8 + soft, 0.5, abs(az + 1.7));
+  env += (vec3(1.0, 0.98, 0.92) * strip1 * 2.2 + vec3(0.85, 0.90, 1.0) * strip2 * 1.1)
+       / (1.0 + 6.0 * soft);
+  return env;
+}
+
+// -- v2: grind-line tangent per part — blades along the bent spine, grips and
+// wraps circumferential, axe steel arcs around the eye, wood grain up the haft
+vec3 surfTangent(vec3 pos, vec3 n, float m) {
+  vec3 t;
+  if (u_class < 0.5) {
+    if (m < 2.5) {
+      float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
+      t = vec3(2.0 * u_curve * bt, 1.0, 0.0);        // dx/dy of the bent spine
+    } else {
+      t = vec3(-pos.z, 0.0, pos.x);
+    }
+  } else {
+    if (m < 2.5) {
+      t = vec3(-(pos.y - u_headY), pos.x, 0.0);      // sharpening arc
+    } else {
+      t = vec3(0.0, 1.0, 0.0);
+    }
+  }
+  t -= n * dot(n, t);
+  if (dot(t, t) < 1e-6) t = cross(n, vec3(0.0, 0.0, 1.0));
+  return normalize(t);
+}
+
+// -- v2: anisotropic GGX — highlight stretches along the grind tangent -------
+float ggxAniso(vec3 n, vec3 v, vec3 l, vec3 t, float rough, float aniso) {
+  vec3 h = normalize(l + v);
+  vec3 b = cross(n, t);
+  float r2 = rough * rough;
+  float ax = max(r2 * (1.0 + aniso), 2e-3);
+  float ay = max(r2 * (1.0 - aniso), 2e-3);
+  float th = dot(t, h), bh = dot(b, h), nh = clamp(dot(n, h), 0.0, 1.0);
+  float d = th * th / (ax * ax) + bh * bh / (ay * ay) + nh * nh;
+  float D = 1.0 / (3.14159265 * ax * ay * d * d + 1e-5);
+  float nl = clamp(dot(n, l), 0.0, 1.0);
+  float nv = clamp(dot(n, v), 0.0, 1.0) + 1e-3;
+  float k = 0.5 * r2 + 1e-3;
+  float G = (nl / (nl * (1.0 - k) + k)) * (nv / (nv * (1.0 - k) + k));
+  return min(D * G * nl * 0.25, 14.0);
+}
+
+// -- v2: SDF Laplacian curvature — convex (edges) > 0, concave (hollows) < 0.
+// The SDF is deliberately non-exact in places, so this is a noisy estimate;
+// the noise reads as natural wear speckle.
+float calcCurv(vec3 p) {
+  const float e = 0.012;
+  float lap =
+    map(p + vec3(e, 0.0, 0.0)).x + map(p - vec3(e, 0.0, 0.0)).x +
+    map(p + vec3(0.0, e, 0.0)).x + map(p - vec3(0.0, e, 0.0)).x +
+    map(p + vec3(0.0, 0.0, e)).x + map(p - vec3(0.0, 0.0, e)).x - 6.0 * map(p).x;
+  return lap / (e * e);
+}
+
 void main() {
   vec2 uv = (2.0 * gl_FragCoord.xy - u_res) / u_res.y;
 
@@ -351,28 +440,62 @@ void main() {
     vec3 pos = ro + rd * tt;
     vec3 n = calcNormal(pos);
     float ao = calcAO(pos, n);
+    float isMetal = mat < 2.5 ? 1.0 : 0.0;
 
-    vec3 albedo; float specPow; float specK; float metal;
-    if (mat < 1.5)      { albedo = u_steelCol;  specPow = 42.0; specK = 1.0;  metal = 0.85; }
-    else if (mat < 2.5) { albedo = u_accentCol; specPow = 26.0; specK = 0.8;  metal = 0.7; }
-    else if (mat < 3.5) { albedo = vec3(0.16, 0.11, 0.08); specPow = 8.0; specK = 0.15; metal = 0.0; }
-    else                { albedo = vec3(0.30, 0.20, 0.12); specPow = 10.0; specK = 0.2;  metal = 0.0; }
+    vec3 albedo; float rough; float metal;
+    if (mat < 1.5)      { albedo = u_steelCol;  rough = u_rough;                   metal = 0.88; }
+    else if (mat < 2.5) { albedo = u_accentCol; rough = min(u_rough * 1.35, 0.6);  metal = 0.72; }
+    else if (mat < 3.5) { albedo = vec3(0.16, 0.11, 0.08); rough = 0.62; metal = 0.0; }
+    else                { albedo = vec3(0.30, 0.20, 0.12); rough = 0.58; metal = 0.0; }
 
-    // brushed streaks along the long axis, metals only
-    float brush = 0.9 + 0.2 * hash21(vec2(floor(pos.y * 340.0), mat));
+    float brush = 1.0;
+    if (isMetal > 0.5) {
+      // -- finish layer --
+      if (u_finish < 0.5) {                 // brushed: streaks along the long axis
+        brush = 0.9 + 0.2 * hash21(vec2(floor(pos.y * 340.0), mat));
+      } else if (u_finish < 1.5) {          // damascus: domain-warped welded bands
+        if (mat < 1.5) {
+          vec2 dc;                          // blade-local so bands follow the curve
+          if (u_class < 0.5) {
+            float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
+            dc = vec2(pos.x - u_curve * bt * bt * u_bladeLen, pos.y);
+          } else {
+            dc = pos.xy - vec2(0.0, u_headY);
+          }
+          vec2 wp = vec2(fbm(dc * u_damScale * 0.35 + 7.3),
+                         fbm(dc * u_damScale * 0.35 + vec2(19.1, 4.7)));
+          float band = sin(dot(dc, vec2(u_damScale * 0.9, u_damScale * 0.5))
+                         + (wp.x - 0.5) * u_damWarp * 22.0 + (wp.y - 0.5) * 8.0);
+          float dam = smoothstep(-0.7, 0.7, band);
+          albedo *= mix(0.78, 1.12, dam);
+          rough = clamp(mix(rough * 0.8, rough * 1.3, dam), 0.05, 0.7);
+        }
+      } else {                              // blued: oxidized blue-black, tight sheen
+        albedo = mix(albedo * vec3(0.34, 0.42, 0.66) * 0.6, albedo, 0.12);
+      }
+
+      // -- curvature wear: convex edges polish bright, hollows collect grime --
+      float curv = calcCurv(pos);
+      float edgeWear = smoothstep(3.0, 26.0, curv) * u_wear;
+      float grime = smoothstep(3.0, 18.0, -curv) * (0.25 + 0.75 * u_wear);
+      rough = mix(rough, 0.10, edgeWear);
+      albedo = mix(albedo, albedo * 0.5, grime * 0.55);
+      albedo = mix(albedo, min(albedo * 1.25 + 0.05, vec3(1.0)), edgeWear * 0.6);
+    }
+
     vec3 L = normalize(u_lightDir);
     float dif = clamp(dot(n, L), 0.0, 1.0);
-    vec3 hv = normalize(L - rd);
-    float spec = pow(clamp(dot(n, hv), 0.0, 1.0), specPow) * specK * brush;
+    vec3 tan1 = surfTangent(pos, n, mat);
+    float aniso = isMetal > 0.5 ? u_aniso : 0.12;
+    float spec = ggxAniso(n, -rd, L, tan1, rough, aniso) * brush;
     float fre = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
-    // fake vertical env gradient for metallic sheen
     vec3 refl = reflect(rd, n);
-    float env = 0.25 + 0.75 * clamp(refl.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 env = procEnv(refl, rough);
 
-    vec3 c = albedo * (0.20 * ao + 0.85 * dif);
-    c += metal * env * albedo * fre * 1.6 * ao;
-    c += spec * dif * vec3(1.0);
-    c += 0.18 * fre * vec3(0.55, 0.62, 0.75) * ao;
+    vec3 c = albedo * (0.16 * ao + 0.80 * dif);
+    c += metal * env * (albedo * 0.7 + 0.3) * (0.30 + 0.70 * fre) * 2.4 * ao;
+    c += spec * vec3(1.0, 0.985, 0.95) * (0.35 + 0.65 * dif) * mix(0.02, 0.16, isMetal);
+    c += (1.0 - metal) * env * fre * 0.5 * ao;
     col = c;
   }
 
@@ -510,6 +633,13 @@ function createRenderer(canvas) {
     v3('u_steelCol', hsl2rgb(p.steel_hue, p.steel_sat, 62));
     v3('u_accentCol', hsl2rgb(p.accent_hue, 58, 48));
     f('u_accentOn', p.accent_on);
+    const M = deriveMaterial(p);
+    f('u_finish', M.finishIdx);
+    f('u_wear', M.wear);
+    f('u_damScale', M.damascusScale);
+    f('u_damWarp', M.damascusWarp);
+    f('u_aniso', M.anisoStrength);
+    f('u_rough', M.baseRoughness);
     const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
     v3('u_lightDir', [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)]);
 
