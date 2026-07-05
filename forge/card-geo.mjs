@@ -22,6 +22,7 @@ import { clamp, deriveLayout, mulberry32 } from './params.mjs';
 import { bend, sweep, taper, collar, pierce, toPath, distanceTo } from './craft-geo.mjs';
 import { resolveOrnament, piercePlacement } from './ornament.mjs';
 import { applyFormat } from './format.mjs';
+import { resolveHeadPlan } from './axe-head.mjs';
 
 // ---------------------------------------------------------------------------
 // numeric hygiene + path-building primitives
@@ -661,29 +662,189 @@ function headEdgeProfile(p, headHalfH) {
   }
 }
 
-function buildHead(p, layout, plan, bounds) {
+// -- craft head (slice 1: docs/reference-endgame-axe.md) ---------------------
+// The single-bit head finally goes through the Stage-B curve vocabulary. All
+// segments are sampled curves (quad beziers / arcs) — connector segments get a
+// small control-point offset so no run of the outline is ever ruler-straight.
+
+const HEAD_EDGE_SAMPLES = 36;
+const HEAD_BELLY_AMP = 0.22;          // edge S-curve bulge, x edgeReach at plan belly 1
+const HORN_RECURVE_PULL = 0.22;       // tip pull-back at recurve 1, x edgeReach
+const BEARD_DROP_MUL = 0.85;          // hornBottom.drop 1 -> tip this far below -halfH
+const BEARD_INNER_X_FRAC = 0.30;      // where the beard's inner curve rejoins the bottom
+const CUSP_DEPTH_FRAC = 0.10;         // gothic scallop bite depth, x halfH
+const BACK_TOP_Y_FRAC = 0.92;
+const SPIKE_BASE_X_FRAC = 0.22;       // x edgeReach
+const SPIKE_ROOT_HALF_W = 0.16;       // x halfH
+const RING_RI_FRAC = 0.40;            // ring-fluke void radius, x halfH
+const RING_RO_FRAC = 0.66;            // ring-fluke outer radius, x halfH
+const RING_CLEAR = 0.010;             // web between eye radius and the void
+const RING_NECK_HALF_W = 0.26;        // x halfH
+const RING_SPIKE_REACH_BASE = 0.45;   // + SPAN x ornament fluke reach, x halfH
+const RING_SPIKE_REACH_SPAN = 0.45;
+
+function bez(p0, ctrl, p1, samples, skipFirst = true) {
+  const pts = [];
+  for (let i = skipFirst ? 1 : 0; i <= samples; i++) {
+    pts.push(quadBezierPoint(p0, ctrl, p1, i / samples));
+  }
+  return pts;
+}
+
+// edge profile: single-valued x(s) over s in [0,1] (bottom tip -> top tip)
+function headEdgeSamples(hp, cy, hh, R) {
+  const yBot = cy - hh * (1 + BEARD_DROP_MUL * hp.hornBottom.drop);
+  const yTop = cy + hh;
+  const pts = [];
+  for (let i = 0; i <= HEAD_EDGE_SAMPLES; i++) {
+    const s = i / HEAD_EDGE_SAMPLES;
+    const blend = s * s * (3 - 2 * s); // smoothstep between horn reaches
+    let x = R * (hp.hornBottom.reach + (hp.hornTop.reach - hp.hornBottom.reach) * blend
+      + hp.edgeBelly * HEAD_BELLY_AMP * Math.sin(Math.PI * s));
+    // horn recurve: the last stretch of each tip pulls back toward the eye
+    const topPull = Math.max(0, (s - 0.86) / 0.14);
+    const botPull = Math.max(0, ((1 - s) - 0.90) / 0.10);
+    x -= R * HORN_RECURVE_PULL * hp.hornTop.recurve * topPull * topPull;
+    x -= R * HORN_RECURVE_PULL * 0.6 * hp.hornTop.recurve * botPull * botPull;
+    pts.push([x, yBot + (yTop - yBot) * s]);
+  }
+  return pts;
+}
+
+function buildCraftHead(p, layout, plan, hp, bounds) {
+  const layers = [];
+  const cy = layout.headY, hh = layout.headHalfH, R = layout.edgeReach;
+  const style = { fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.005, opacity: 1 };
+
+  const edge = headEdgeSamples(hp, cy, hh, R);
+  const topTip = edge[edge.length - 1];
+  const botTip = edge[0];
+  const backTop = [0, cy + hh * BACK_TOP_Y_FRAC];
+  const backBot = [0, cy - hh];
+
+  const outline = [...edge];
+  // top inner return: hollow between the horn and the eye plate
+  outline.push(...bez(topTip, [topTip[0] * 0.45, cy + hh * (1.04 + 0.10 * hp.hornTop.recurve)], backTop, 10));
+  // back edge (top -> bottom), gothic cusps when the tier carries them
+  if (hp.eyeCusps > 0) {
+    const span = backTop[1] - backBot[1];
+    const step = span / hp.eyeCusps;
+    for (let c = 0; c < hp.eyeCusps; c++) {
+      const y0 = backTop[1] - c * step;
+      for (let k = 1; k <= 8; k++) {
+        const a = (k / 8) * Math.PI;
+        outline.push([hh * CUSP_DEPTH_FRAC * Math.sin(a), y0 - (step * k) / 8]);
+      }
+    }
+  } else {
+    outline.push(...bez(backTop, [-0.004, cy], backBot, 8));
+  }
+  // bottom return: connector out to the beard's inner curve, then hook to the tip
+  if (hp.hornBottom.drop > 0.05) {
+    const innerCorner = [R * BEARD_INNER_X_FRAC, cy - hh];
+    outline.push(...bez(backBot, [R * BEARD_INNER_X_FRAC * 0.5, cy - hh * 1.06], innerCorner, 6));
+    outline.push(...bez(innerCorner, [botTip[0] * 0.55, botTip[1] + (cy - hh - botTip[1]) * 0.15], botTip, 10));
+  } else {
+    outline.push(...bez(backBot, [botTip[0] * 0.5, cy - hh * 1.10], botTip, 8));
+  }
+  outline.pop(); // last bez sample duplicates the outline start (botTip)
+  bounds.noteAll(outline);
+
+  // back structure first (renders behind the head plate)
+  let region = outline;
+  if (hp.backForm === 'ringFluke') {
+    layers.push(...buildRingFluke(p, plan, cy, hh, bounds));
+  }
+
+  // cheek pierce only when the ring fluke doesn't already carry the void
+  const hole = hp.backForm === 'ringFluke' ? null : ornamentHole(p, plan, cy, hh, R, outline);
+  if (hole) {
+    region = pierce(outline, hole);
+    layers.push({ d: toPath(region), fillRule: 'evenodd', ...style, role: 'head', outline: region });
+  } else {
+    layers.push({ d: polygonPath(outline), ...style, role: 'head', outline });
+  }
+
+  if (hp.backForm !== 'ringFluke') layers.push(...buildPoll(p, cy, hh));
+
+  // bevel band: the polished plate zone along the cutting edge + its ridge line
+  const bevelEdge = edge.slice(2, -2);
+  const ridge = bevelEdge.map(([x, y]) => [x * (1 - hp.bevelBand), y]);
+  layers.push({ d: polygonPath([...bevelEdge, ...ridge.slice().reverse()]), fill: 'var(--blade-highlight)', stroke: 'none', strokeWidth: 0, opacity: num(0.10 + 0.30 * plan.edgeLight), role: 'bevel' });
+  layers.push({ d: polylinePath(ridge), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.003, opacity: 0.6, role: 'bevel' });
+
+  if (plan.tier !== 'plain') {
+    layers.push({ d: polylinePath(bevelEdge.map(([x, y]) => [x * EDGE_LIGHT_INSET, y])), fill: 'none', stroke: 'var(--blade-highlight)', strokeWidth: 0.005, opacity: num(plan.edgeLight), role: 'edge-light' });
+  }
+  return { layers, region };
+}
+
+function buildTopSpike(p, hp, layout, bounds) {
+  if (!hp.topSpike || p.head_type === 'double_bit') return [];
+  const cy = layout.headY, hh = layout.headHalfH, R = layout.edgeReach;
+  const base = [R * SPIKE_BASE_X_FRAC, cy + hh * 0.88];
+  const tip = [base[0] + hp.topSpike.lean * hh * 1.2, base[1] + hp.topSpike.h * hh * 1.1];
+  const len = Math.hypot(tip[0] - base[0], tip[1] - base[1]);
+  const spine = bend(base, tip, len * 0.06 * Math.sign(hp.topSpike.lean || 1));
+  const outlinePts = taper(spine, hh * SPIKE_ROOT_HALF_W, 0.003);
+  bounds.noteAll(outlinePts);
+  return [{ d: polygonPath(outlinePts), fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.004, opacity: 1, role: 'spike' }];
+}
+
+// composed back structure: annulus (honest evenodd void) + neck + two points.
+// The neck stops OUTSIDE the void's x-range so nothing fills the hole from
+// behind; the void stays a true window to the card background.
+function buildRingFluke(p, plan, cy, hh, bounds) {
+  const eyeR = p.haft_r * EYE_COLLAR_R_MUL;
+  const Ri = hh * RING_RI_FRAC, Ro = hh * RING_RO_FRAC;
+  const bcx = -(eyeR + RING_CLEAR + Ro);
+  const bcy = cy + hh * 0.10;
+  const layers = [];
+  const steel = { fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.004, opacity: 1 };
+
+  const wN = hh * RING_NECK_HALF_W;
+  const neck = [[bcx + Ri + 0.004, bcy + wN], [0, bcy + wN], [0, bcy - wN], [bcx + Ri + 0.004, bcy - wN]];
+  layers.push({ d: polygonPath(neck), ...steel, stroke: 'none', role: 'back' });
+
+  const rings = pierce(circlePoints(bcx, bcy, Ro, Ro, 28), circlePoints(bcx, bcy, Ri, Ri, 20));
+  bounds.noteAll(rings[0]);
+  layers.push({ d: toPath(rings), fillRule: 'evenodd', ...steel, role: 'back', outline: rings });
+
+  const reachF = hh * (RING_SPIKE_REACH_BASE + RING_SPIKE_REACH_SPAN * (plan.backFluke ? plan.backFluke.reach : 0.5));
+  for (const [angDeg, mul, rootW] of [[118, 1.0, 0.15], [242, 0.55, 0.11]]) {
+    const a = (angDeg * Math.PI) / 180;
+    const dir = [Math.cos(a), Math.sin(a)];
+    const base = [bcx + dir[0] * Ro * 0.92, bcy + dir[1] * Ro * 0.92];
+    const tip = [bcx + dir[0] * (Ro + reachF * mul), bcy + dir[1] * (Ro + reachF * mul)];
+    const len = Math.hypot(tip[0] - base[0], tip[1] - base[1]);
+    const outlinePts = taper(bend(base, tip, len * 0.08), hh * rootW, 0.003);
+    bounds.noteAll(outlinePts);
+    layers.push({ d: polygonPath(outlinePts), ...steel, role: 'back' });
+  }
+  return layers;
+}
+
+function buildHead(p, layout, plan, hp, bounds) {
   const layers = [];
   const cy = layout.headY;
   const hh = layout.headHalfH;
   const reach = layout.edgeReach;
-
-  const edgePts = (mirrorSign, edgeFn, xBase) => {
-    const pts = [];
-    for (let i = 0; i <= HEAD_SAMPLES; i++) {
-      const t = -1 + 2 * (i / HEAD_SAMPLES);
-      const fwd = xBase + reach * edgeFn(t) * mirrorSign;
-      pts.push([fwd, cy + t * hh]);
-    }
-    // back to the haft line to close the silhouette
-    const backPts = [[xBase, cy + hh], [xBase, cy - hh]];
-    return mirrorSign > 0 ? [...pts, ...backPts] : [...backPts.slice().reverse(), ...pts.slice().reverse()];
-  };
 
   // the head is steel — blade palette slots, not the haft's wood tone
   const style = { fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.005, opacity: 1 };
 
   let etchRegion; // outline (or pierced rings) the damascus/vein etch is trimmed to
   if (p.head_type === 'double_bit') {
+    // double-bit keeps its mirrored legacy build this slice (craft pass later)
+    const edgePts = (mirrorSign, edgeFn, xBase) => {
+      const pts = [];
+      for (let i = 0; i <= HEAD_SAMPLES; i++) {
+        const t = -1 + 2 * (i / HEAD_SAMPLES);
+        pts.push([xBase + reach * edgeFn(t) * mirrorSign, cy + t * hh]);
+      }
+      const backPts = [[xBase, cy + hh], [xBase, cy - hh]];
+      return mirrorSign > 0 ? [...pts, ...backPts] : [...backPts.slice().reverse(), ...pts.slice().reverse()];
+    };
     const asym = DOUBLE_BIT_ASYM_BY_POLL[p.poll_type] ?? 0;
     const frontFn = t => p.edge_sweep * (1 - Math.abs(t) * 0.5) * (1 + asym);
     const backFn = t => p.edge_sweep * (1 - Math.abs(t) * 0.5) * (1 - asym);
@@ -695,27 +856,10 @@ function buildHead(p, layout, plan, bounds) {
     layers.push({ d: polygonPath(back), ...style });
     etchRegion = front; // etch dresses the leading bit only
   } else {
-    const edgeFn = headEdgeProfile(p, hh);
-    const headPts = edgePts(1, edgeFn, 0);
-    bounds.noteAll(headPts);
-    const hole = ornamentHole(p, plan, cy, hh, reach, headPts);
-    if (hole) {
-      etchRegion = pierce(headPts, hole);
-      layers.push({ d: toPath(etchRegion), fillRule: 'evenodd', ...style });
-    } else {
-      etchRegion = headPts;
-      layers.push({ d: polygonPath(headPts), ...style });
-    }
-    layers.push(...buildPoll(p, cy, hh));
-    if (plan.tier !== 'plain') {
-      // edge-light: the cutting edge catches light; intensity carried by the plan
-      const pts = [];
-      for (let i = 0; i <= HEAD_SAMPLES; i++) {
-        const t = -1 + 2 * (i / HEAD_SAMPLES);
-        pts.push([reach * edgeFn(t) * EDGE_LIGHT_INSET, cy + t * hh * EDGE_LIGHT_INSET]);
-      }
-      layers.push({ d: polylinePath(pts), fill: 'none', stroke: 'var(--blade-highlight)', strokeWidth: 0.005, opacity: num(plan.edgeLight), role: 'edge-light' });
-    }
+    layers.push(...buildTopSpike(p, hp, layout, bounds));
+    const craft = buildCraftHead(p, layout, plan, hp, bounds);
+    layers.push(...craft.layers);
+    etchRegion = craft.region;
   }
 
   layers.push(...buildCheekLine(p, cy, hh, reach));
@@ -985,11 +1129,12 @@ function buildSwordOrnament(p, plan, bladeRoot) {
 
 function buildAxe(p, palette, plan, bounds) {
   const layout = deriveLayout(p);
+  const hp = resolveHeadPlan(p, plan);
   const layers = [];
   layers.push(...buildHaft(p, bounds));
   layers.push(...buildPlateCollars(p, plan, layout, bounds));
-  layers.push(...buildBackFluke(p, plan, layout, bounds));
-  layers.push(...buildHead(p, layout, plan, bounds));
+  if (hp.backForm === 'fluke') layers.push(...buildBackFluke(p, plan, layout, bounds));
+  layers.push(...buildHead(p, layout, plan, hp, bounds));
   layers.push(...buildLangets(p, layout, bounds));
   return layers;
 }

@@ -123,7 +123,8 @@ test('AX7: haft_butt caps the haft base with a blended union, not a hard seam', 
 });
 
 test('AX8: poll geometry stays flat/hammer/spike-distinct and skips double_bit', () => {
-  assert.match(MAP_AXE, /if\s*\(!isDoubleBit\)/);
+  // v7: the poll also yields to the composed ring fluke (u_hdBackForm 2)
+  assert.match(MAP_AXE, /if\s*\(!isDoubleBit\s*&&\s*u_hdBackForm\s*<\s*1\.5\)/);
   assert.match(MAP_AXE, /\/\/ spike/);
   assert.match(MAP_AXE, /\/\/ hammer:/);
   assert.match(MAP_AXE, /\/\/ flat:/);

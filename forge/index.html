@@ -178,6 +178,7 @@ import {
 } from './editor-logic.mjs';
 import { resolveOrnament, packOrnamentUniforms } from './ornament.mjs';
 import { applyFormat } from './format.mjs';
+import { resolveHeadPlan, packHeadUniforms } from './axe-head.mjs';
 
 const CFG = {
   gridCount: 12,
@@ -275,6 +276,12 @@ uniform float u_register;
 uniform float u_ornTier, u_ornPierceOn, u_ornPierceT, u_ornPierceR;
 uniform float u_ornFlukeOn, u_ornFlukeReach, u_ornFlukeDroop;
 uniform float u_ornPlateCollars, u_ornDamascus, u_ornVeins, u_ornEdgeLight;
+
+// v7 head-silhouette plan (axe-head.mjs: resolveHeadPlan -> packHeadUniforms;
+// backForm: 0 poll, 1 fluke, 2 ringFluke)
+uniform float u_hdHornTopR, u_hdHornTopRec, u_hdHornBotR, u_hdHornBotDrop;
+uniform float u_hdBelly, u_hdCusps, u_hdBevel;
+uniform float u_hdSpikeOn, u_hdSpikeH, u_hdSpikeLean, u_hdBackForm;
 
 const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
 
@@ -649,18 +656,49 @@ vec2 mapAxe(vec3 p) {
   // double-bits are rarely perfectly symmetric.
   float pollAsym = isDoubleBit ? u_pollType * 0.14 : 0.0;   // 0 / 0.14 / 0.28
   float edgeReachA = u_edgeReach * (1.0 + pollAsym * side);
-  float R = mix(2.6, 0.55, u_edgeSweep) * halfH * (1.0 - 0.12 * pollAsym * side) + edgeReachA;
-  vec2 c = vec2(edgeReachA - R, 0.0);
-  float dDisc = length(h.xy - c) - R;
-  // v4: edge nicks — bites along the edge arc once wear is heavy
-  if (u_wear > 0.55) {
-    float ea = atan(h.y, h.x - c.x);
-    float nick = smoothstep(0.75, 1.0, vnoise(vec2(ea * 14.0, 2.3)));
-    dDisc += nick * (u_wear - 0.55) * halfH * 0.18;
-  }
+  float dBody;
   float sx = clamp(h.x / edgeReachA, 0.0, 1.0);
-  float vLim = abs(h.y) - mix(halfH * 0.42, halfH, sx);
-  float dBody = max(dDisc, max(vLim, -h.x - u_haftR * 1.6));
+  if (isDoubleBit) {
+    // double-bit keeps the legacy disc-cut this slice (craft pass later)
+    float R = mix(2.6, 0.55, u_edgeSweep) * halfH * (1.0 - 0.12 * pollAsym * side) + edgeReachA;
+    vec2 c = vec2(edgeReachA - R, 0.0);
+    float dDisc = length(h.xy - c) - R;
+    if (u_wear > 0.55) {
+      float ea = atan(h.y, h.x - c.x);
+      float nick = smoothstep(0.75, 1.0, vnoise(vec2(ea * 14.0, 2.3)));
+      dDisc += nick * (u_wear - 0.55) * halfH * 0.18;
+    }
+    float vLim = abs(h.y) - mix(halfH * 0.42, halfH, sx);
+    dBody = max(dDisc, max(vLim, -h.x - u_haftR * 1.6));
+  } else {
+    // v7 head plan: profile-driven edge — the same x(s) curve card-geo samples
+    // (headEdgeSamples): horn-reach blend + belly S-curve + recurve tip pulls
+    float yBot = -halfH * (1.0 + 0.85 * u_hdHornBotDrop);
+    float ss = clamp((h.y - yBot) / (halfH - yBot), 0.0, 1.0);
+    float blendS = ss * ss * (3.0 - 2.0 * ss);
+    float reachY = edgeReachA * (mix(u_hdHornBotR, u_hdHornTopR, blendS)
+                 + u_hdBelly * 0.22 * sin(3.14159 * ss));
+    float topPull = max(0.0, (ss - 0.86) / 0.14);
+    float botPull = max(0.0, ((1.0 - ss) - 0.90) / 0.10);
+    reachY -= edgeReachA * 0.22 * u_hdHornTopRec * topPull * topPull;
+    reachY -= edgeReachA * 0.132 * u_hdHornTopRec * botPull * botPull;
+    // v4 edge nicks ride the profile now
+    if (u_wear > 0.55) {
+      float nick = smoothstep(0.75, 1.0, vnoise(vec2(h.y * 14.0, 2.3)));
+      reachY -= nick * (u_wear - 0.55) * halfH * 0.18;
+    }
+    float dEdgeCut = (h.x - reachY) * 0.7;   // heightfield cut, gradient-safe scale
+    float vLim = max(h.y - halfH, yBot - h.y);
+    dBody = max(dEdgeCut, max(vLim, -h.x - u_haftR * 1.6));
+    // gothic eye cusps: scallop bites along the blade root (card: CUSP_DEPTH_FRAC)
+    for (int ci = 0; ci < 3; ci++) {
+      if (float(ci) < u_hdCusps - 0.5) {
+        float yc = mix(halfH * 0.92, -halfH, (float(ci) + 0.5) / max(u_hdCusps, 1.0));
+        float dCusp = length(h.xy - vec2(0.0, yc)) - halfH * 0.10;
+        dBody = max(dBody, -dCusp);
+      }
+    }
+  }
 
   // v6: beard is gated fully to bearded heads (0 elsewhere) — the other three
   // head types no longer get a dampened partial hook indistinguishable from
@@ -684,7 +722,7 @@ vec2 mapAxe(vec3 p) {
   // piercePlacement() (ornament.mjs), so both media cut the same hole.
   // Skipped on double-bit heads in BOTH media (no single eye-to-edge span).
   float dHead = max(dBody, abs(h.z) - (thick + cheekBow));
-  if (u_ornPierceOn > 0.5 && !isDoubleBit) {
+  if (u_ornPierceOn > 0.5 && !isDoubleBit && u_hdBackForm < 1.5) {
     float eyeR = u_haftR * 1.9;
     float pxMax = edgeReachA * 0.82;
     float pr = min(u_ornPierceR * halfH * 2.0, halfH * 0.75);
@@ -700,7 +738,7 @@ vec2 mapAxe(vec3 p) {
 
   // v7 ornament: rear fluke — a drooping back spike (card: buildBackFluke,
   // same reach 0.5+0.9r / droop 0.7rad / root-y 0.25 / root-w 0.20 vocabulary)
-  if (u_ornFlukeOn > 0.5 && !isDoubleBit) {
+  if (u_ornFlukeOn > 0.5 && !isDoubleBit && u_hdBackForm > 0.5 && u_hdBackForm < 1.5) {
     float fr = edgeReachA * (0.5 + 0.9 * u_ornFlukeReach);
     float fa = 0.7 * u_ornFlukeDroop;
     vec2 fdir = vec2(-cos(fa), -sin(fa));
@@ -709,6 +747,47 @@ vec2 mapAxe(vec3 p) {
     vec2 fnear = fdir * (ft * fr);
     float dFluke = length(vec2(length(fh.xy - fnear), fh.z)) - mix(halfH * 0.20, 0.003, ft);
     res = opU(res, vec2(dFluke, MAT_STEEL));
+  }
+
+  // v7 head plan: composed ring fluke — annulus (true void) + neck + two points
+  // (card: buildRingFluke, same Ri 0.40 / Ro 0.66 / clear 0.010 / neck 0.26 numbers)
+  if (u_hdBackForm > 1.5 && !isDoubleBit) {
+    float eyeR2 = u_haftR * 1.9;
+    float rRi = halfH * 0.40, rRo = halfH * 0.66;
+    vec2 bc = vec2(-(eyeR2 + 0.010 + rRo), halfH * 0.10);
+    vec2 rp = h.xy - bc;
+    float ringXY = abs(length(rp) - (rRo + rRi) * 0.5) - (rRo - rRi) * 0.5;
+    float dRing = max(ringXY, abs(h.z) - u_cheek * 0.9);
+    res = opU(res, vec2(dRing * 0.9, MAT_STEEL));
+    vec3 np = h - vec3((bc.x + rRi) * 0.5, bc.y, 0.0);
+    float dNeck = sdBox(np, vec3(abs(bc.x + rRi) * 0.5 + 0.002, halfH * 0.26, u_cheek * 0.8));
+    res = opU(res, vec2(dNeck, MAT_STEEL));
+    float ptReach = halfH * (0.45 + 0.45 * u_ornFlukeReach);
+    for (int pi = 0; pi < 2; pi++) {
+      float pa = pi == 0 ? 2.0595 : 4.2237;            // 118deg / 242deg
+      float pMul = pi == 0 ? 1.0 : 0.55;
+      float pRootW = pi == 0 ? 0.15 : 0.11;
+      vec2 pDir = vec2(cos(pa), sin(pa));
+      vec2 pBase = bc + pDir * rRo * 0.92;
+      float pLen = ptReach * pMul + rRo * 0.08;
+      float pt = clamp(dot(h.xy - pBase, pDir) / pLen, 0.0, 1.0);
+      vec2 pNear = pBase + pDir * (pt * pLen);
+      float dPt = length(vec2(length(h.xy - pNear), h.z)) - mix(halfH * pRootW, 0.003, pt);
+      res = opU(res, vec2(dPt, MAT_STEEL));
+    }
+  }
+
+  // v7 head plan: top spike (card: buildTopSpike, base 0.22R / root 0.16 halfH)
+  if (u_hdSpikeOn > 0.5 && !isDoubleBit) {
+    vec2 sBase = vec2(edgeReachA * 0.22, halfH * 0.88);
+    vec2 sTip = sBase + vec2(u_hdSpikeLean * halfH * 1.2, u_hdSpikeH * halfH * 1.1);
+    vec2 sDelta = sTip - sBase;
+    float sLen = max(length(sDelta), 1e-4);
+    vec2 sDir = sDelta / sLen;
+    float st = clamp(dot(h.xy - sBase, sDir) / sLen, 0.0, 1.0);
+    vec2 sNear = sBase + sDir * (st * sLen);
+    float dSpike = length(vec2(length(h.xy - sNear), h.z)) - mix(halfH * 0.16, 0.003, st);
+    res = opU(res, vec2(dSpike, MAT_STEEL));
   }
 
   // -- eye collar --
@@ -732,8 +811,9 @@ vec2 mapAxe(vec3 p) {
     res = opU(res, vec2(dLangetU, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
   }
 
-  // -- poll (skip on double bit — a real double-bit has an edge on both ends) --
-  if (!isDoubleBit) {
+  // -- poll (skip on double bit — a real double-bit has an edge on both ends;
+  //    skip under the ring fluke — the composed back replaces it) --
+  if (!isDoubleBit && u_hdBackForm < 1.5) {
     float pl = 1e9;
     if (u_pollType > 1.5) {          // spike
       // v6: war axes reclaim the beard_depth roll (dead on every non-bearded
@@ -1514,8 +1594,11 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_guardExt', GUARD_EXTS.indexOf(p.guard_ext));
     f('u_engraveOn', M.engraveOn);
     f('u_engraveDens', M.engraveDensity);
-    const orn = packOrnamentUniforms(resolveOrnament(p));
+    const ornPlan = resolveOrnament(p);
+    const orn = packOrnamentUniforms(ornPlan);
     for (const k in orn) f(k, orn[k]);
+    const hd = packHeadUniforms(resolveHeadPlan(p, ornPlan));
+    for (const k in hd) f(k, hd[k]);
     f('u_register', state.register);
     const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
     v3('u_lightDir', [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)]);

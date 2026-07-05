@@ -268,10 +268,13 @@ test('E3: ornate axe gets back fluke + stacked plate collars (single-bit heads)'
     seen++;
     const w = buildWeapon(p);
     const roles = w.layers.map(l => l.role).filter(Boolean);
-    assert.ok(roles.includes('fluke'), 'every ornate single-bit axe must grow a back fluke');
+    // slice 1 composed the ornate back: ring-fluke plate ('back') replaced the bare fluke
+    assert.ok(roles.filter(r => r === 'back').length >= 3,
+      'every ornate single-bit axe must compose the ring-fluke back (neck + ring + points)');
     const collars = roles.filter(r => r === 'collar').length;
     assert.ok(collars >= 2 && collars <= 3, `ornate haft must stack 2-3 plate collars (got ${collars})`);
     assert.ok(roles.includes('edge-light'), 'ornate axe must carry the edge-light stroke');
+    assert.ok(roles.includes('spike'), 'every ornate single-bit axe must carry the top spike');
   }
   assert.ok(seen >= 10, `need a real ornate axe sample (got ${seen})`);
 });
