@@ -1920,14 +1920,10 @@ function renderStage() {
   }, CFG.ptIdleMs);
 }
 
-// v5: re-render existing thumbnails in place (register switch — same tokens)
+// v5: re-render existing thumbnails in place (register switch — same tokens);
+// paced through the same chain as boot (freeze fix)
 function repaintGrid() {
-  const tw = CFG.thumbRes, thh = Math.round(CFG.thumbRes * CFG.thumbAspect);
-  document.querySelectorAll('#grid .cell').forEach(cell => {
-    thumbGL.render(paramsFromToken(cell.dataset.token),
-      { yaw: 0.55, pitch: 0.06, zoom: 1.0 }, tw, thh);
-    cell.querySelector('canvas').getContext('2d').drawImage(thumbGL.canvas, 0, 0);
-  });
+  paintThumbsPaced();
 }
 
 const REGISTERS = ['r-museum', 'r-loot', 'r-styl'];
@@ -1996,11 +1992,29 @@ function rebuildGrid(firstToken = null) {
     cell.append(cv, cap);
     cell.addEventListener('click', () => select(token, { fromGrid: true }));
     grid.appendChild(cell);
-
-    const p = paramsFromToken(token);
-    thumbGL.render(p, { yaw: 0.55, pitch: 0.06, zoom: 1.0 }, tw, thh);
-    cv.getContext('2d').drawImage(thumbGL.canvas, 0, 0);
   }
+  paintThumbsPaced();
+}
+
+// slice 8 freeze fix: the grid used to render 12 heavy previews SYNCHRONOUSLY
+// at boot — a GPU burst big enough to trip the Windows watchdog on real
+// drivers (the "freezes on open" report). Thumbs now paint one per timeout
+// tick; a rebuild mid-chain aborts the stale chain via the generation stamp.
+let thumbGen = 0;
+function paintThumbsPaced() {
+  const gen = ++thumbGen;
+  if (STILL_SPEC) return; // still mode never needs thumbs
+  const cells = [...document.querySelectorAll('#grid .cell')];
+  const tw = CFG.thumbRes, thh = Math.round(CFG.thumbRes * CFG.thumbAspect);
+  let i = 0;
+  const paintNext = () => {
+    if (gen !== thumbGen || i >= cells.length) return;
+    const cell = cells[i++];
+    thumbGL.render(paramsFromToken(cell.dataset.token), { yaw: 0.55, pitch: 0.06, zoom: 1.0 }, tw, thh);
+    cell.querySelector('canvas').getContext('2d').drawImage(thumbGL.canvas, 0, 0);
+    setTimeout(paintNext, 40);
+  };
+  setTimeout(paintNext, 60);
 }
 
 // -- stage interaction --

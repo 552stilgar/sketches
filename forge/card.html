@@ -308,7 +308,13 @@ function renderBig(token) {
   emptyNote.textContent = '';
   stageEl.innerHTML = '';
   stageEl.appendChild(cardWrap(token, { big: true }));
-  startStillRender(token); // slice 8: the path tracer becomes the card's engine
+  // slice 8: the path tracer becomes the card's engine — but it is OPT-IN
+  // (the ✦ render button) unless ?auto=1; a surprise GPU burst froze browsers
+  if (AUTO_RENDER) startStillRender(token);
+  else {
+    modeBtn.textContent = '✦ render';
+    modeBtn.hidden = false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -319,8 +325,9 @@ function renderBig(token) {
 // instant proof and the toggle target; every mode change is DISCLOSED.
 // ---------------------------------------------------------------------------
 
-const STILL_SIZE = new URLSearchParams(location.search).get('stillsize') || '440x660';
-const STILL_SPP = +(new URLSearchParams(location.search).get('spp')) || 140; // converged enough; wall-time matters more since the small-tile freeze fix
+const STILL_SIZE = new URLSearchParams(location.search).get('stillsize') || '360x540';
+const STILL_SPP = +(new URLSearchParams(location.search).get('spp')) || 120; // converged enough; wall-time matters more since the small-tile freeze fix
+const AUTO_RENDER = new URLSearchParams(location.search).get('auto') === '1'; // heavy compute is OPT-IN until stability is proven on Usul's machine
 const STILL_STALL_MS = 45000;   // fail only on SILENCE — progress events keep resetting this
 const SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -336,7 +343,7 @@ function startStillRender(token) {
   stopStillRender();
   renderedOn = false;
   modeBtn.hidden = true;
-  emptyNote.textContent = 'rendering ✦ path-traced still…';
+  emptyNote.textContent = 'rendering ✦ path-traced still… (0 spp — first tick can take a while if the shader is compiling)';
   stillFrame = document.createElement('iframe');
   // must stay INSIDE the viewport and non-transparent: Chrome throttles rAF
   // for offscreen/hidden iframes, which starved the path tracer into the
@@ -445,7 +452,10 @@ function setRenderedMode(on) {
   modeBtn.textContent = on ? 'vector' : 'rendered';
 }
 
-modeBtn.addEventListener('click', () => setRenderedMode(!renderedOn));
+modeBtn.addEventListener('click', () => {
+  if (modeBtn.textContent === '✦ render') { startStillRender(currentToken()); return; }
+  setRenderedMode(!renderedOn);
+});
 
 function render() {
   const token = currentToken();
