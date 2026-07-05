@@ -188,6 +188,60 @@ general improvement (kept, tests green) but is NOT the fix — do not spend
 more engineering effort on shader restructuring until the driver question
 is answered.
 
+## 2026-07-05 (still later) — real browser, real bugs, real fix (Web Worker)
+Usul answered the open question above: get.webgl.org's spinning cube works
+fine in his real, everyday Chrome. **The headless d3d11 crash was a headless-
+Chrome-only artifact — confirmed a minimal trivial shader crashed identically
+headless, ruling out our code, but real windowed WebGL2 is fine.** The PC
+headless-probe methodology was the wrong tool for this bug; filed away for
+future driver-level questions only.
+
+Tested the real forge page in his real browser: freeze 10-60s on open, then
+laggy/stuttery dragging. Two real bugs (`23f66d4`): synchronous preview-
+shader compile blocking the tab, and uncoalesced `pointermove` renders.
+Then it got **stuck showing "compiling shader..." forever** — traced to
+`KHR_parallel_shader_compile`'s completion signal being unreliable on his
+driver (never reports done). Fixed (`b9380e5`) with a bounded async wait +
+forced synchronous fallback.
+
+**Usul asked the right question: "isn't there a better approach, off-
+browser?"** He was correct — the bounded-wait fix only capped how long we
+*waited* before firing the same synchronous check; once the cap hit, that
+check still blocked the tab for however long the real remaining compile
+took (exactly "seemed to work, then froze"). No JS-side polling trick can
+escape a call that's genuinely synchronous on the far side.
+
+**The real fix (`db99369`): the entire render engine — every shader, all of
+createRenderer(), setScene() — now lives in `forge-render-worker.mjs`, a
+dedicated Web Worker driving OffscreenCanvas via `transferControlToOffscreen()`.**
+index.html keeps the same render()/begin()/stop()/canPT shape via a small
+message-passing proxy; every call is now a postMessage round trip. No
+matter how slow a real compile or draw genuinely is on any GPU/driver, that
+work happens on a worker thread — the main UI tab cannot freeze because of
+it, structurally, regardless of driver quirks. This is the actual answer to
+"off-browser": not less work, but the *right thread* for the work.
+
+Two more real bugs found and fixed during headless verification of the
+rewrite: (1) `begin-result` and `pt-progress` share a request id — the
+dispatcher deleted the pending entry the instant `begin-result` arrived, so
+no progress tick or final sample could ever reach its callback (PT silently
+never finished); (2) the stage and the 12-thumbnail grid shared one worker
+— since a worker is single-threaded, one slow class's compile fallback
+could stall every other pending render behind it (confirmed: thumbnails
+stuck head-of-line behind one slow axe cell, even after fixing the pacer to
+requeue instead of retry-in-place). Fixed by giving the stage and the
+thumbnail grid **separate workers**.
+
+**Verified headless (SwiftShader, not real hardware):** 110/110 tests
+green. Both classes render correctly in preview mode. Sword's full real-PT
+pipeline completes end-to-end (~15s). Drag interaction doesn't break
+anything, no page errors. Axe's real PT is still very slow under headless
+SwiftShader specifically (100s+) — consistent with earlier-established
+slowness for this exact hash under software rendering, not a new
+regression; expected to be far faster on Usul's actual GPU.
+**NEXT: Usul retests live tomorrow** — full plan in `~/sketches/CAMPAIGN.md`
+§ Active Thread.
+
 ## Slice queue (each lands in BOTH media, eyes-gated between slices)
 1. **Head silhouette craft pass** — craft-geo curves for the head: horns,
    beard hook, cusped eye bracket, composed fluke+pierce back structure,
