@@ -770,7 +770,7 @@ function buildCraftHead(p, layout, plan, hp, bounds) {
   // bevel band: the polished plate zone along the cutting edge + its ridge line
   const bevelEdge = edge.slice(2, -2);
   const ridge = bevelEdge.map(([x, y]) => [x * (1 - hp.bevelBand), y]);
-  layers.push({ d: polygonPath([...bevelEdge, ...ridge.slice().reverse()]), fill: 'var(--blade-highlight)', stroke: 'none', strokeWidth: 0, opacity: num(0.10 + 0.30 * plan.edgeLight), role: 'bevel' });
+  layers.push({ d: polygonPath([...bevelEdge, ...ridge.slice().reverse()]), fill: 'var(--bevel-fill)', stroke: 'none', strokeWidth: 0, opacity: num(0.35 + 0.45 * plan.edgeLight), role: 'bevel' });
   layers.push({ d: polylinePath(ridge), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.003, opacity: 0.6, role: 'bevel' });
 
   if (plan.tier !== 'plain') {

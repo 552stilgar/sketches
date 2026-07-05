@@ -98,22 +98,66 @@ function randomToken() {
 // of final colors; this is the only place that knows what --blade-fill etc mean.
 // ---------------------------------------------------------------------------
 
-function varMapFor(palette) {
+// v7 shading pass (endgame slice 2 — flip the minimal read): steel/wood carry
+// diagonal light gradients, the bevel band gets its own hot ramp, the card
+// floats in a void with a palette-tinted glow + vignette. Gradient ids are
+// namespaced per card so a 12-card grid never cross-links defs.
+function gradientDefs(gid, palette, tier) {
+  const lite = (c, dl, ds = 0) => hslCss({ h: c.h, s: clamp01x(c.s + ds), l: clamp01x(c.l + dl) });
+  const steel = `<linearGradient id="${gid}-steel" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="${lite(palette.highlight, 6)}"/>
+    <stop offset="0.45" stop-color="${hslCss(palette.base)}"/>
+    <stop offset="1" stop-color="${lite(palette.shade, -4)}"/>
+  </linearGradient>`;
+  const wood = `<linearGradient id="${gid}-wood" x1="0" y1="0" x2="1" y2="0.2">
+    <stop offset="0" stop-color="${lite(palette.grip, 8)}"/>
+    <stop offset="0.55" stop-color="${hslCss(palette.grip)}"/>
+    <stop offset="1" stop-color="${lite(palette.grip, -10)}"/>
+  </linearGradient>`;
+  const bevel = `<linearGradient id="${gid}-bevel" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="${lite(palette.highlight, 18, 6)}"/>
+    <stop offset="1" stop-color="${lite(palette.highlight, -2)}"/>
+  </linearGradient>`;
+  const trim = `<linearGradient id="${gid}-trim" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="${lite(palette.trim, 14, 8)}"/>
+    <stop offset="1" stop-color="${lite(palette.trim, -8)}"/>
+  </linearGradient>`;
+  // void glow: near-black with a faint palette-hued core; ornate warms toward the accent
+  const glowHue = tier === 'ornate' ? palette.accent : palette.base;
+  const glow = `<radialGradient id="${gid}-glow" cx="0.5" cy="0.42" r="0.75">
+    <stop offset="0" stop-color="${hslCss({ h: glowHue.h, s: Math.min(28, glowHue.s), l: tier === 'ornate' ? 14 : 11 })}"/>
+    <stop offset="1" stop-color="#07080c"/>
+  </radialGradient>`;
+  const vignette = `<radialGradient id="${gid}-vig" cx="0.5" cy="0.46" r="0.72">
+    <stop offset="0.62" stop-color="#000" stop-opacity="0"/>
+    <stop offset="1" stop-color="#000" stop-opacity="0.55"/>
+  </radialGradient>`;
+  const sheen = `<radialGradient id="${gid}-sheen" cx="0.38" cy="0.30" r="0.5">
+    <stop offset="0" stop-color="#fff" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+  </radialGradient>`;
+  return `<defs>${steel}${wood}${bevel}${trim}${glow}${vignette}${sheen}</defs>`;
+}
+
+function clamp01x(v) { return Math.max(0, Math.min(100, v)); }
+
+function varMapFor(gid, palette) {
   const gripStroke = { h: palette.grip.h, s: palette.grip.s, l: Math.max(4, palette.grip.l - 15) };
   return {
-    '--blade-fill': hslCss(palette.base),
+    '--blade-fill': `url(#${gid}-steel)`,
     '--blade-stroke': hslCss(palette.shade),
     '--blade-shade': hslCss(palette.shade),
     '--blade-highlight': hslCss(palette.highlight),
-    '--guard-fill': hslCss(palette.base),
+    '--bevel-fill': `url(#${gid}-bevel)`,
+    '--guard-fill': `url(#${gid}-steel)`,
     '--guard-stroke': hslCss(palette.shade),
-    '--grip-fill': hslCss(palette.grip),
+    '--grip-fill': `url(#${gid}-wood)`,
     '--grip-stroke': hslCss(gripStroke),
-    '--haft-fill': hslCss(palette.grip),
+    '--haft-fill': `url(#${gid}-wood)`,
     '--haft-stroke': hslCss(palette.shade),
     '--haft-shade': hslCss(palette.shade),
     '--accent': hslCss(palette.accent),
-    '--trim': hslCss(palette.trim),
+    '--trim': `url(#${gid}-trim)`,
   };
 }
 
@@ -143,9 +187,10 @@ function cardSvg(token, { big = false } = {}) {
   const params = paramsFromToken(token);
   const { kind, tier, format, layers, bounds } = buildWeapon(params);
   const palette = derivePalette(params);
-  const varMap = varMapFor(palette);
+  const gid = 'g' + token.replace(/[^a-zA-Z0-9]/g, '');
+  const varMap = varMapFor(gid, palette);
   const transform = viewTransform(bounds);
-  const borderColor = hslCss(palette.base, 0.55);
+  const borderColor = tier === 'ornate' ? hslCss(palette.accent, 0.75) : hslCss(palette.base, 0.55);
   const paths = layers.map(l => {
     const fill = resolveColor(l.fill, varMap);
     const stroke = resolveColor(l.stroke, varMap);
@@ -160,9 +205,12 @@ function cardSvg(token, { big = false } = {}) {
     `<text class="card-tier" x="${CARD_W - 10}" y="16" text-anchor="end"${
       tier === 'ornate' ? ` style="fill:${hslCss(palette.accent)}"` : ''}>${tier.toUpperCase()}</text>`;
   return `<svg viewBox="0 0 ${CARD_W} ${CARD_H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${kindLabel} ${hashLabel}">
+    ${gradientDefs(gid, palette, tier)}
     <rect class="card-bg" x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="${CARD_RADIUS}"/>
-    <rect class="card-bg-inner" x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}"/>
+    <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-glow)"/>
     <g transform="${transform}">${paths}</g>
+    <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-sheen)"/>
+    <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-vig)"/>
     <rect class="card-frame" x="2" y="2" width="${CARD_W - 4}" height="${CARD_H - 4}" rx="${CARD_RADIUS - 1}"
       fill="none" stroke="${borderColor}"/>
     <text class="card-kind" x="10" y="16">${kindLabel}</text>${tierBadge}
