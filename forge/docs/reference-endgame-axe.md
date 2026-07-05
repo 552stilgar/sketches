@@ -163,6 +163,31 @@ loops with a cheap proxy SDF, cut inline pressure; iterate compile probes
 headlessly against the PC (title markers report state) until d3d11 survives.
 Interim craft-loop workaround: a Chrome shortcut with --use-angle=gl.
 
+## 2026-07-05 (later) — the shader-restructure premise was WRONG
+Shipped the per-class split (SCENE_SWORD/SCENE_AXE via a brace-counting JS
+slice, separate PT_FRAG_SWORD/AXE + PREVIEW_FRAG_SWORD/AXE, lazy-compiled +
+cached per class in createRenderer — 110/110 tests green, headless-verified
+both classes render clean locally). Re-ran the PC probe on the class-
+specialized PREVIEW_FRAG_AXE alone (roughly half the old combined shader):
+**still crashes, same exit_code=34, same ~1-4s timing.** Size wasn't the
+cause. Bisected further with two purpose-built minimal test pages
+(minitest-trivial.html: a single solid-color triangle, zero loops;
+minitest-loopy.html: iteration-heavy but unrelated-to-our-SDF math) — **the
+trivial shader crashes too**, in both `--headless=new` and classic
+`--headless`. This is decisive: ANGLE-d3d11's GPU process cannot survive
+ANY real WebGL2 draw on this PC in headless Chrome right now — not a
+shader-complexity problem, not fixable by restructuring our code at all.
+Likely cause: the PC's GPU driver (NVIDIA RTX 3060 Ti, driver 32.0.15.6094,
+dated 2024-08-13 — ~11 months stale as of this session) has a D3D11/ANGLE
+compat bug. **Open question, needs Usul**: does regular *windowed* Chrome
+(not headless) also fail on ordinary WebGL2 content (e.g. get.webgl.org),
+or is this specific to headless Chrome's GPU-process init path? Cheapest
+next step is on his side: update the NVIDIA driver, then re-open the forge
+3D page normally. The per-class shader split is a legitimate, harmless
+general improvement (kept, tests green) but is NOT the fix — do not spend
+more engineering effort on shader restructuring until the driver question
+is answered.
+
 ## Slice queue (each lands in BOTH media, eyes-gated between slices)
 1. **Head silhouette craft pass** — craft-geo curves for the head: horns,
    beard hook, cusped eye bracket, composed fluke+pierce back structure,

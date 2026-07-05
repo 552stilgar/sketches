@@ -1247,6 +1247,42 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
 }
 ` + TONE;
 
+// -- D3D compile fix (2026-07-05) ---------------------------------------
+// ANGLE-d3d11 (Chrome's Windows default) crashes its GPU process compiling
+// this combined shader (PC-headless probe, forge-compile-ab.ps1) — the
+// dominant cost is map()'s u_class branch, inlined at ~500 call sites
+// across the march/shadow/AO/normal loops, so the compiler must generate
+// BOTH mapSword and mapAxe at every site even though only one is ever live
+// for a given weapon. Specializing per class removes the dead half from
+// each call site instead of trying to shrink either function. ANGLE-gl
+// survives the combined shader either way; this is purely for d3d11.
+function sliceBraceFn(src, signature) {
+  const sigIdx = src.indexOf(signature);
+  if (sigIdx < 0) throw new Error('sliceBraceFn: not found — ' + signature);
+  const braceIdx = src.indexOf('{', sigIdx);
+  let depth = 0, endIdx = -1;
+  for (let i = braceIdx; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) { endIdx = i; break; } }
+  }
+  if (endIdx < 0) throw new Error('sliceBraceFn: unbalanced braces — ' + signature);
+  return { start: sigIdx, end: endIdx + 1 };
+}
+function specializeScene(keepFn) {
+  const dropFn = keepFn === 'mapSword' ? 'mapAxe' : 'mapSword';
+  const dispatch = sliceBraceFn(SCENE, 'vec2 map(vec3 p)');
+  const dropped = sliceBraceFn(SCENE, 'vec2 ' + dropFn + '(vec3 p) {');
+  const ops = [
+    { ...dispatch, replacement: 'vec2 map(vec3 p) { return ' + keepFn + '(p); }' },
+    { ...dropped, replacement: '' },
+  ].sort((a, b) => b.start - a.start);
+  let s = SCENE;
+  for (const op of ops) s = s.slice(0, op.start) + op.replacement + s.slice(op.end);
+  return s;
+}
+const SCENE_SWORD = specializeScene('mapSword');
+const SCENE_AXE = specializeScene('mapAxe');
+
 const PREVIEW_MAIN = `
 void main() {
   vec2 uv = (2.0 * gl_FragCoord.xy - u_res) / u_res.y;
@@ -1315,12 +1351,17 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }
 `;
-const PREVIEW_FRAG = 'precision highp float;\n' + SCENE + PREVIEW_MAIN;
+// per-class preview programs (D3D compile fix, see specializeScene above) —
+// the crash was traced to THIS program (compiled eagerly, first thing the
+// page does): even the single-bounce preview shader crashes ANGLE-d3d11's
+// GPU process when both mapSword and mapAxe are compiled into it together.
+const PREVIEW_FRAG_SWORD = 'precision highp float;\n' + SCENE_SWORD + PREVIEW_MAIN;
+const PREVIEW_FRAG_AXE = 'precision highp float;\n' + SCENE_AXE + PREVIEW_MAIN;
 
 // Progressive path tracer: one sample per frame, summed into a float buffer.
 // Real light transport is what single-bounce can't fake: the blade reflecting
 // the guard, soft light from the studio strips, true anti-aliasing via jitter.
-const PT_FRAG = '#version 300 es\nprecision highp float;\nprecision highp int;\n' + SCENE + `
+const PT_MAIN = `
 uniform sampler2D u_prev;
 uniform float u_frame;
 out vec4 fragOut;
@@ -1442,6 +1483,11 @@ void main() {
   fragOut = vec4(prev + col, 1.0);
 }
 `;
+const PT_HEADER = '#version 300 es\nprecision highp float;\nprecision highp int;\n';
+// per-class PT programs (D3D compile fix, see specializeScene above) — the
+// combined dual-class program is gone; nothing else compiles it.
+const PT_FRAG_SWORD = PT_HEADER + SCENE_SWORD + PT_MAIN;
+const PT_FRAG_AXE = PT_HEADER + SCENE_AXE + PT_MAIN;
 
 const DISPLAY_FRAG = '#version 300 es\nprecision highp float;\nuniform float u_register;\n' + TONE + `
 uniform sampler2D u_acc;
@@ -1568,17 +1614,28 @@ function createRenderer(canvas, { progressive = false } = {}) {
     return { prog, U };
   }
 
-  const preview = makeProg(VERT, PREVIEW_FRAG);
+  // v9 (D3D compile fix): preview compiled per weapon class too, lazily —
+  // this was the FIRST GL program the page ever compiled (eager, at renderer
+  // construction), and the PC probe traced the ANGLE-d3d11 GPU-process crash
+  // to it specifically, before PT's own class split ever got a chance to run.
+  const previewCache = {};
+  function ensurePreview(cls) {
+    if (previewCache[cls]) return previewCache[cls];
+    const src = cls === 'axe' ? PREVIEW_FRAG_AXE : PREVIEW_FRAG_SWORD;
+    return (previewCache[cls] = makeProg(VERT, src));
+  }
   const canPT = progressive && isGL2 && !!gl.getExtension('EXT_color_buffer_float');
   if (progressive && !canPT) console.warn('forge: WebGL2/float buffers unavailable — preview-only stage');
 
-  // v6 hotfix: the PT program's driver compile (ANGLE/D3D loop unrolling over
-  // the enlarged SDF) can take minutes and used to block the page at init.
-  // Compile it in the background instead: issue compile+link without any
-  // status query (queries force a sync wait), poll COMPLETION_STATUS_KHR when
-  // available, and let the path tracer take over whenever the link lands.
-  let pt = null, disp = null, ptPending = null;
-  if (canPT) {
+  // v9 (D3D compile fix): PT is compiled per weapon class, not once combined
+  // — see specializeScene() above for why. Lazy + cached per class: the first
+  // begin() for a class kicks off its background compile (same
+  // KHR_parallel_shader_compile poll pattern as before, still non-blocking);
+  // switching classes later reuses the cached program.
+  const ptCache = {};
+  function ensurePT(cls) {
+    if (ptCache[cls]) return ptCache[cls];
+    const ptSrc = cls === 'axe' ? PT_FRAG_AXE : PT_FRAG_SWORD;
     const par = gl.getExtension('KHR_parallel_shader_compile');
     const start = (vsrc, fsrc) => {
       const prog = gl.createProgram();
@@ -1589,10 +1646,10 @@ function createRenderer(canvas, { progressive = false } = {}) {
       gl.linkProgram(prog);
       return { prog, fs };
     };
-    const jobs = [start(VERT3, PT_FRAG), start(VERT3, DISPLAY_FRAG)];
+    const jobs = [start(VERT3, ptSrc), start(VERT3, DISPLAY_FRAG)];
     const finish = (job) => {
       if (!gl.getProgramParameter(job.prog, gl.LINK_STATUS)) {
-        console.error('forge: PT program link failed — staying on preview.',
+        console.error('forge: PT program link failed (' + cls + ') — staying on preview.',
           gl.getShaderInfoLog(job.fs) || gl.getProgramInfoLog(job.prog));
         return null;
       }
@@ -1604,15 +1661,17 @@ function createRenderer(canvas, { progressive = false } = {}) {
       }
       return { prog: job.prog, U };
     };
-    ptPending = () => {
+    const entry = { pt: null, disp: null, pending: null };
+    entry.pending = () => {
       if (par && !jobs.every(j => gl.getProgramParameter(j.prog, gl.COMPLETION_STATUS_KHR))) return true;
       // ready (or no ext: first call pays the sync wait — but off the init path)
-      pt = finish(jobs[0]);
-      disp = pt ? finish(jobs[1]) : null;
-      if (!disp) pt = null;
-      ptPending = null;
+      entry.pt = finish(jobs[0]);
+      entry.disp = entry.pt ? finish(jobs[1]) : null;
+      if (!entry.disp) entry.pt = null;
+      entry.pending = null;
       return false;
     };
+    return (ptCache[cls] = entry);
   }
 
   const buf = gl.createBuffer();
@@ -1746,6 +1805,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
 
   function render(p, pose, w, h) {
     stop();
+    const preview = ensurePreview(p.weapon_class === 'axe' ? 'axe' : 'sword');
     canvas.width = w; canvas.height = h;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, w, h);
@@ -1784,13 +1844,16 @@ function createRenderer(canvas, { progressive = false } = {}) {
   function begin(p, pose, w, h, onProgress) {
     if (!canPT) return false;
     stop();
-    if (ptPending && ptPending()) {
+    const cls = p.weapon_class === 'axe' ? 'axe' : 'sword';
+    const entry = ensurePT(cls);
+    if (entry.pending && entry.pending()) {
       // PT program still compiling in driver threads — preview stays up,
       // re-check shortly and take over when the link lands.
       ptRetry = setTimeout(() => begin(p, pose, w, h, onProgress), 400);
       return false;
     }
-    if (!pt) return false;  // link failed — disclosed above, preview-only
+    if (!entry.pt) return false;  // link failed — disclosed above, preview-only
+    const pt = entry.pt, disp = entry.disp;
     canvas.width = w; canvas.height = h;
     if (w !== accW || h !== accH || !texs) {
       if (texs) texs.forEach(t => gl.deleteTexture(t));

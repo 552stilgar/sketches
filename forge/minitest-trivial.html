@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"></head><body>
+<canvas id="c" width="64" height="64"></canvas>
+<script>
+document.title = 'minitest:start';
+try {
+  const gl = document.getElementById('c').getContext('webgl2', { antialias: false });
+  if (!gl) throw new Error('no webgl2');
+  gl.getExtension('EXT_color_buffer_float');
+  const vsrc = 'void main(){gl_Position=vec4(0.0,0.0,0.0,1.0);}';
+  const fsrc = '#version 300 es\nprecision highp float;\nout vec4 o;\nvoid main(){o=vec4(1.0,0.0,0.0,1.0);}';
+  const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, vsrc); gl.compileShader(vs);
+  const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, fsrc); gl.compileShader(fs);
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  const ok = gl.getProgramParameter(prog, gl.LINK_STATUS);
+  document.title = 'minitest:trivial:' + (ok ? 'linked' : 'FAILED:' + gl.getProgramInfoLog(prog));
+} catch (e) {
+  document.title = 'minitest:trivial:ERROR:' + e.message;
+}
+</script>
+</body></html>
