@@ -320,8 +320,8 @@ function renderBig(token) {
 // ---------------------------------------------------------------------------
 
 const STILL_SIZE = new URLSearchParams(location.search).get('stillsize') || '440x660';
-const STILL_SPP = +(new URLSearchParams(location.search).get('spp')) || 220;
-const STILL_TIMEOUT_MS = 120000;
+const STILL_SPP = +(new URLSearchParams(location.search).get('spp')) || 140; // converged enough; wall-time matters more since the small-tile freeze fix
+const STILL_TIMEOUT_MS = 150000;
 const SVGNS = 'http://www.w3.org/2000/svg';
 
 let stillFrame = null, stillTimer = 0, renderedOn = false;
@@ -338,7 +338,10 @@ function startStillRender(token) {
   modeBtn.hidden = true;
   emptyNote.textContent = 'rendering ✦ path-traced still…';
   stillFrame = document.createElement('iframe');
-  stillFrame.style.cssText = 'position:absolute;left:-9999px;width:8px;height:8px;opacity:0;pointer-events:none;';
+  // must stay INSIDE the viewport and non-transparent: Chrome throttles rAF
+  // for offscreen/hidden iframes, which starved the path tracer into the
+  // timeout (a 10x14 sliver at 5% opacity keeps it scheduled at full rate)
+  stillFrame.style.cssText = 'position:fixed;right:2px;bottom:2px;width:10px;height:14px;opacity:0.05;border:0;pointer-events:none;z-index:9;';
   const passMode = new URLSearchParams(location.search).get('mode');
   stillFrame.src = `./index.html?still=${STILL_SIZE}&spp=${STILL_SPP}${passMode ? `&mode=${passMode}` : ''}#${token}`;
   document.body.appendChild(stillFrame);
