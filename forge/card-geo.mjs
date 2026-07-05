@@ -22,7 +22,7 @@ import { clamp, deriveLayout, mulberry32 } from './params.mjs';
 import { bend, sweep, taper, collar, pierce, toPath, distanceTo } from './craft-geo.mjs';
 import { resolveOrnament, piercePlacement } from './ornament.mjs';
 import { applyFormat } from './format.mjs';
-import { resolveHeadPlan } from './axe-head.mjs';
+import { resolveHeadPlan, HAFT_CURVE_TAME } from './axe-head.mjs';
 
 // ---------------------------------------------------------------------------
 // numeric hygiene + path-building primitives
@@ -141,6 +141,16 @@ const GRIP_HSL = {
   cord: { h: 36, s: 24, l: 44 },
   wire: { h: 210, s: 6, l: 58 },
 };
+
+// -- slice 6: value/color architecture (honest-pass fixes #2-#4) --------------
+// Veins are GOLD, period — the reference carries exactly one warm accent, and
+// a random accent_hue read as traffic-cone orange. accent_hue still drives
+// non-vein trim on lower tiers.
+export const GOLD_HSL = { h: 46, s: 70, l: 55 };
+export const GOLD_CORE_HSL = { h: 48, s: 84, l: 71 };
+// Two-regime steel: the etched cheek darkens as the tier rises so the polished
+// bevel band can blaze against it (value flip, not more geometry).
+export const CHEEK_L_MUL_BY_TIER = { plain: 1, worked: 0.60, ornate: 0.26 };
 
 export function derivePalette(p) {
   let base = familyBaseHsl(p);
@@ -598,13 +608,14 @@ const EYE_COLLAR_R_MUL = 1.35; // relative to haft_r — the eye/haft-collar alw
 
 const DOUBLE_BIT_ASYM_BY_POLL = { flat: 0, hammer: 0.12, spike: -0.12 };
 
-// spine from the haft base [0,0] to the tip [haft_curve*haft_len, haft_len], bowed by a
-// sagitta chosen as a fraction of the tip's lateral offset — stands in for the old
-// power-curve cantilever (off = haft_curve * haft_len * t^CURVE_EXP) closely enough that
-// craft-loop directives ("bow the haft more") map onto sagitta, not ad-hoc offset math.
+// Haft spine, anchored at the HEAD (slice 6 composition fix): the top of the
+// haft meets the eye at x=0 — previously the tip drifted by the full curve
+// offset while the head stayed at x=0, so the head floated off its own stick.
+// The base drifts instead, the curve gene is tamed (reference hafts are near-
+// straight), and the bow is a sagitta fraction of the (tamed) tip offset.
 export function haftSpine(p) {
-  const tipOffset = p.haft_curve * p.haft_len;
-  return bend([0, 0], [tipOffset, p.haft_len], tipOffset * HAFT_SAGITTA_MUL);
+  const tipOffset = p.haft_curve * p.haft_len * HAFT_CURVE_TAME;
+  return bend([-tipOffset, 0], [0, p.haft_len], -tipOffset * HAFT_SAGITTA_MUL);
 }
 
 export function haftOutline(p) {
@@ -668,7 +679,7 @@ function headEdgeProfile(p, headHalfH) {
 // small control-point offset so no run of the outline is ever ruler-straight.
 
 const HEAD_EDGE_SAMPLES = 36;
-const HEAD_BELLY_AMP = 0.22;          // edge S-curve bulge, x edgeReach at plan belly 1
+const HEAD_BELLY_AMP = 0.34;          // edge S-curve bulge, x edgeReach at plan belly 1 (slice 6: fused crescent, not slab)
 const HORN_RECURVE_PULL = 0.22;       // tip pull-back at recurve 1, x edgeReach
 const BEARD_DROP_MUL = 0.85;          // hornBottom.drop 1 -> tip this far below -halfH
 const BEARD_INNER_X_FRAC = 0.30;      // where the beard's inner curve rejoins the bottom
@@ -676,10 +687,10 @@ const CUSP_DEPTH_FRAC = 0.10;         // gothic scallop bite depth, x halfH
 const BACK_TOP_Y_FRAC = 0.92;
 const SPIKE_BASE_X_FRAC = 0.22;       // x edgeReach
 const SPIKE_ROOT_HALF_W = 0.16;       // x halfH
-const RING_RI_FRAC = 0.40;            // ring-fluke void radius, x halfH
-const RING_RO_FRAC = 0.66;            // ring-fluke outer radius, x halfH
+const RING_RI_FRAC = 0.44;            // ring-fluke void radius, x halfH
+const RING_RO_FRAC = 0.70;            // ring-fluke outer radius, x halfH
 const RING_CLEAR = 0.010;             // web between eye radius and the void
-const RING_NECK_HALF_W = 0.26;        // x halfH
+const RING_NECK_HALF_W = 0.62;        // x halfH — a full back PLATE (slice 6: ring fused into the head, not a floating donut)
 const RING_SPIKE_REACH_BASE = 0.45;   // + SPAN x ornament fluke reach, x halfH
 const RING_SPIKE_REACH_SPAN = 0.45;
 
@@ -737,7 +748,9 @@ function buildCraftHead(p, layout, plan, hp, bounds) {
       }
     }
   } else {
-    outline.push(...bez(backTop, [-0.004, cy], backBot, 8));
+    // subtle concave back — bow scales with the head so the run stays curved
+    // even at slice-6 presence scales (absolute 0.004 went sub-threshold there)
+    outline.push(...bez(backTop, [-hh * 0.06, cy], backBot, 8));
   }
   // bottom return: connector out to the beard's inner curve, then hook to the tip
   if (hp.hornBottom.drop > 0.05) {
@@ -770,7 +783,7 @@ function buildCraftHead(p, layout, plan, hp, bounds) {
   // bevel band: the polished plate zone along the cutting edge + its ridge line
   const bevelEdge = edge.slice(2, -2);
   const ridge = bevelEdge.map(([x, y]) => [x * (1 - hp.bevelBand), y]);
-  layers.push({ d: polygonPath([...bevelEdge, ...ridge.slice().reverse()]), fill: 'var(--bevel-fill)', stroke: 'none', strokeWidth: 0, opacity: num(0.35 + 0.45 * plan.edgeLight), role: 'bevel' });
+  layers.push({ d: polygonPath([...bevelEdge, ...ridge.slice().reverse()]), fill: 'var(--bevel-fill)', stroke: 'none', strokeWidth: 0, opacity: num(Math.min(1, 0.55 + 0.45 * plan.edgeLight)), role: 'bevel' });
   layers.push({ d: polylinePath(ridge), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.003, opacity: 0.6, role: 'bevel' });
 
   // slice 5: raised plate-rim border — the "someone made this" double outline
@@ -964,16 +977,19 @@ const PLATE_COLLAR_H = 0.018;
 const PLATE_COLLAR_GAP = 0.014;
 const PLATE_COLLAR_W_MUL = 1.45;     // vs haft_r
 
-const DAMASCUS_LINES_MIN = 5;        // slice 3 (flip minimal): denser etch floor
-const DAMASCUS_LINES_SPAN = 7;       // + round(SPAN * plan.damascus)
+const DAMASCUS_LINES_MIN = 8;        // slice 6: FINE grain — dense, quiet contours
+const DAMASCUS_LINES_SPAN = 10;      // + round(SPAN * plan.damascus)
 const DAMASCUS_WOBBLE_AMP = 0.14;    // sword: fracX wobble
-const DAMASCUS_OPACITY_BASE = 0.30;
-const DAMASCUS_OPACITY_SPAN = 0.38;
+const DAMASCUS_OPACITY_BASE = 0.22;  // slice 6: grain sits INTO the dark cheek —
+const DAMASCUS_OPACITY_SPAN = 0.22;  // bright dense etch was lifting the whole plate
 const DAMASCUS_CONTOUR_SHRINK = 0.92;   // innermost contour scale-down toward centroid
-const DAMASCUS_CONTOUR_WOB = 0.015;     // contour wobble amplitude (model units)
-const VEIN_COUNT_SPAN = 4;           // trunks = 1 + round(SPAN * plan.veins)
-const VEIN_BRANCH_PROB = 0.30;       // per-step branch chance, depth-limited
-const VEIN_MAX_DEPTH = 2;
+const DAMASCUS_CONTOUR_WOB = 0.005;     // contour wobble amplitude (model units) — MUST stay well
+                                        // under the contour spacing or bands tangle into scribble
+                                        // (honest-pass finding: wobble >> spacing = 2/10 damascus)
+const VEIN_COUNT_MIN = 2;            // trunks = MIN + round(SPAN * plan.veins)
+const VEIN_COUNT_SPAN = 4;
+const VEIN_BRANCH_PROB = 0.34;       // per-step branch chance, depth-limited
+const VEIN_MAX_DEPTH = 3;            // slice 6: trunk -> branch -> capillary richness
 const VEIN_STEP_TURN = 1.1;          // radians of drift per step
 const ETCH_WEB = 0.003;              // etch strokes keep off the silhouette edge
 const ETCH_SAMPLES = 16;
@@ -1124,7 +1140,7 @@ function growVeins(rng, region, starts, stepLen, plan) {
   const layers = [];
   const emit = (raw, wFrac) => {
     for (const run of trimmedRuns(raw, region)) {
-      layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--accent)', strokeWidth: num(0.006 * wFrac + 0.002), opacity: 0.4, role: 'vein' });
+      layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--vein)', strokeWidth: num(0.006 * wFrac + 0.002), opacity: 0.4, role: 'vein' });
       layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--vein-core)', strokeWidth: num(0.003 * wFrac + 0.001), opacity: 0.9, role: 'vein' });
     }
   };
@@ -1167,7 +1183,7 @@ function buildAxeOrnament(p, plan, region) {
     for (let k = 1; k <= K; k++) {
       const f = 1 - (k / (K + 1)) * DAMASCUS_CONTOUR_SHRINK;
       const phase = rng() * Math.PI * 2;
-      const freq = 3 + Math.floor(rng() * 4);
+      const freq = 2 + Math.floor(rng() * 2);
       const wob = DAMASCUS_CONTOUR_WOB * (0.5 + rng());
       const raw = outer.map(([x, y], i) => {
         const dx = x - cen[0], dy = y - cen[1];
@@ -1177,14 +1193,14 @@ function buildAxeOrnament(p, plan, region) {
       });
       raw.push(raw[0]); // close the contour before trimming
       for (const run of trimmedRuns(raw, region)) {
-        layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.0035, opacity, role: 'damascus' });
+        layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--damascus)', strokeWidth: 0.0028, opacity, role: 'damascus' });
       }
     }
   }
 
   if (plan.veins > 0) {
     // trunks radiate from the eye side of the cheek, like the reference
-    const V = 1 + Math.round(VEIN_COUNT_SPAN * plan.veins);
+    const V = VEIN_COUNT_MIN + Math.round(VEIN_COUNT_SPAN * plan.veins);
     const starts = [];
     for (let v = 0; v < V; v++) {
       starts.push([
@@ -1228,7 +1244,7 @@ function buildSwordOrnament(p, plan, bladeRoot) {
       const phase = rng() * Math.PI * 2;
       const freq = 2 + 4 * rng();
       const pts = line(t => base + DAMASCUS_WOBBLE_AMP * Math.sin(t * freq * Math.PI + phase));
-      layers.push({ d: polylinePath(pts), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.0035, opacity, role: 'damascus' });
+      layers.push({ d: polylinePath(pts), fill: 'none', stroke: 'var(--damascus)', strokeWidth: 0.0028, opacity, role: 'damascus' });
     }
   }
 
@@ -1246,7 +1262,7 @@ function buildSwordOrnament(p, plan, bladeRoot) {
       right.push([off + wHalf, y]);
     }
     const region = [...left, ...right.reverse()];
-    const V = 1 + Math.round(VEIN_COUNT_SPAN * plan.veins);
+    const V = VEIN_COUNT_MIN + Math.round(VEIN_COUNT_SPAN * plan.veins);
     const starts = [];
     for (let v = 0; v < V; v++) {
       starts.push([
@@ -1261,8 +1277,18 @@ function buildSwordOrnament(p, plan, bladeRoot) {
 }
 
 function buildAxe(p, palette, plan, bounds) {
-  const layout = deriveLayout(p);
+  const raw = deriveLayout(p);
   const hp = resolveHeadPlan(p, plan);
+  // slice 6 composition: the head grows toward the tier's presence target —
+  // both media scale halfH + edgeReach by the same plan number (u_hdScale).
+  // The head hangs from its mount: the top (haft-facing) edge stays put and
+  // the crescent grows downward/forward, so the eye never leaves the haft.
+  const layout = {
+    ...raw,
+    headY: raw.headY - raw.headHalfH * (hp.headScale - 1),
+    headHalfH: raw.headHalfH * hp.headScale,
+    edgeReach: raw.edgeReach * hp.headScale,
+  };
   const layers = [];
   layers.push(...buildHaft(p, bounds));
   layers.push(...buildHaftHardware(p, plan, bounds));

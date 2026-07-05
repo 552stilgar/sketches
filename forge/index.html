@@ -178,7 +178,7 @@ import {
 } from './editor-logic.mjs';
 import { resolveOrnament, packOrnamentUniforms } from './ornament.mjs';
 import { applyFormat } from './format.mjs';
-import { resolveHeadPlan, packHeadUniforms } from './axe-head.mjs';
+import { resolveHeadPlan, packHeadUniforms, HAFT_CURVE_TAME } from './axe-head.mjs';
 
 const CFG = {
   gridCount: 12,
@@ -281,7 +281,7 @@ uniform float u_ornPlateCollars, u_ornDamascus, u_ornVeins, u_ornEdgeLight;
 // backForm: 0 poll, 1 fluke, 2 ringFluke)
 uniform float u_hdHornTopR, u_hdHornTopRec, u_hdHornBotR, u_hdHornBotDrop;
 uniform float u_hdBelly, u_hdCusps, u_hdBevel;
-uniform float u_hdSpikeOn, u_hdSpikeH, u_hdSpikeLean, u_hdBackForm;
+uniform float u_hdSpikeOn, u_hdSpikeH, u_hdSpikeLean, u_hdBackForm, u_hdScale;
 
 const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
 
@@ -594,19 +594,26 @@ vec2 mapSword(vec3 p) {
 float axeHalfH() {
   float broad = (u_headType > 0.5 && u_headType < 1.5) ? 1.35 : 1.0;
   float war   = (u_headType > 2.5) ? 0.72 : 1.0;
-  return u_headHalfH * broad * war;
+  return u_headHalfH * broad * war * u_hdScale;   // slice 6: head-presence scale
+}
+// slice 6 composition: the head hangs from its mount — the top (haft-facing)
+// edge stays put as u_hdScale grows the crescent downward/forward (card:
+// layout.headY shift in buildAxe). All head-space math reads this center.
+float axeHeadY() {
+  return u_headY - u_headHalfH * (u_hdScale - 1.0);
 }
 float axeEdgeReachAt(float hy) {
   float halfH = axeHalfH();
   float yBot = -halfH * (1.0 + 0.85 * u_hdHornBotDrop);
   float ss = clamp((hy - yBot) / (halfH - yBot), 0.0, 1.0);
   float blendS = ss * ss * (3.0 - 2.0 * ss);
-  float reachY = u_edgeReach * (mix(u_hdHornBotR, u_hdHornTopR, blendS)
-               + u_hdBelly * 0.22 * sin(3.14159 * ss));
+  float reach0 = u_edgeReach * u_hdScale;
+  float reachY = reach0 * (mix(u_hdHornBotR, u_hdHornTopR, blendS)
+               + u_hdBelly * 0.34 * sin(3.14159 * ss));
   float topPull = max(0.0, (ss - 0.86) / 0.14);
   float botPull = max(0.0, ((1.0 - ss) - 0.90) / 0.10);
-  reachY -= u_edgeReach * 0.22 * u_hdHornTopRec * topPull * topPull;
-  reachY -= u_edgeReach * 0.132 * u_hdHornTopRec * botPull * botPull;
+  reachY -= reach0 * 0.22 * u_hdHornTopRec * topPull * topPull;
+  reachY -= reach0 * 0.132 * u_hdHornTopRec * botPull * botPull;
   return reachY;
 }
 
@@ -614,7 +621,9 @@ vec2 mapAxe(vec3 p) {
   // -- haft (bent space) --
   float t = clamp(p.y / u_haftLen, 0.0, 1.0);
   vec3 q = p;
-  q.x -= u_haftCurve * t * t * u_haftLen;
+  // slice 6: haft anchored at the HEAD — the tip meets the eye at x=0, the
+  // base drifts (card: haftSpine). u_haftCurve arrives pre-tamed (HAFT_CURVE_TAME).
+  q.x -= u_haftCurve * (t * t - 1.0) * u_haftLen;
   float hr = u_haftR * (1.0 + 0.18 * (1.0 - t));
   float dHaft = sdCapsule(q, vec3(0.0), vec3(0.0, u_haftLen, 0.0), hr) * 0.9;
   vec2 res = vec2(dHaft, MAT_WOOD);
@@ -664,7 +673,7 @@ vec2 mapAxe(vec3 p) {
   if (u_ornPlateCollars > 0.5) {
     for (int ci = 0; ci < 3; ci++) {
       if (float(ci) < u_ornPlateCollars - 0.5) {
-        float cyy = u_headY - u_headHalfH - 0.009 - float(ci) * 0.032;
+        float cyy = axeHeadY() - u_headHalfH * u_hdScale - 0.009 - float(ci) * 0.032;
         float ctt = clamp(cyy / u_haftLen, 0.0, 1.0);
         float chr = u_haftR * (1.0 + 0.18 * (1.0 - ctt));
         float dCol = sdCylY(q - vec3(0.0, cyy, 0.0), 0.009, chr * 1.45);
@@ -674,21 +683,19 @@ vec2 mapAxe(vec3 p) {
   }
 
   // -- head: disc-cut wedge, optionally mirrored (double bit) --
-  vec3 h = p - vec3(0.0, u_headY, 0.0);
+  vec3 h = p - vec3(0.0, axeHeadY(), 0.0);
   float side = h.x < 0.0 ? -1.0 : 1.0;                 // which bit, retained through the mirror
   bool isDoubleBit = (u_headType > 1.5 && u_headType < 2.5);
   if (isDoubleBit) h.x = abs(h.x);   // double_bit
 
-  float broad = (u_headType > 0.5 && u_headType < 1.5) ? 1.35 : 1.0;   // broad
-  float war   = (u_headType > 2.5) ? 0.72 : 1.0;                       // war: compact
-  float halfH = u_headHalfH * broad * war;
+  float halfH = axeHalfH();   // broad/war muls + slice-6 head-presence scale
 
   // v6: poll_type's roll was dead on double_bit heads (no poll geometry ever
   // renders there — see below). Repurpose it to skew reach/sweep between the
   // two bits instead of leaving the draw with zero visual effect: real
   // double-bits are rarely perfectly symmetric.
   float pollAsym = isDoubleBit ? u_pollType * 0.14 : 0.0;   // 0 / 0.14 / 0.28
-  float edgeReachA = u_edgeReach * (1.0 + pollAsym * side);
+  float edgeReachA = u_edgeReach * (1.0 + pollAsym * side) * u_hdScale;
   float dBody;
   float sx = clamp(h.x / edgeReachA, 0.0, 1.0);
   if (isDoubleBit) {
@@ -776,17 +783,19 @@ vec2 mapAxe(vec3 p) {
   }
 
   // v7 head plan: composed ring fluke — annulus (true void) + neck + two points
-  // (card: buildRingFluke, same Ri 0.40 / Ro 0.66 / clear 0.010 / neck 0.26 numbers)
+  // (card: buildRingFluke, same Ri 0.44 / Ro 0.70 / clear 0.010 / web 0.62 numbers).
+  // slice 6: the neck is a full back PLATE (0.62 halfH) so the ring reads as
+  // fused into the head with the void punched through, not a floating donut.
   if (u_hdBackForm > 1.5 && !isDoubleBit) {
     float eyeR2 = u_haftR * 1.9;
-    float rRi = halfH * 0.40, rRo = halfH * 0.66;
+    float rRi = halfH * 0.44, rRo = halfH * 0.70;
     vec2 bc = vec2(-(eyeR2 + 0.010 + rRo), halfH * 0.10);
     vec2 rp = h.xy - bc;
     float ringXY = abs(length(rp) - (rRo + rRi) * 0.5) - (rRo - rRi) * 0.5;
     float dRing = max(ringXY, abs(h.z) - u_cheek * 0.9);
     res = opU(res, vec2(dRing * 0.9, MAT_STEEL));
     vec3 np = h - vec3((bc.x + rRi) * 0.5, bc.y, 0.0);
-    float dNeck = sdBox(np, vec3(abs(bc.x + rRi) * 0.5 + 0.002, halfH * 0.26, u_cheek * 0.8));
+    float dNeck = sdBox(np, vec3(abs(bc.x + rRi) * 0.5 + 0.002, halfH * 0.62, u_cheek * 0.8));
     res = opU(res, vec2(dNeck, MAT_STEEL));
     float ptReach = halfH * (0.45 + 0.45 * u_ornFlukeReach);
     for (int pi = 0; pi < 2; pi++) {
@@ -824,11 +833,11 @@ vec2 mapAxe(vec3 p) {
   // hugging its surface front and back via the same abs-fold the eye collar's
   // radial symmetry already relies on.
   if (u_langetLen > 0.015) {
-    float lTopY = u_headY - halfH * 0.55;
+    float lTopY = axeHeadY() - halfH * 0.55;
     float lMidY = lTopY - u_langetLen * 0.5;
     float ltt = clamp(lMidY / u_haftLen, 0.0, 1.0);
     float lhr = u_haftR * (1.0 + 0.18 * (1.0 - ltt));
-    vec3 lp = p - vec3(u_haftCurve * ltt * ltt * u_haftLen, lMidY, 0.0);
+    vec3 lp = p - vec3(u_haftCurve * (ltt * ltt - 1.0) * u_haftLen, lMidY, 0.0);
     lp.z = abs(lp.z) - (lhr + 0.006);
     float dLanget = sdBox(lp, vec3(u_haftR * 1.4, u_langetLen * 0.5, u_haftR * 0.28));
     // clamp the fillet to the strap's neighborhood (same bug as the butt cap:
@@ -1043,15 +1052,26 @@ float engraveG(vec3 pos) {
   return max(stroke, rail * 0.8);
 }
 
+// slice 6: the kintsugi network is GOLD, period — reference carries one warm
+// accent; the rolled accent hue kept reading traffic-cone (card: GOLD_HSL)
+const vec3 VEIN_GOLD = vec3(0.865, 0.718, 0.235);
+
 // finish layer + curvature wear -> material response (shared preview / PT)
 void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float metal, out float brush) {
   if (m < 1.5) {
     albedo = u_steelCol;  rough = u_rough;
+    // slice 6: two-regime steel — the etched cheek darkens as the tier rises so
+    // the polished bevel can blaze against it (card: CHEEK_L_MUL_BY_TIER)
+    albedo *= u_ornTier > 1.5 ? 0.40 : (u_ornTier > 0.5 ? 0.72 : 1.0);
     // family F0 response: bronze is intensely metallic (colored reflections),
     // iron a duller working metal, steel in between
     metal = u_family > 1.5 ? 0.94 : (u_family > 0.5 ? 0.82 : 0.88);
   }
-  else if (m < 2.5) { albedo = u_accentCol; rough = min(u_rough * 1.35, 0.6);  metal = 0.72; }
+  else if (m < 2.5) {
+    // ornate hardware trims in gold (card: gid-trim gold ramp at ornate)
+    albedo = u_ornTier > 1.5 ? VEIN_GOLD : u_accentCol;
+    rough = min(u_rough * 1.35, 0.6);  metal = 0.72;
+  }
   else if (m < 3.5) {
     // grip material: leather / helical cord wrap / wound wire (metallic)
     float gang = atan(pos.z, pos.x);
@@ -1104,7 +1124,7 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
           float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
           dc = vec2(pos.x - u_curve * bt * bt * u_bladeLen, pos.y);
         } else {
-          vec2 hxy = pos.xy - vec2(0.0, u_headY);
+          vec2 hxy = pos.xy - vec2(0.0, axeHeadY());
           bool dbit = (u_headType > 1.5 && u_headType < 2.5);
           if (dbit) {
             dc = hxy;
@@ -1117,8 +1137,10 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
         }
         vec2 wp = vec2(fbm(dc * u_damScale * 0.35 + 7.3),
                        fbm(dc * u_damScale * 0.35 + vec2(19.1, 4.7)));
+        // slice 6: warp tamed 22 -> 12 — banding, not tangling (the same
+        // wobble<<spacing rule the card's contour etch enforces)
         float band = sin(dot(dc, vec2(u_damScale * 0.9, u_damScale * 0.5))
-                       + (wp.x - 0.5) * u_damWarp * 22.0 + (wp.y - 0.5) * 8.0);
+                       + (wp.x - 0.5) * u_damWarp * 12.0 + (wp.y - 0.5) * 8.0);
         float dam = smoothstep(-0.7, 0.7, band);
         // v7 ornament: etch depth follows the plan's damascus intensity —
         // etch = 1.0 reproduces the legacy contrast, ornate rolls cut deeper
@@ -1134,7 +1156,7 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
           // slice 4: capillaries — finer branches off the trunk seams
           float cap = smoothstep(0.93, 1.0, seam) * smoothstep(0.55, 0.95, fbm(dc * 7.1 + 3.3)) * u_ornVeins;
           vein = max(vein, cap * 0.7);
-          albedo = mix(albedo, u_accentCol * 1.5, vein);
+          albedo = mix(albedo, VEIN_GOLD * 1.35, vein);
           rough = mix(rough, 0.18, vein);
           metal = mix(metal, 0.95, vein);
         }
@@ -1163,6 +1185,24 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
     rough = mix(rough, 0.10, edgeWear);
     albedo = mix(albedo, albedo * 0.5, grime * 0.55);
     albedo = mix(albedo, min(albedo * 1.25 + 0.05, vec3(1.0)), edgeWear * 0.6);
+
+    // slice 6: bevel value flip — the polished band along the axe edge blazes
+    // (bright, near-mirror, faint blue-violet iridescence) against the etched
+    // cheek. Card twin: the gid-bevel iridescent ramp + near-solid band opacity.
+    if (m < 1.5 && u_class > 0.5 && !(u_headType > 1.5 && u_headType < 2.5)) {
+      vec2 bxy = pos.xy - vec2(0.0, axeHeadY());
+      float bhh = axeHalfH();
+      if (bxy.x > 0.0 && bxy.y < bhh * 1.05 && bxy.y > -bhh * (1.05 + 0.85 * u_hdHornBotDrop)) {
+        float edist = axeEdgeReachAt(bxy.y) - bxy.x;            // >0 inside the edge
+        float bw = max(u_hdBevel, 0.05) * u_edgeReach * u_hdScale * 1.4;
+        float bev = smoothstep(bw, bw * 0.45, edist) * step(-0.004, edist);
+        float blaze = bev * (0.45 + 0.55 * u_ornEdgeLight);
+        vec3 irid = mix(vec3(0.80, 0.86, 1.00), vec3(0.93, 0.86, 1.02), 0.5 + 0.5 * sin(bxy.y * 24.0));
+        albedo = mix(albedo, irid * 0.92, blaze);
+        rough = mix(rough, 0.05, blaze);
+        metal = mix(metal, 0.92, blaze);
+      }
+    }
 
     // -- v4: family degradation — iron rusts, bronze grows verdigris. Blotches
     // seed from fbm, favor grimy hollows, and scale with wear. Steel unaffected.
@@ -1554,6 +1594,8 @@ function createRenderer(canvas, { progressive = false } = {}) {
     const f = (name, v) => U[name] != null && gl.uniform1f(U[name], v);
     const v3 = (name, a) => U[name] != null && gl.uniform3f(U[name], a[0], a[1], a[2]);
     const L = deriveLayout(p);
+    const ornPlan = resolveOrnament(p);
+    const headPlan = resolveHeadPlan(p, ornPlan);
 
     gl.uniform2f(U.u_res, w, h);
     f('u_yaw', pose.yaw); f('u_pitch', pose.pitch);
@@ -1565,7 +1607,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
       span = L.totalLen;
     } else {
       centerY = p.haft_len * 0.52;
-      span = Math.max(p.haft_len, 2 * L.edgeReach * 1.6);
+      span = Math.max(p.haft_len, 2 * L.edgeReach * headPlan.headScale * 1.6);
     }
     f('u_centerY', centerY);
     f('u_dist', span * 1.12 * pose.zoom);
@@ -1605,7 +1647,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
 
     f('u_haftLen', p.haft_len);
     f('u_haftR', p.haft_r);
-    f('u_haftCurve', p.haft_curve);
+    f('u_haftCurve', p.haft_curve * HAFT_CURVE_TAME); // slice 6: near-straight hafts, head-anchored bend
     f('u_haftWrap', p.haft_wrap);
     f('u_headType', HEAD_TYPES.indexOf(p.head_type));
     f('u_headY', L.kind === 'axe' ? L.headY : 0);
@@ -1638,10 +1680,9 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_guardExt', GUARD_EXTS.indexOf(p.guard_ext));
     f('u_engraveOn', M.engraveOn);
     f('u_engraveDens', M.engraveDensity);
-    const ornPlan = resolveOrnament(p);
     const orn = packOrnamentUniforms(ornPlan);
     for (const k in orn) f(k, orn[k]);
-    const hd = packHeadUniforms(resolveHeadPlan(p, ornPlan));
+    const hd = packHeadUniforms(headPlan);
     for (const k in hd) f(k, hd[k]);
     f('u_register', state.register);
     const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;

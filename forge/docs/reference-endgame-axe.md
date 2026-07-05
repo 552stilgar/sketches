@@ -71,6 +71,27 @@ Root cause ranking (fix order):
 4. Bevel contrast: bright band vs dark cheek (value flip, not more geometry).
 5. Integrate hardware into clusters (rivets ON plates, spike gets a base collar).
 
+## Slice 6 — composition + value/color pass (2026-07-05, shipped)
+Attacks honest-pass fix order #1-#4 in one directed slice, both media:
+- **Head presence**: `headScale` in the head plan (`u_hdScale`) grows the head
+  toward `HEAD_PRESENCE_BY_TIER` (span:haft 0.34/0.40/0.46), clamp [1, 1.9],
+  hanging from its mount (top edge fixed, crescent grows down/forward).
+- **Fused silhouette**: belly amp 0.22→0.34; ring fluke fused INTO the head —
+  neck widened to a full back plate (web 0.62 halfH, Ri/Ro 0.44/0.70).
+- **Haft**: head-anchored spine (top meets the eye at x=0, base drifts) +
+  `HAFT_CURVE_TAME` 0.45 — near-straight, like the reference.
+- **Two-regime steel**: `CHEEK_L_MUL_BY_TIER` (1 / 0.60 / 0.26) darkens cheek
+  + haft wood (half strength); bevel = blazing 3-stop iridescent ramp (card)
+  / bevel-band blaze mask in surfaceMat (3D); bevel band opacity 0.55+0.45·el.
+- **Real gold**: veins/trim/glow/frame = GOLD_HSL h46 s70 l55 (+ hot core) at
+  ornate — rolled accent hue no longer touches the kintsugi read. 3D: VEIN_GOLD.
+- **Banding not tangling**: contour wobble 0.015→0.005, freq 2-3, K 8-18 fine
+  grain at opacity 0.22-0.44; 3D damascus warp 22→12.
+Verified vs render (same discipline): head owns the weapon, near-black cheek,
+blazing edge, gold network radiates, ring void reads punched-through. Remaining
+gaps for eyes-gated tuning: vein network still thinner than reference, damascus
+contours read as growth rings rather than fingerprint swirl, hardware clusters.
+
 ## Slice queue (each lands in BOTH media, eyes-gated between slices)
 1. **Head silhouette craft pass** — craft-geo curves for the head: horns,
    beard hook, cusped eye bracket, composed fluke+pierce back structure,

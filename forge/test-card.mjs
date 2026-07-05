@@ -26,6 +26,7 @@ import {
   gripSpine, gripOutline, gripHalfWidthAt, gripFerruleOutline, FERRULE_HEIGHT_MUL,
 } from './card-geo.mjs';
 import { assertShapeRules } from './craft-geo.mjs';
+import { HAFT_CURVE_TAME } from './axe-head.mjs';
 
 const SAMPLE_HASHES = ['8b96b1b9', '30e2ebf4', '0', 'ffffffff', 'deadbeef', 'a1', '552usul'];
 
@@ -183,12 +184,24 @@ test('C5: v6 genes visibly change the SVG output relative to their neutral value
 // re-checked here at card-geo's two concrete call sites.
 // ---------------------------------------------------------------------------
 
-test('D1: a curved haft outline (haft_curve well above 0) passes assertShapeRules clean', () => {
+test('D1: haft is head-anchored and near-straight by design (slice 6 composition)', () => {
+  // slice 6 replaced the cantilever bow with a head-anchored, tamed spine:
+  // the top of the haft meets the eye at x=0, the base drifts by the tamed
+  // offset, and a real (if subtle) bow survives. The old "must pass the
+  // straight-run rule" assertion no longer applies — near-straight is the
+  // deliberate reference read, not a craft failure.
   const base = paramsFromHash('8b96b1b9');
   const p = { ...base, weapon_class: 'axe', haft_curve: 0.14, haft_len: 1.0 };
+  const spine = haftSpine(p);
+  const top = spine.evalAt(1), bot = spine.evalAt(0);
+  assert.ok(Math.abs(top[0]) < 1e-9, `haft top must meet the head at x=0 (got ${top[0]})`);
+  const expected = -p.haft_curve * p.haft_len * HAFT_CURVE_TAME;
+  assert.ok(Math.abs(bot[0] - expected) < 1e-9, `base must drift by the tamed offset (got ${bot[0]}, want ${expected})`);
   const outline = haftOutline(p);
   assert.ok(Array.isArray(outline) && outline.length >= 16, 'haftOutline must return a sampled polygon');
-  assert.deepEqual(assertShapeRules(outline), [], 'a genuinely curved haft must pass the straight-run shape rule');
+  const mid = spine.evalAt(0.5);
+  const chordMidX = (top[0] + bot[0]) / 2;
+  assert.ok(Math.abs(mid[0] - chordMidX) > 1e-4, 'the haft must still carry a real (if subtle) bow');
 });
 
 test('D2: grip outline is a simple polygon (straight profile, curved risers)', () => {

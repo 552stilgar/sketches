@@ -70,7 +70,7 @@
 
 <script type="module">
 import { paramsFromHash, decodeToken, applyOverrides, randHex } from './params.mjs';
-import { buildWeapon, derivePalette, hslCss } from './card-geo.mjs';
+import { buildWeapon, derivePalette, hslCss, GOLD_HSL, GOLD_CORE_HSL, CHEEK_L_MUL_BY_TIER } from './card-geo.mjs';
 
 // ---------------------------------------------------------------------------
 // config — mirrors index.html's seeding flow (randHex(8) hashes, decodeToken
@@ -104,26 +104,44 @@ function randomToken() {
 // namespaced per card so a 12-card grid never cross-links defs.
 function gradientDefs(gid, palette, tier) {
   const lite = (c, dl, ds = 0) => hslCss({ h: c.h, s: clamp01x(c.s + ds), l: clamp01x(c.l + dl) });
+  // slice 6: two-regime steel — the etched cheek darkens with tier so the
+  // polished bevel band can blaze against it (near-black cheek at ornate)
+  const mulL = CHEEK_L_MUL_BY_TIER[tier] ?? 1;
+  const dark = (c, dl, ds = 0) => hslCss({ h: c.h, s: clamp01x(c.s + ds), l: clamp01x(c.l * mulL + dl) });
   const steel = `<linearGradient id="${gid}-steel" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0" stop-color="${lite(palette.highlight, 6)}"/>
-    <stop offset="0.45" stop-color="${hslCss(palette.base)}"/>
-    <stop offset="1" stop-color="${lite(palette.shade, -4)}"/>
+    <stop offset="0" stop-color="${dark(palette.highlight, 6)}"/>
+    <stop offset="0.45" stop-color="${dark(palette.base, 0)}"/>
+    <stop offset="1" stop-color="${dark(palette.shade, -4)}"/>
   </linearGradient>`;
+  // haft wood follows the regime at half strength — an ornate haft is dark
+  // oiled wood/iron, never brighter than its own head
+  const woodMul = 0.5 + 0.5 * mulL;
+  const woodC = { h: palette.grip.h, s: palette.grip.s, l: palette.grip.l * woodMul };
   const wood = `<linearGradient id="${gid}-wood" x1="0" y1="0" x2="1" y2="0.2">
-    <stop offset="0" stop-color="${lite(palette.grip, 8)}"/>
-    <stop offset="0.55" stop-color="${hslCss(palette.grip)}"/>
-    <stop offset="1" stop-color="${lite(palette.grip, -10)}"/>
+    <stop offset="0" stop-color="${lite(woodC, 8)}"/>
+    <stop offset="0.55" stop-color="${hslCss(woodC)}"/>
+    <stop offset="1" stop-color="${lite(woodC, -10)}"/>
   </linearGradient>`;
-  const bevel = `<linearGradient id="${gid}-bevel" x1="0" y1="0" x2="1" y2="1">
+  // bevel: plain keeps the quiet ramp; worked/ornate get the blazing polished
+  // band with a faint blue-violet iridescence (the reference's edge read)
+  const bevel = tier === 'plain'
+    ? `<linearGradient id="${gid}-bevel" x1="0" y1="0" x2="1" y2="1">
     <stop offset="0" stop-color="${lite(palette.highlight, 18, 6)}"/>
     <stop offset="1" stop-color="${lite(palette.highlight, -2)}"/>
+  </linearGradient>`
+    : `<linearGradient id="${gid}-bevel" x1="0" y1="1" x2="0.3" y2="0">
+    <stop offset="0" stop-color="${hslCss({ h: palette.base.h - 22, s: clamp01x(palette.base.s + 20), l: 88 })}"/>
+    <stop offset="0.45" stop-color="${hslCss({ h: palette.base.h, s: clamp01x(palette.base.s + 8), l: 78 })}"/>
+    <stop offset="1" stop-color="${hslCss({ h: palette.base.h + 38, s: clamp01x(palette.base.s + 26), l: 64 })}"/>
   </linearGradient>`;
+  // ornate hardware trims in gold (one warm accent, like the reference)
+  const trimC = tier === 'ornate' ? GOLD_HSL : palette.trim;
   const trim = `<linearGradient id="${gid}-trim" x1="0" y1="0" x2="0" y2="1">
-    <stop offset="0" stop-color="${lite(palette.trim, 14, 8)}"/>
-    <stop offset="1" stop-color="${lite(palette.trim, -8)}"/>
+    <stop offset="0" stop-color="${lite(trimC, 14, 8)}"/>
+    <stop offset="1" stop-color="${lite(trimC, -8)}"/>
   </linearGradient>`;
-  // void glow: near-black with a faint palette-hued core; ornate warms toward the accent
-  const glowHue = tier === 'ornate' ? palette.accent : palette.base;
+  // void glow: near-black with a faint palette-hued core; ornate warms toward gold
+  const glowHue = tier === 'ornate' ? GOLD_HSL : palette.base;
   const glow = `<radialGradient id="${gid}-glow" cx="0.5" cy="0.42" r="0.75">
     <stop offset="0" stop-color="${hslCss({ h: glowHue.h, s: Math.min(28, glowHue.s), l: tier === 'ornate' ? 14 : 11 })}"/>
     <stop offset="1" stop-color="#07080c"/>
@@ -141,8 +159,9 @@ function gradientDefs(gid, palette, tier) {
 
 function clamp01x(v) { return Math.max(0, Math.min(100, v)); }
 
-function varMapFor(gid, palette) {
+function varMapFor(gid, palette, tier) {
   const gripStroke = { h: palette.grip.h, s: palette.grip.s, l: Math.max(4, palette.grip.l - 15) };
+  const mulL = CHEEK_L_MUL_BY_TIER[tier] ?? 1;
   return {
     '--blade-fill': `url(#${gid}-steel)`,
     '--blade-stroke': hslCss(palette.shade),
@@ -156,8 +175,12 @@ function varMapFor(gid, palette) {
     '--haft-fill': `url(#${gid}-wood)`,
     '--haft-stroke': hslCss(palette.shade),
     '--haft-shade': hslCss(palette.shade),
-    '--accent': hslCss(palette.accent),
-    '--vein-core': hslCss({ h: palette.accent.h, s: clamp01x(palette.accent.s + 8), l: clamp01x(palette.accent.l + 18) }),
+    '--accent': hslCss(tier === 'ornate' ? GOLD_HSL : palette.accent),
+    // damascus etch: fine grain barely lighter than the (tier-darkened) cheek
+    '--damascus': hslCss({ h: palette.base.h, s: clamp01x(palette.base.s * 0.30), l: clamp01x(palette.base.l * mulL + 14) }),
+    // kintsugi network is GOLD, period — never the rolled accent hue
+    '--vein': hslCss(GOLD_HSL),
+    '--vein-core': hslCss(GOLD_CORE_HSL),
     '--trim': `url(#${gid}-trim)`,
   };
 }
@@ -189,9 +212,9 @@ function cardSvg(token, { big = false } = {}) {
   const { kind, tier, format, layers, bounds } = buildWeapon(params);
   const palette = derivePalette(params);
   const gid = 'g' + token.replace(/[^a-zA-Z0-9]/g, '');
-  const varMap = varMapFor(gid, palette);
+  const varMap = varMapFor(gid, palette, tier);
   const transform = viewTransform(bounds);
-  const borderColor = tier === 'ornate' ? hslCss(palette.accent, 0.75) : hslCss(palette.base, 0.55);
+  const borderColor = tier === 'ornate' ? hslCss(GOLD_HSL, 0.75) : hslCss(palette.base, 0.55);
   const paths = layers.map(l => {
     const fill = resolveColor(l.fill, varMap);
     const stroke = resolveColor(l.stroke, varMap);
@@ -204,7 +227,7 @@ function cardSvg(token, { big = false } = {}) {
   // ornament tier badge — plain stays quiet, worked/ornate announce themselves
   const tierBadge = tier === 'plain' ? '' :
     `<text class="card-tier" x="${CARD_W - 10}" y="16" text-anchor="end"${
-      tier === 'ornate' ? ` style="fill:${hslCss(palette.accent)}"` : ''}>${tier.toUpperCase()}</text>`;
+      tier === 'ornate' ? ` style="fill:${hslCss(GOLD_HSL)}"` : ''}>${tier.toUpperCase()}</text>`;
   return `<svg viewBox="0 0 ${CARD_W} ${CARD_H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${kindLabel} ${hashLabel}">
     ${gradientDefs(gid, palette, tier)}
     <rect class="card-bg" x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="${CARD_RADIUS}"/>

@@ -14,6 +14,18 @@ const clamp01 = (v) => Math.min(1, Math.max(0, v));
 const RECURVE_BY_TIER = { plain: 0.10, worked: 0.35, ornate: 0.60 };
 const CUSPS_BY_TIER = { plain: 0, worked: 2, ornate: 3 };
 
+// -- composition (slice 6: honest-pass fix #1) --------------------------------
+// The reference head OWNS the weapon (head span : haft length ~ 1:2.2). The
+// plan derives a headScale multiplier (applied to halfH + edgeReach by both
+// media) that grows the head toward the tier's presence target; hatchet-class
+// rolls that are already head-heavy clamp to 1 (never shrink a head).
+const HEAD_PRESENCE_BY_TIER = { plain: 0.34, worked: 0.40, ornate: 0.46 }; // head span / haft length
+const HEAD_SCALE_MAX = 1.9;
+
+// Reference hafts are near-straight; the curve gene survives as a whisper.
+// Consumed by card-geo (haftSpine) AND index.html (u_haftCurve upload).
+export const HAFT_CURVE_TAME = 0.45;
+
 export function resolveHeadPlan(p, ornPlan) {
   const sweepN = clamp01(norm(p.edge_sweep, 0.25, 0.95));
   const beardN = clamp01(norm(p.beard_depth, 0, 0.55));
@@ -53,6 +65,9 @@ export function resolveHeadPlan(p, ornPlan) {
     : tier === 'worked' && p.poll_type === 'spike' ? 'fluke'
     : 'poll';
 
+  const headScale = Math.round(Math.min(HEAD_SCALE_MAX,
+    Math.max(1, (HEAD_PRESENCE_BY_TIER[tier] * p.haft_len) / Math.max(p.head_w, 1e-6))) * 1000) / 1000;
+
   return {
     hornTop,
     hornBottom,
@@ -61,6 +76,7 @@ export function resolveHeadPlan(p, ornPlan) {
     bevelBand,
     topSpike,
     backForm,
+    headScale,
   };
 }
 
@@ -82,6 +98,7 @@ export function packHeadUniforms(plan) {
     u_hdSpikeH: plan.topSpike ? plan.topSpike.h : 0,
     u_hdSpikeLean: plan.topSpike ? plan.topSpike.lean : 0,
     u_hdBackForm: BACK_FORM_INDEX[plan.backForm],
+    u_hdScale: plan.headScale,
   };
 }
 
@@ -94,5 +111,6 @@ export function unpackHeadUniforms(u) {
     bevelBand: u.u_hdBevel,
     topSpike: u.u_hdSpikeOn ? { h: u.u_hdSpikeH, lean: u.u_hdSpikeLean } : null,
     backForm: BACK_FORM_NAME[u.u_hdBackForm],
+    headScale: u.u_hdScale,
   };
 }
