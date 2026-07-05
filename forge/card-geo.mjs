@@ -18,8 +18,9 @@
 // volume + shading). Anchors (blade root/tip, guard/grip/pommel Ys, axe haft/head Ys)
 // are pulled from deriveLayout() so the two mediums agree on "where things are."
 
-import { clamp, deriveLayout } from './params.mjs';
-import { bend, sweep, collar } from './craft-geo.mjs';
+import { clamp, deriveLayout, mulberry32 } from './params.mjs';
+import { bend, sweep, taper, collar, pierce, toPath, distanceTo } from './craft-geo.mjs';
+import { resolveOrnament, piercePlacement } from './ornament.mjs';
 
 // ---------------------------------------------------------------------------
 // numeric hygiene + path-building primitives
@@ -556,7 +557,7 @@ function buildPommel(p, pommelY, bounds) {
 // sword assembly
 // ---------------------------------------------------------------------------
 
-function buildSword(p, palette, bounds) {
+function buildSword(p, palette, plan, bounds) {
   const layout = deriveLayout(p);
   const layers = [];
   // back-to-front: pommel, grip, guard, blade body, blade line-work on top
@@ -567,6 +568,7 @@ function buildSword(p, palette, bounds) {
   layers.push(...buildCrossSectionLines(p, layout.bladeRoot, palette));
   layers.push(...buildFullers(p, layout.bladeRoot));
   layers.push(...buildEdgeBevel(p, layout.bladeRoot));
+  layers.push(...buildSwordOrnament(p, plan, layout.bladeRoot));
   return layers;
 }
 
@@ -658,13 +660,13 @@ function headEdgeProfile(p, headHalfH) {
   }
 }
 
-function buildHead(p, layout, bounds) {
+function buildHead(p, layout, plan, bounds) {
   const layers = [];
   const cy = layout.headY;
   const hh = layout.headHalfH;
   const reach = layout.edgeReach;
 
-  const buildEdgePolygon = (mirrorSign, edgeFn, xBase) => {
+  const edgePts = (mirrorSign, edgeFn, xBase) => {
     const pts = [];
     for (let i = 0; i <= HEAD_SAMPLES; i++) {
       const t = -1 + 2 * (i / HEAD_SAMPLES);
@@ -673,26 +675,50 @@ function buildHead(p, layout, bounds) {
     }
     // back to the haft line to close the silhouette
     const backPts = [[xBase, cy + hh], [xBase, cy - hh]];
-    const all = mirrorSign > 0 ? [...pts, ...backPts] : [...backPts.slice().reverse(), ...pts.slice().reverse()];
-    bounds.noteAll(all);
-    return polygonPath(all);
+    return mirrorSign > 0 ? [...pts, ...backPts] : [...backPts.slice().reverse(), ...pts.slice().reverse()];
   };
 
-  const style = { fill: 'var(--haft-fill)', stroke: 'var(--haft-stroke)', strokeWidth: 0.005, opacity: 1 };
+  // the head is steel — blade palette slots, not the haft's wood tone
+  const style = { fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.005, opacity: 1 };
 
+  let etchRegion; // outline (or pierced rings) the damascus/vein etch is trimmed to
   if (p.head_type === 'double_bit') {
     const asym = DOUBLE_BIT_ASYM_BY_POLL[p.poll_type] ?? 0;
     const frontFn = t => p.edge_sweep * (1 - Math.abs(t) * 0.5) * (1 + asym);
     const backFn = t => p.edge_sweep * (1 - Math.abs(t) * 0.5) * (1 - asym);
-    layers.push({ d: buildEdgePolygon(1, frontFn, 0), ...style });
-    layers.push({ d: buildEdgePolygon(-1, backFn, 0), ...style });
+    const front = edgePts(1, frontFn, 0);
+    const back = edgePts(-1, backFn, 0);
+    bounds.noteAll(front);
+    bounds.noteAll(back);
+    layers.push({ d: polygonPath(front), ...style });
+    layers.push({ d: polygonPath(back), ...style });
+    etchRegion = front; // etch dresses the leading bit only
   } else {
     const edgeFn = headEdgeProfile(p, hh);
-    layers.push({ d: buildEdgePolygon(1, edgeFn, 0), ...style });
+    const headPts = edgePts(1, edgeFn, 0);
+    bounds.noteAll(headPts);
+    const hole = ornamentHole(p, plan, cy, hh, reach, headPts);
+    if (hole) {
+      etchRegion = pierce(headPts, hole);
+      layers.push({ d: toPath(etchRegion), fillRule: 'evenodd', ...style });
+    } else {
+      etchRegion = headPts;
+      layers.push({ d: polygonPath(headPts), ...style });
+    }
     layers.push(...buildPoll(p, cy, hh));
+    if (plan.tier !== 'plain') {
+      // edge-light: the cutting edge catches light; intensity carried by the plan
+      const pts = [];
+      for (let i = 0; i <= HEAD_SAMPLES; i++) {
+        const t = -1 + 2 * (i / HEAD_SAMPLES);
+        pts.push([reach * edgeFn(t) * EDGE_LIGHT_INSET, cy + t * hh * EDGE_LIGHT_INSET]);
+      }
+      layers.push({ d: polylinePath(pts), fill: 'none', stroke: 'var(--blade-highlight)', strokeWidth: 0.005, opacity: num(plan.edgeLight), role: 'edge-light' });
+    }
   }
 
   layers.push(...buildCheekLine(p, cy, hh, reach));
+  layers.push(...buildAxeOrnament(p, plan, etchRegion));
   layers.push(...buildEyeCollar(p, cy, hh, bounds));
   return layers;
 }
@@ -713,7 +739,7 @@ const POLL_HALF_H_MUL = 0.6;
 
 function buildPoll(p, cy, hh) {
   if (p.poll_type === 'flat') {
-    return [{ d: polylinePath([[0, cy - hh * 0.8], [0, cy + hh * 0.8]]), fill: 'none', stroke: 'var(--haft-stroke)', strokeWidth: 0.004, opacity: 0.6 }];
+    return [{ d: polylinePath([[0, cy - hh * 0.8], [0, cy + hh * 0.8]]), fill: 'none', stroke: 'var(--blade-stroke)', strokeWidth: 0.004, opacity: 0.6 }];
   }
   const depthMul = p.poll_type === 'spike' ? POLL_SPIKE_DEPTH_MUL : POLL_HAMMER_DEPTH_MUL;
   const depth = -hh * depthMul;
@@ -721,7 +747,7 @@ function buildPoll(p, cy, hh) {
   const pts = p.poll_type === 'spike'
     ? [[0, cy - pollHalfH * 0.3], [depth, cy], [0, cy + pollHalfH * 0.3]]
     : [[0, cy - pollHalfH], [depth, cy - pollHalfH], [depth, cy + pollHalfH], [0, cy + pollHalfH]];
-  return [{ d: polygonPath(pts), fill: 'var(--haft-fill)', stroke: 'var(--haft-stroke)', strokeWidth: 0.004, opacity: 1 }];
+  return [{ d: polygonPath(pts), fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.004, opacity: 1 }];
 }
 
 function buildCheekLine(p, cy, hh, reach) {
@@ -754,11 +780,215 @@ function buildLangets(p, layout, bounds) {
   return layers;
 }
 
-function buildAxe(p, palette, bounds) {
+// ---------------------------------------------------------------------------
+// ornament — this medium's half of the lockstep contract (ornament.mjs plan).
+// Every layer emitted here carries a `role` tag so craft-loop directives
+// ("fewer veins", "shorter fluke") map onto named layer groups.
+// ---------------------------------------------------------------------------
+
+const PIERCE_HOLE_SEGMENTS = 20;
+const PIERCE_WEB = 0.004;            // structural margin vs the REAL silhouette
+const EDGE_LIGHT_INSET = 0.985;      // edge-light stroke sits just inside the edge
+
+const FLUKE_ROOT_Y_FRAC = 0.25;      // fluke root height on the head (frac of halfH)
+const FLUKE_REACH_BASE = 0.5;        // rear reach = reach * (BASE + SPAN * plan.reach)
+const FLUKE_REACH_SPAN = 0.9;
+const FLUKE_DROOP_MAX_RAD = 0.7;     // plan.droop 1.0 -> this downward angle
+const FLUKE_BOW_FRAC = 0.12;         // spine sagitta as a fraction of fluke length
+const FLUKE_ROOT_HALF_W_FRAC = 0.2;  // root half-width (frac of halfH)
+const FLUKE_TIP_HALF_W = 0.004;
+
+const PLATE_COLLAR_H = 0.018;
+const PLATE_COLLAR_GAP = 0.014;
+const PLATE_COLLAR_W_MUL = 1.45;     // vs haft_r
+
+const DAMASCUS_LINES_MIN = 3;
+const DAMASCUS_LINES_SPAN = 4;       // + round(SPAN * plan.damascus)
+const DAMASCUS_WOBBLE_AMP = 0.14;    // sword: fracX wobble; axe: frac of region width
+const DAMASCUS_OPACITY_BASE = 0.22;
+const DAMASCUS_OPACITY_SPAN = 0.38;
+const VEIN_COUNT_SPAN = 3;           // veins = 1 + round(SPAN * plan.veins)
+const VEIN_JITTER = 0.28;            // random-walk step (fracX / frac of region)
+const VEIN_OPACITY = 0.85;
+const ETCH_WEB = 0.003;              // etch strokes keep off the silhouette edge
+const ETCH_SAMPLES = 16;
+
+// deterministic entropy for etch shapes: reuse continuous rolls, no new draws
+function ornamentRng(p) {
+  const seed = (Math.floor(p.damascus_scale * 977)
+    ^ Math.floor(p.damascus_warp * 65521)
+    ^ Math.floor(p.accent_hue * 131)
+    ^ Math.floor(p.engrave_density * 8191)) >>> 0;
+  return mulberry32(seed);
+}
+
+function ornamentHole(p, plan, cy, hh, reach, headPts) {
+  if (!plan.pierce || p.head_type === 'double_bit') return null;
+  const c = piercePlacement(plan, { eyeR: p.haft_r * EYE_COLLAR_R_MUL, halfH: hh, edgeReach: reach });
+  if (!c) return null;
+  const pts = circlePoints(c.cx, cy + c.cy, c.r, c.r, PIERCE_HOLE_SEGMENTS);
+  // the zoning frame is idealized — a real silhouette (war profile, deep beard)
+  // can still crowd the circle; refuse rather than breach, same null contract
+  // as piercePlacement itself
+  for (const v of pts) {
+    if (!(distanceTo(headPts, v) < -PIERCE_WEB)) return null;
+  }
+  return pts;
+}
+
+function buildBackFluke(p, plan, layout, bounds) {
+  if (!plan.backFluke || p.head_type === 'double_bit') return [];
+  const cy = layout.headY, hh = layout.headHalfH, reach = layout.edgeReach;
+  const len = reach * (FLUKE_REACH_BASE + FLUKE_REACH_SPAN * plan.backFluke.reach);
+  const ang = FLUKE_DROOP_MAX_RAD * plan.backFluke.droop;
+  const root = [0, cy + hh * FLUKE_ROOT_Y_FRAC];
+  const tip = [root[0] - len * Math.cos(ang), root[1] - len * Math.sin(ang)];
+  const spine = bend(root, tip, len * FLUKE_BOW_FRAC);
+  const outline = taper(spine, hh * FLUKE_ROOT_HALF_W_FRAC, FLUKE_TIP_HALF_W);
+  bounds.noteAll(outline);
+  return [{ d: polygonPath(outline), fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.005, opacity: 1, role: 'fluke' }];
+}
+
+function buildPlateCollars(p, plan, layout, bounds) {
+  if (!(plan.plateCollars > 0)) return [];
+  const spine = haftSpine(p);
+  const yBase = layout.headY - layout.headHalfH; // haft-facing edge of the head
+  const layers = [];
+  for (let i = 0; i < plan.plateCollars; i++) {
+    const y = yBase - PLATE_COLLAR_H * 0.5 - i * (PLATE_COLLAR_H + PLATE_COLLAR_GAP);
+    const t = clamp(y / p.haft_len, 0, 1);
+    const band = collar(spine, t, p.haft_r * PLATE_COLLAR_W_MUL, PLATE_COLLAR_H);
+    bounds.noteAll(band);
+    layers.push({ d: polygonPath(band), fill: 'var(--trim)', stroke: 'none', strokeWidth: 0, opacity: 0.95, role: 'collar' });
+  }
+  return layers;
+}
+
+// split a sampled stroke into runs that stay strictly inside the region
+// (region may be a bare outline or pierced rings — distanceTo handles both,
+// so etch strokes vanish over the pierced hole instead of crossing it)
+function trimmedRuns(rawPts, region) {
+  const runs = [];
+  let run = [];
+  for (const pt of rawPts) {
+    if (distanceTo(region, pt) < -ETCH_WEB) run.push(pt);
+    else { if (run.length >= 2) runs.push(run); run = []; }
+  }
+  if (run.length >= 2) runs.push(run);
+  return runs;
+}
+
+function regionBox(region) {
+  const outer = Array.isArray(region[0][0]) ? region[0] : region;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const [x, y] of outer) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return { minX, maxX, minY, maxY };
+}
+
+function buildAxeOrnament(p, plan, region) {
+  const layers = [];
+  if (plan.damascus <= 0 && plan.veins <= 0) return layers;
+  const rng = ornamentRng(p);
+  const box = regionBox(region);
+  const w = box.maxX - box.minX, h = box.maxY - box.minY;
+  if (!(w > 0 && h > 0)) return layers;
+
+  if (plan.damascus > 0) {
+    const K = DAMASCUS_LINES_MIN + Math.round(DAMASCUS_LINES_SPAN * plan.damascus);
+    const opacity = num(DAMASCUS_OPACITY_BASE + DAMASCUS_OPACITY_SPAN * plan.damascus);
+    for (let k = 0; k < K; k++) {
+      const xBase = box.minX + w * (0.15 + 0.7 * (k + 0.5) / K);
+      const phase = rng() * Math.PI * 2;
+      const freq = 2 + 4 * rng();
+      const raw = [];
+      for (let i = 0; i <= ETCH_SAMPLES; i++) {
+        const ty = -1 + 2 * (i / ETCH_SAMPLES);
+        raw.push([xBase + w * DAMASCUS_WOBBLE_AMP * 0.5 * Math.sin(ty * freq + phase), box.minY + h * (i / ETCH_SAMPLES)]);
+      }
+      for (const run of trimmedRuns(raw, region)) {
+        layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.0035, opacity, role: 'damascus' });
+      }
+    }
+  }
+
+  if (plan.veins > 0) {
+    const V = 1 + Math.round(VEIN_COUNT_SPAN * plan.veins);
+    for (let v = 0; v < V; v++) {
+      let x = box.minX + w * (0.25 + 0.5 * rng());
+      let y = box.minY + h * (0.2 + 0.6 * rng());
+      const raw = [[x, y]];
+      let ang = rng() * Math.PI * 2;
+      for (let s = 0; s < 10; s++) {
+        ang += (rng() - 0.5) * 1.4;
+        x += Math.cos(ang) * w * VEIN_JITTER * 0.3;
+        y += Math.sin(ang) * h * VEIN_JITTER * 0.3;
+        raw.push([x, y]);
+      }
+      for (const run of trimmedRuns(raw, region)) {
+        layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--accent)', strokeWidth: 0.0045, opacity: VEIN_OPACITY, role: 'vein' });
+      }
+    }
+  }
+  return layers;
+}
+
+// sword etch: sampled inside-by-construction off the blade width profile (the
+// same idiom the fullers/cross-section lines use), fracX clamped off the edges
+function buildSwordOrnament(p, plan, bladeRoot) {
+  const layers = [];
+  if (plan.damascus <= 0 && plan.veins <= 0) return layers;
+  const rng = ornamentRng(p);
+  const yStart = bladeRoot + 0.03;
+  const yEnd = bladeRoot + p.blade_len * (1 - TIP_ZONE * 1.1);
+  if (yEnd <= yStart) return layers;
+  const line = (fracXAt) => {
+    const pts = [];
+    for (let i = 0; i <= ETCH_SAMPLES; i++) {
+      const t01 = i / ETCH_SAMPLES;
+      const y = yStart + (yEnd - yStart) * t01;
+      const bt = clamp((y - bladeRoot) / p.blade_len, 0, 1);
+      const off = p.blade_curve * p.blade_len * Math.pow(bt, CURVE_EXP);
+      const wHalf = bladeWidthAt(p, bt);
+      pts.push([off + clamp(fracXAt(t01), -0.82, 0.82) * wHalf, y]);
+    }
+    return pts;
+  };
+
+  if (plan.damascus > 0) {
+    const K = DAMASCUS_LINES_MIN + Math.round(DAMASCUS_LINES_SPAN * plan.damascus);
+    const opacity = num(DAMASCUS_OPACITY_BASE + DAMASCUS_OPACITY_SPAN * plan.damascus);
+    for (let k = 0; k < K; k++) {
+      const base = -0.72 + 1.44 * (k + 0.5) / K;
+      const phase = rng() * Math.PI * 2;
+      const freq = 2 + 4 * rng();
+      const pts = line(t => base + DAMASCUS_WOBBLE_AMP * Math.sin(t * freq * Math.PI + phase));
+      layers.push({ d: polylinePath(pts), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.0035, opacity, role: 'damascus' });
+    }
+  }
+
+  if (plan.veins > 0) {
+    const V = 1 + Math.round(VEIN_COUNT_SPAN * plan.veins);
+    for (let v = 0; v < V; v++) {
+      let frac = -0.5 + rng();
+      const pts = line(() => { frac += (rng() - 0.5) * VEIN_JITTER; return frac; });
+      layers.push({ d: polylinePath(pts), fill: 'none', stroke: 'var(--accent)', strokeWidth: 0.0045, opacity: VEIN_OPACITY, role: 'vein' });
+    }
+  }
+  return layers;
+}
+
+function buildAxe(p, palette, plan, bounds) {
   const layout = deriveLayout(p);
   const layers = [];
   layers.push(...buildHaft(p, bounds));
-  layers.push(...buildHead(p, layout, bounds));
+  layers.push(...buildPlateCollars(p, plan, layout, bounds));
+  layers.push(...buildBackFluke(p, plan, layout, bounds));
+  layers.push(...buildHead(p, layout, plan, bounds));
   layers.push(...buildLangets(p, layout, bounds));
   return layers;
 }
@@ -770,6 +1000,7 @@ function buildAxe(p, palette, bounds) {
 export function buildWeapon(p) {
   const bounds = new Bounds();
   const palette = derivePalette(p);
-  const layers = p.weapon_class === 'axe' ? buildAxe(p, palette, bounds) : buildSword(p, palette, bounds);
-  return { kind: p.weapon_class, layers, bounds: bounds.toJSON() };
+  const plan = resolveOrnament(p);
+  const layers = p.weapon_class === 'axe' ? buildAxe(p, palette, plan, bounds) : buildSword(p, palette, plan, bounds);
+  return { kind: p.weapon_class, tier: plan.tier, layers, bounds: bounds.toJSON() };
 }

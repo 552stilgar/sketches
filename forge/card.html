@@ -53,6 +53,7 @@
   .card-frame { stroke-width: 1.5; }
   .card-hash { font-size: 9px; fill: var(--ink-dim); font-family: ui-monospace, monospace; }
   .card-kind { font-size: 8px; fill: var(--ink-dim); letter-spacing: 0.12em; }
+  .card-tier { font-size: 8px; letter-spacing: 0.14em; fill: var(--ink-dim); }
   #stage .card-hash { font-size: 11px; }
   #stage .card-kind { font-size: 10px; }
   #empty-note { padding: 0 1.25rem; color: var(--ink-dim); font-size: 0.8rem; }
@@ -140,7 +141,7 @@ function viewTransform(bounds) {
 
 function cardSvg(token, { big = false } = {}) {
   const params = paramsFromToken(token);
-  const { kind, layers, bounds } = buildWeapon(params);
+  const { kind, tier, layers, bounds } = buildWeapon(params);
   const palette = derivePalette(params);
   const varMap = varMapFor(palette);
   const transform = viewTransform(bounds);
@@ -148,17 +149,22 @@ function cardSvg(token, { big = false } = {}) {
   const paths = layers.map(l => {
     const fill = resolveColor(l.fill, varMap);
     const stroke = resolveColor(l.stroke, varMap);
-    return `<path d="${l.d}" fill="${fill}" stroke="${stroke}" stroke-width="${l.strokeWidth}" opacity="${l.opacity}"/>`;
+    const fillRule = l.fillRule ? ` fill-rule="${l.fillRule}"` : '';
+    return `<path d="${l.d}" fill="${fill}"${fillRule} stroke="${stroke}" stroke-width="${l.strokeWidth}" opacity="${l.opacity}"/>`;
   }).join('');
   const hashLabel = escapeText(token);
   const kindLabel = kind.toUpperCase();
+  // ornament tier badge — plain stays quiet, worked/ornate announce themselves
+  const tierBadge = tier === 'plain' ? '' :
+    `<text class="card-tier" x="${CARD_W - 10}" y="16" text-anchor="end"${
+      tier === 'ornate' ? ` style="fill:${hslCss(palette.accent)}"` : ''}>${tier.toUpperCase()}</text>`;
   return `<svg viewBox="0 0 ${CARD_W} ${CARD_H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${kindLabel} ${hashLabel}">
     <rect class="card-bg" x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="${CARD_RADIUS}"/>
     <rect class="card-bg-inner" x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}"/>
     <g transform="${transform}">${paths}</g>
     <rect class="card-frame" x="2" y="2" width="${CARD_W - 4}" height="${CARD_H - 4}" rx="${CARD_RADIUS - 1}"
       fill="none" stroke="${borderColor}"/>
-    <text class="card-kind" x="10" y="16">${kindLabel}</text>
+    <text class="card-kind" x="10" y="16">${kindLabel}</text>${tierBadge}
     <text class="card-hash" x="${CARD_W / 2}" y="${CARD_H - 9}" text-anchor="middle">${hashLabel}</text>
   </svg>`;
 }

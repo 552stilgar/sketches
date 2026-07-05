@@ -176,6 +176,7 @@ import {
 import {
   groupGenesBySection, rollGeneValue, rerollUnlocked,
 } from './editor-logic.mjs';
+import { resolveOrnament, packOrnamentUniforms } from './ornament.mjs';
 
 const CFG = {
   gridCount: 12,
@@ -267,6 +268,12 @@ uniform float u_family, u_gripMat, u_guardExt, u_engraveOn, u_engraveDens;
 
 // v5 presentation register (not DNA): 0 museum, 1 loot-card, 2 stylized
 uniform float u_register;
+
+// v7 ornament plan (ornament.mjs: resolveOrnament -> packOrnamentUniforms;
+// unpackOrnamentUniforms is the reference reader for these slots)
+uniform float u_ornTier, u_ornPierceOn, u_ornPierceT, u_ornPierceR;
+uniform float u_ornFlukeOn, u_ornFlukeReach, u_ornFlukeDroop;
+uniform float u_ornPlateCollars, u_ornDamascus, u_ornVeins, u_ornEdgeLight;
 
 const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
 
@@ -611,6 +618,20 @@ vec2 mapAxe(vec3 p) {
     res = opU(res, vec2(dButt, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
   }
 
+  // v7 ornament: stacked plate collars under the head (card: buildPlateCollars —
+  // same 0.018 band height / 0.014 gap / 1.45 width vocabulary)
+  if (u_ornPlateCollars > 0.5) {
+    for (int ci = 0; ci < 3; ci++) {
+      if (float(ci) < u_ornPlateCollars - 0.5) {
+        float cyy = u_headY - u_headHalfH - 0.009 - float(ci) * 0.032;
+        float ctt = clamp(cyy / u_haftLen, 0.0, 1.0);
+        float chr = u_haftR * (1.0 + 0.18 * (1.0 - ctt));
+        float dCol = sdCylY(q - vec3(0.0, cyy, 0.0), 0.009, chr * 1.45);
+        res = opU(res, vec2(dCol, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+      }
+    }
+  }
+
   // -- head: disc-cut wedge, optionally mirrored (double bit) --
   vec3 h = p - vec3(0.0, u_headY, 0.0);
   float side = h.x < 0.0 ? -1.0 : 1.0;                 // which bit, retained through the mirror
@@ -658,8 +679,36 @@ vec2 mapAxe(vec3 p) {
   float cheekBow = 0.0;
   if (u_cheekProfile > 1.5)      cheekBow =  thick * 0.60 * bowFall;   // convex
   else if (u_cheekProfile > 0.5) cheekBow = -thick * 0.50 * bowFall;   // concave
+  // v7 ornament: pierced cheek cutout — the same placement formula as
+  // piercePlacement() (ornament.mjs), so both media cut the same hole.
+  // Skipped on double-bit heads in BOTH media (no single eye-to-edge span).
   float dHead = max(dBody, abs(h.z) - (thick + cheekBow));
+  if (u_ornPierceOn > 0.5 && !isDoubleBit) {
+    float eyeR = u_haftR * 1.9;
+    float pxMax = edgeReachA * 0.82;
+    float pr = min(u_ornPierceR * halfH * 2.0, halfH * 0.75);
+    float plo = eyeR + 0.008 + pr;
+    float phi = pxMax - pr;
+    if (pr > 0.004 && plo <= phi) {
+      float pcx = plo + (phi - plo) * u_ornPierceT;
+      float dPierce = length(h.xy - vec2(pcx, 0.0)) - pr;
+      dHead = max(dHead, -dPierce);
+    }
+  }
   res = opU(res, vec2(dHead * 0.8, MAT_STEEL));
+
+  // v7 ornament: rear fluke — a drooping back spike (card: buildBackFluke,
+  // same reach 0.5+0.9r / droop 0.7rad / root-y 0.25 / root-w 0.20 vocabulary)
+  if (u_ornFlukeOn > 0.5 && !isDoubleBit) {
+    float fr = edgeReachA * (0.5 + 0.9 * u_ornFlukeReach);
+    float fa = 0.7 * u_ornFlukeDroop;
+    vec2 fdir = vec2(-cos(fa), -sin(fa));
+    vec3 fh = h - vec3(0.0, halfH * 0.25, 0.0);
+    float ft = clamp(dot(fh.xy, fdir) / fr, 0.0, 1.0);
+    vec2 fnear = fdir * (ft * fr);
+    float dFluke = length(vec2(length(fh.xy - fnear), fh.z)) - mix(halfH * 0.20, 0.003, ft);
+    res = opU(res, vec2(dFluke, MAT_STEEL));
+  }
 
   // -- eye collar --
   float dEye = sdCylY(h, halfH * 0.5, u_haftR * 1.9);
@@ -949,8 +998,21 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
         float band = sin(dot(dc, vec2(u_damScale * 0.9, u_damScale * 0.5))
                        + (wp.x - 0.5) * u_damWarp * 22.0 + (wp.y - 0.5) * 8.0);
         float dam = smoothstep(-0.7, 0.7, band);
-        albedo *= mix(0.78, 1.12, dam);
+        // v7 ornament: etch depth follows the plan's damascus intensity —
+        // etch = 1.0 reproduces the legacy contrast, ornate rolls cut deeper
+        float etch = mix(0.7, 1.35, clamp(u_ornDamascus, 0.0, 1.0));
+        albedo *= mix(1.0 - 0.22 * etch, 1.0 + 0.12 * etch, dam);
         rough = clamp(mix(rough * 0.8, rough * 1.3, dam), 0.05, 0.7);
+        // v7 ornament: gold veins gild a masked subset of band seams
+        // (kintsugi reading — ornate tier only, u_ornVeins is 0 elsewhere)
+        if (u_ornVeins > 0.0) {
+          float seam = 1.0 - abs(band);
+          float vmask = smoothstep(1.0 - u_ornVeins * 0.5, 1.0, fbm(dc * 3.7 + 11.0) * 1.35);
+          float vein = smoothstep(0.90, 0.985, seam) * vmask;
+          albedo = mix(albedo, u_accentCol * 1.5, vein);
+          rough = mix(rough, 0.18, vein);
+          metal = mix(metal, 0.95, vein);
+        }
       }
     } else {                              // blued: oxidized blue-black, tight sheen
       // bronze doesn't blue — it antiques to a browned dark patina instead
@@ -967,8 +1029,11 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
     }
 
     // -- curvature wear: convex edges polish bright, hollows collect grime --
+    // v7 ornament: edge-light — the plan can polish edges independently of
+    // wear (baseline 0.35 = legacy wear-only behavior)
     float curv = calcCurv(pos);
-    float edgeWear = smoothstep(3.0, 26.0, curv) * u_wear;
+    float edgePolish = max(u_wear, (u_ornEdgeLight - 0.35) * 1.4);
+    float edgeWear = smoothstep(3.0, 26.0, curv) * edgePolish;
     float grime = smoothstep(3.0, 18.0, -curv) * (0.25 + 0.75 * u_wear);
     rough = mix(rough, 0.10, edgeWear);
     albedo = mix(albedo, albedo * 0.5, grime * 0.55);
@@ -1447,6 +1512,8 @@ function createRenderer(canvas, { progressive = false } = {}) {
     f('u_guardExt', GUARD_EXTS.indexOf(p.guard_ext));
     f('u_engraveOn', M.engraveOn);
     f('u_engraveDens', M.engraveDensity);
+    const orn = packOrnamentUniforms(resolveOrnament(p));
+    for (const k in orn) f(k, orn[k]);
     f('u_register', state.register);
     const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
     v3('u_lightDir', [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)]);

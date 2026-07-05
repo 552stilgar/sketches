@@ -213,6 +213,69 @@ test('D2b: grip half-width at mid-grip orders waisted < straight < barrel', () =
   assert.ok(straight < barrel, `straight half-width ${straight} must be < barrel ${barrel} at mid-grip`);
 });
 
+// ---------------------------------------------------------------------------
+// E — ornament wiring (endgame-axe slice). buildWeapon consumes the ornament
+// plan (resolveOrnament) so the card medium renders tier/pierce/fluke/collars/
+// damascus/veins/edge-light. Ornament layers carry a `role` tag so craft-loop
+// directives ("fewer veins") map onto named layer groups, and so these tests
+// don't have to fingerprint stroke widths.
+// ---------------------------------------------------------------------------
+
+test('E1: ornate single-bit axe pierces the cheek with an evenodd ring pair', () => {
+  const rng = mulberry32(0xacce55);
+  let pierced = 0, checked = 0;
+  for (let i = 0; i < 400 && pierced < 8; i++) {
+    const p = { ...paramsFromHash(randHex(8, rng)), weapon_class: 'axe', steel_finish: 'damascus', accent_on: 1 };
+    if (p.head_type === 'double_bit') continue;
+    checked++;
+    const w = buildWeapon(p);
+    assert.equal(w.tier, 'ornate');
+    const ringLayers = w.layers.filter(l => l.fillRule === 'evenodd');
+    if (ringLayers.length === 0) continue; // placement may legitimately refuse (small head)
+    pierced++;
+    for (const l of ringLayers) {
+      assert.equal((l.d.match(/M/g) || []).length, 2, 'pierced head must carry exactly two subpaths');
+      assert.equal((l.d.match(/Z/g) || []).length, 2, 'both subpaths must close');
+    }
+    assert.deepEqual(buildWeapon(p), w, 'pierced axe must stay deterministic');
+  }
+  assert.ok(pierced >= 8, `need a real pierced sample (got ${pierced}/${checked} checked)`);
+});
+
+test('E2: ornament tiers add role-tagged layers — ornate > plain on the same base genes', () => {
+  for (const weapon_class of ['sword', 'axe']) {
+    const base = { ...paramsFromHash('8b96b1b9'), weapon_class };
+    const plain = buildWeapon({ ...base, steel_finish: 'brushed', accent_on: 0 });
+    const ornate = buildWeapon({ ...base, steel_finish: 'damascus', accent_on: 1 });
+    assert.equal(plain.tier, 'plain', `${weapon_class} brushed/no-accent must resolve plain`);
+    assert.equal(ornate.tier, 'ornate', `${weapon_class} damascus+accent must resolve ornate`);
+    assert.ok(ornate.layers.length > plain.layers.length,
+      `${weapon_class}: ornate must add layers (${ornate.layers.length} vs ${plain.layers.length})`);
+    const roles = new Set(ornate.layers.map(l => l.role).filter(Boolean));
+    assert.ok(roles.has('damascus'), `${weapon_class}: ornate must carry damascus etch layers`);
+    assert.ok(roles.has('vein'), `${weapon_class}: ornate must carry gold vein layers`);
+    // plain carries no ornament-role layers at all
+    assert.ok(plain.layers.every(l => !l.role), `${weapon_class}: plain must carry zero ornament layers`);
+  }
+});
+
+test('E3: ornate axe gets back fluke + stacked plate collars (single-bit heads)', () => {
+  const rng = mulberry32(0xf1ee7);
+  let seen = 0;
+  for (let i = 0; i < 200 && seen < 10; i++) {
+    const p = { ...paramsFromHash(randHex(8, rng)), weapon_class: 'axe', steel_finish: 'damascus', accent_on: 1 };
+    if (p.head_type === 'double_bit') continue;
+    seen++;
+    const w = buildWeapon(p);
+    const roles = w.layers.map(l => l.role).filter(Boolean);
+    assert.ok(roles.includes('fluke'), 'every ornate single-bit axe must grow a back fluke');
+    const collars = roles.filter(r => r === 'collar').length;
+    assert.ok(collars >= 2 && collars <= 3, `ornate haft must stack 2-3 plate collars (got ${collars})`);
+    assert.ok(roles.includes('edge-light'), 'ornate axe must carry the edge-light stroke');
+  }
+  assert.ok(seen >= 10, `need a real ornate axe sample (got ${seen})`);
+});
+
 test('D3: collar-derived layers (haft butt cap, grip ferrule) stay within a local neighborhood of their anchor', () => {
   const base = paramsFromHash('8b96b1b9');
 
