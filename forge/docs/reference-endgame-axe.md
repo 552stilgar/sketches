@@ -142,6 +142,27 @@ wrap visible, PT still converges fast and reads correctly at 6spp.
 TUNING OPEN (Usul's GPU eyes): still exposure/GAIN balance, STILL_POSE zoom
 fit per format, paint-over strength.
 
+## Windows/D3D verdict (2026-07-05, PC headless probes — the REAL root cause)
+Usul's freezes/crashes reproduced and isolated on his own hardware via ssh +
+headless Chrome (forge-compile-ab.ps1, DOM title markers):
+- **ANGLE d3d11 (Chrome's Windows default): the GPU process crashes outright**
+  (exit_code=34, twice within 4s of page load) on the SCENE shader. Every
+  symptom tonight cascades from this: freeze -> context loss -> Chrome
+  blocklists hardware -> software WebGL -> stalls/no-first-tick.
+- **ANGLE gl: no crash**; still pipeline runs, watchdog + disclosed fallback
+  behave. (PT completion unproven under virtual-time compression — needs a
+  real-time probe or eyes.)
+- Honest note: the 3D may NEVER have worked on Usul's Windows Chrome — all
+  prior verification was VPS-headless (SwiftShader compiles differently).
+Defensive fixes shipped along the way (all real, all keep): 1e9-mix NaN field
+fix, preview band tiling, PT tiles 24k, fence-gated submission, paced
+thumbnails, opt-in card render, context-lost disclosure, no-store dev server.
+**NEXT SLICE (top of queue): restructure SCENE for D3D's compiler** — split
+per-weapon-class programs (map() halves), replace full-map calls in shadow/AO
+loops with a cheap proxy SDF, cut inline pressure; iterate compile probes
+headlessly against the PC (title markers report state) until d3d11 survives.
+Interim craft-loop workaround: a Chrome shortcut with --use-angle=gl.
+
 ## Slice queue (each lands in BOTH media, eyes-gated between slices)
 1. **Head silhouette craft pass** — craft-geo curves for the head: horns,
    beard hook, cusped eye bracket, composed fluke+pierce back structure,
