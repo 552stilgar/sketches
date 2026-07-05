@@ -2292,6 +2292,7 @@ function runStill(spec) {
     const payload = { type: 'forge-still', token: state.token, mode, spp: sppDone,
       elapsedMs: Math.round(performance.now() - t0), dataURL: stage.canvas.toDataURL('image/png') };
     window.__forgeStill = payload;
+    document.title = `still:${payload.mode}:${payload.spp}:${payload.elapsedMs}`; // DOM-visible status for headless probes (--dump-dom)
     if (window.parent !== window) window.parent.postMessage(payload, '*');
   };
   stage.stop();
@@ -2303,6 +2304,7 @@ function runStill(spec) {
   let lastN = 0;
   stage.begin(state.params, POSE, w, h, n => {
     lastN = n;
+    document.title = `still:progress:${n}:${Math.round(performance.now() - t0)}`;
     // live telemetry so the card can show progress + the loop can be tuned
     if (n === 1 || n % 10 === 0) {
       if (window.parent !== window) window.parent.postMessage({
