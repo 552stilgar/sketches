@@ -177,6 +177,7 @@ import {
   groupGenesBySection, rollGeneValue, rerollUnlocked,
 } from './editor-logic.mjs';
 import { resolveOrnament, packOrnamentUniforms } from './ornament.mjs';
+import { applyFormat } from './format.mjs';
 
 const CFG = {
   gridCount: 12,
@@ -1424,7 +1425,8 @@ function createRenderer(canvas, { progressive = false } = {}) {
   gl.enableVertexAttribArray(0);
   gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-  function setScene(U, p, pose, w, h) {
+  function setScene(U, pRaw, pose, w, h) {
+    const p = applyFormat(pRaw); // size format first — every uniform below reads scaled genes
     const f = (name, v) => U[name] != null && gl.uniform1f(U[name], v);
     const v3 = (name, a) => U[name] != null && gl.uniform3f(U[name], a[0], a[1], a[2]);
     const L = deriveLayout(p);

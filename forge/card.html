@@ -141,7 +141,7 @@ function viewTransform(bounds) {
 
 function cardSvg(token, { big = false } = {}) {
   const params = paramsFromToken(token);
-  const { kind, tier, layers, bounds } = buildWeapon(params);
+  const { kind, tier, format, layers, bounds } = buildWeapon(params);
   const palette = derivePalette(params);
   const varMap = varMapFor(palette);
   const transform = viewTransform(bounds);
@@ -153,7 +153,8 @@ function cardSvg(token, { big = false } = {}) {
     return `<path d="${l.d}" fill="${fill}"${fillRule} stroke="${stroke}" stroke-width="${l.strokeWidth}" opacity="${l.opacity}"/>`;
   }).join('');
   const hashLabel = escapeText(token);
-  const kindLabel = kind.toUpperCase();
+  // the size format is the loot-facing name (DAGGER, GREATAXE...)
+  const kindLabel = (format || kind).toUpperCase();
   // ornament tier badge — plain stays quiet, worked/ornate announce themselves
   const tierBadge = tier === 'plain' ? '' :
     `<text class="card-tier" x="${CARD_W - 10}" y="16" text-anchor="end"${

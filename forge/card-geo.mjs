@@ -21,6 +21,7 @@
 import { clamp, deriveLayout, mulberry32 } from './params.mjs';
 import { bend, sweep, taper, collar, pierce, toPath, distanceTo } from './craft-geo.mjs';
 import { resolveOrnament, piercePlacement } from './ornament.mjs';
+import { applyFormat } from './format.mjs';
 
 // ---------------------------------------------------------------------------
 // numeric hygiene + path-building primitives
@@ -997,10 +998,11 @@ function buildAxe(p, palette, plan, bounds) {
 // public entry point
 // ---------------------------------------------------------------------------
 
-export function buildWeapon(p) {
+export function buildWeapon(pRaw) {
+  const p = applyFormat(pRaw); // size format first — everything downstream reads scaled genes
   const bounds = new Bounds();
   const palette = derivePalette(p);
   const plan = resolveOrnament(p);
   const layers = p.weapon_class === 'axe' ? buildAxe(p, palette, plan, bounds) : buildSword(p, palette, plan, bounds);
-  return { kind: p.weapon_class, tier: plan.tier, layers, bounds: bounds.toJSON() };
+  return { kind: p.weapon_class, tier: plan.tier, format: p._format, layers, bounds: bounds.toJSON() };
 }
