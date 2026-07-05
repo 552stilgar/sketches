@@ -1632,13 +1632,21 @@ function createRenderer(canvas, { progressive = false } = {}) {
     gl.attachShader(prog, vs); gl.attachShader(prog, fs);
     gl.bindAttribLocation(prog, 0, 'a_pos');
     gl.linkProgram(prog);
-    const entry = { prog: null, U: null, ready: false, pending: null };
+    const entry = { prog: null, U: null, ready: false, failed: false, pending: null };
+    // v11: COMPLETION_STATUS_KHR is unreliable on some driver/ANGLE combos —
+    // it can just never flip true even once the real compile has finished,
+    // which looped "compiling shader..." forever (Usul's report on real
+    // d3d11 hardware). Cap the async wait, then force the one guaranteed-
+    // correct synchronous check regardless of what the extension says.
+    const t0 = performance.now();
+    const MAX_ASYNC_WAIT_MS = 8000;
     entry.pending = () => {
-      if (par && !gl.getProgramParameter(prog, gl.COMPLETION_STATUS_KHR)) return true;
+      const asyncPending = par && !gl.getProgramParameter(prog, gl.COMPLETION_STATUS_KHR);
+      if (asyncPending && (performance.now() - t0) < MAX_ASYNC_WAIT_MS) return true;
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
         console.error('forge: preview program link failed (' + cls + ') —',
           gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(prog));
-        entry.pending = null;
+        entry.failed = true; entry.pending = null;
         return false;
       }
       const U = {};
@@ -1690,9 +1698,15 @@ function createRenderer(canvas, { progressive = false } = {}) {
       return { prog: job.prog, U };
     };
     const entry = { pt: null, disp: null, pending: null };
+    // v11: same COMPLETION_STATUS_KHR unreliability guard as ensurePreview —
+    // cap the async wait so an extension that never reports done can't loop
+    // the retry forever; force the sync check after the cap either way.
+    const ptT0 = performance.now();
+    const PT_MAX_ASYNC_WAIT_MS = 8000;
     entry.pending = () => {
-      if (par && !jobs.every(j => gl.getProgramParameter(j.prog, gl.COMPLETION_STATUS_KHR))) return true;
-      // ready (or no ext: first call pays the sync wait — but off the init path)
+      const asyncPending = par && !jobs.every(j => gl.getProgramParameter(j.prog, gl.COMPLETION_STATUS_KHR));
+      if (asyncPending && (performance.now() - ptT0) < PT_MAX_ASYNC_WAIT_MS) return true;
+      // ready (or forced sync check past the cap — pays the wait once, here)
       entry.pt = finish(jobs[0]);
       entry.disp = entry.pt ? finish(jobs[1]) : null;
       if (!entry.disp) entry.pt = null;
@@ -1834,8 +1848,8 @@ function createRenderer(canvas, { progressive = false } = {}) {
   function render(p, pose, w, h) {
     stop();
     const preview = ensurePreview(p.weapon_class === 'axe' ? 'axe' : 'sword');
-    if (preview.pending && preview.pending()) return false;  // first compile for this class still in flight — non-blocking, caller retries
-    if (!preview.ready) return false;  // link failed — disclosed by console.error above
+    if (preview.pending && preview.pending()) return 'pending';  // first compile for this class still in flight — non-blocking, caller retries
+    if (!preview.ready) return preview.failed ? 'failed' : 'pending';  // link failed (disclosed by console.error above) vs transiently not-yet-ready
     canvas.width = w; canvas.height = h;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, w, h);
@@ -2003,9 +2017,17 @@ function renderStage() {
   const capEl = document.getElementById('stage-hash');
   // v10: the first compile of a weapon class's preview shader can take real
   // time on some drivers (10-60s reported on real ANGLE-d3d11 hardware) —
-  // it's background-compiled now (ensurePreview), so render() returns false
-  // instead of blocking. Poll without freezing the tab; draw once ready.
-  if (!stage.render(state.params, state.pose, w, h)) {
+  // it's background-compiled now (ensurePreview), so render() reports its
+  // status instead of blocking. Poll without freezing the tab; draw once
+  // ready. 'failed' (a real link error, capped after v11's async-wait
+  // guard) is terminal — never retry that state, or it loops forever
+  // showing "compiling..." for something that will never compile.
+  const status = stage.render(state.params, state.pose, w, h);
+  if (status === 'failed') {
+    capEl.textContent = cap + ' · ⚠ shader failed to compile — see console; try reloading or --use-angle=gl';
+    return;
+  }
+  if (status !== true) {
     capEl.textContent = cap + ' · compiling shader…';
     previewRetry = setTimeout(renderStage, 200);
     return;
@@ -2401,13 +2423,18 @@ function runStill(spec) {
     document.title = `still:${payload.mode}:${payload.spp}:${payload.elapsedMs}`; // DOM-visible status for headless probes (--dump-dom)
     if (window.parent !== window) window.parent.postMessage(payload, '*');
   };
-  // v10: render() is a background-compiled first draw per class now (can be
-  // pending, not blocking) — wait for it instead of assuming the canvas is
-  // already painted, or a slow first compile would ship a blank "preview".
+  // v10/v11: render() is a background-compiled first draw per class now
+  // (status: true / 'pending' / 'failed', never blocking) — wait for it
+  // instead of assuming the canvas is already painted, or a slow first
+  // compile would ship a blank "preview". 'pending' is capped (v11's
+  // async-wait guard), so this can never spin forever; 'failed' proceeds
+  // anyway (nothing left to wait for) — the still-mode watchdog below is
+  // the hard backstop either way.
   const renderOrRetry = (cb) => {
     if (done) return;
-    if (stage.render(state.params, POSE, w, h)) cb();
-    else setTimeout(() => renderOrRetry(cb), 100);
+    const status = stage.render(state.params, POSE, w, h);
+    if (status === 'pending') setTimeout(() => renderOrRetry(cb), 100);
+    else cb();
   };
   stage.stop();
   renderOrRetry(() => {
