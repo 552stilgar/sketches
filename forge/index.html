@@ -720,7 +720,9 @@ vec2 mapAxe(vec3 p) {
       float nick = smoothstep(0.75, 1.0, vnoise(vec2(h.y * 14.0, 2.3)));
       reachY -= nick * (u_wear - 0.55) * halfH * 0.18;
     }
-    float dEdgeCut = (h.x - reachY) * 0.7;   // heightfield cut, gradient-safe scale
+    float dEdgeCut = (h.x - reachY) * 0.5;   // heightfield cut, gradient-safe scale
+                                             // (0.5: slice-6 belly/recurve steepened the
+                                             // profile — 0.7 could overshoot at horn tips)
     float vLim = max(h.y - halfH, yBot - h.y);
     dBody = max(dEdgeCut, max(vLim, -h.x - u_haftR * 1.6));
     // gothic eye cusps: scallop bites along the blade root (card: CUSP_DEPTH_FRAC)

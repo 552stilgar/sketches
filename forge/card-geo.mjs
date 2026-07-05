@@ -575,8 +575,12 @@ function buildSword(p, palette, plan, bounds) {
   // back-to-front: pommel, grip, guard, blade body, blade line-work on top
   layers.push(...buildPommel(p, layout.pommelY, bounds));
   layers.push(...buildGrip(p, -p.guard_thick / 2, layout.gripBot, bounds));
+  // slice 7: the guard shades the grip top below it
+  layers.push(aoPool(0, -p.guard_thick * 0.9 - 0.008, p.grip_r * 1.3, 0.010, 0.3));
   layers.push(...buildGuard(p, palette, bounds));
   layers.push(buildBlade(p, layout.bladeRoot, bounds));
+  // slice 7: ...and drops a contact shadow onto the blade root above it
+  layers.push(aoPool(p.blade_curve * p.blade_len * 0.001, layout.bladeRoot + 0.014, p.blade_w * 0.55, 0.013, 0.3));
   layers.push(...buildCrossSectionLines(p, layout.bladeRoot, palette));
   layers.push(...buildFullers(p, layout.bladeRoot));
   layers.push(...buildEdgeBevel(p, layout.bladeRoot));
@@ -795,6 +799,25 @@ function buildCraftHead(p, layout, plan, hp, bounds) {
     const rim = outline.map(([x, y]) => [rcen[0] + (x - rcen[0]) * 0.965, rcen[1] + (y - rcen[1]) * 0.965]);
     rim.push(rim[0]);
     layers.push({ d: polylinePath(rim), fill: 'none', stroke: 'var(--blade-highlight)', strokeWidth: 0.0025, opacity: 0.45, role: 'rim' });
+
+    // slice 7: form shading — the plate reads as a curved steel sheet, not a
+    // flat fill. A broad soft core shadow hugs the eye side, a broad soft
+    // sheen band runs down the mid-cheek, and a bright glint rides the bevel.
+    layers.push({
+      d: polylinePath([[hh * 0.14, cy + hh * 0.70], [hh * 0.11, cy - hh * 0.65]]),
+      fill: 'none', stroke: 'var(--form-shade)', strokeWidth: num(hh * 0.34), opacity: 0.30,
+      role: 'form', filter: 'softer',
+    });
+    layers.push({
+      d: polylinePath([[R * 0.52, cy + hh * 0.62], [R * 0.46, cy - hh * 0.55]]),
+      fill: 'none', stroke: 'var(--form-light)', strokeWidth: num(hh * 0.24), opacity: 0.10,
+      role: 'form', filter: 'softer',
+    });
+    const g0 = Math.floor(bevelEdge.length * 0.60), g1 = Math.ceil(bevelEdge.length * 0.86);
+    layers.push({
+      d: polylinePath(bevelEdge.slice(g0, g1).map(([x, y]) => [x * (1 - hp.bevelBand * 0.35), y])),
+      fill: 'none', stroke: 'var(--form-light)', strokeWidth: 0.0045, opacity: 0.85, role: 'glint',
+    });
   }
 
   if (plan.tier !== 'plain') {
@@ -833,6 +856,8 @@ function buildRingFluke(p, plan, cy, hh, bounds) {
   const rings = pierce(circlePoints(bcx, bcy, Ro, Ro, 28), circlePoints(bcx, bcy, Ri, Ri, 20));
   bounds.noteAll(rings[0]);
   layers.push({ d: toPath(rings), fillRule: 'evenodd', ...steel, role: 'back', outline: rings });
+  // slice 7: the web behind the ring collects shadow where it meets the plate
+  layers.push(aoPool(bcx + Ri + 0.028, bcy, 0.022, Ro * 0.55, 0.26));
 
   const reachF = hh * (RING_SPIKE_REACH_BASE + RING_SPIKE_REACH_SPAN * (plan.backFluke ? plan.backFluke.reach : 0.5));
   for (const [angDeg, mul, rootW] of [[118, 1.0, 0.15], [242, 0.55, 0.11]]) {
@@ -1030,6 +1055,22 @@ function buildBackFluke(p, plan, layout, bounds) {
   return [{ d: polygonPath(outline), fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.005, opacity: 1, role: 'fluke' }];
 }
 
+// -- slice 7: depth pass (drawings -> object) ---------------------------------
+// Contact-shadow (AO) pools at every joint, form shading on the head plate,
+// bevel glint, interleaved fine damascus octave, vein bloom. AO is a PHYSICAL
+// cue and renders at every tier; form/glint/bloom stay tier-dressed. Layers
+// carry `filter: 'soft'` -> card.html maps it to a gaussian-blur filter.
+const AO_OPACITY = 0.34;
+const AO_SEGMENTS = 16;
+
+function aoPool(cx, cy, rx, ry, opacity = AO_OPACITY) {
+  return {
+    d: polygonPath(circlePoints(cx, cy, rx, ry, AO_SEGMENTS)),
+    fill: 'var(--ao)', stroke: 'none', strokeWidth: 0, opacity: num(opacity),
+    role: 'ao', filter: 'soft',
+  };
+}
+
 const RIVET_R = 0.0055;
 
 function rivet(cx, cy) {
@@ -1049,6 +1090,9 @@ function buildPlateCollars(p, plan, layout, bounds) {
     const t = clamp(y / p.haft_len, 0, 1);
     const band = collar(spine, t, p.haft_r * PLATE_COLLAR_W_MUL, PLATE_COLLAR_H);
     bounds.noteAll(band);
+    // slice 7: each collar drops a contact shadow onto the haft below it
+    const cb = spine.evalAt(clamp((y - PLATE_COLLAR_H * 0.9) / p.haft_len, 0, 1));
+    layers.push(aoPool(cb[0], cb[1], p.haft_r * 1.5, 0.008, 0.28));
     layers.push({ d: polygonPath(band), fill: 'var(--trim)', stroke: 'none', strokeWidth: 0, opacity: 0.95, role: 'collar' });
     // slice 5: a rivet on each shoulder of every plate collar
     const c = spine.evalAt(t);
@@ -1140,6 +1184,8 @@ function growVeins(rng, region, starts, stepLen, plan) {
   const layers = [];
   const emit = (raw, wFrac) => {
     for (const run of trimmedRuns(raw, region)) {
+      // slice 7: bloom underlay — hot metal glows into the surrounding steel
+      layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--vein)', strokeWidth: num(0.016 * wFrac + 0.004), opacity: 0.12, role: 'vein', filter: 'soft' });
       layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--vein)', strokeWidth: num(0.006 * wFrac + 0.002), opacity: 0.4, role: 'vein' });
       layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--vein-core)', strokeWidth: num(0.003 * wFrac + 0.001), opacity: 0.9, role: 'vein' });
     }
@@ -1194,6 +1240,24 @@ function buildAxeOrnament(p, plan, region) {
       raw.push(raw[0]); // close the contour before trimming
       for (const run of trimmedRuns(raw, region)) {
         layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--damascus)', strokeWidth: 0.0028, opacity, role: 'damascus' });
+      }
+    }
+    // slice 7, octave 2: interleaved half-step contours at half strength —
+    // the fine grain between the main bands (reference: fingerprint density)
+    for (let k = 1; k <= K; k++) {
+      const f = 1 - ((k - 0.5) / (K + 1)) * DAMASCUS_CONTOUR_SHRINK;
+      const phase = rng() * Math.PI * 2;
+      const freq = 2 + Math.floor(rng() * 2);
+      const wob = DAMASCUS_CONTOUR_WOB * 0.6 * (0.5 + rng());
+      const raw = outer.map(([x, y], i) => {
+        const dx = x - cen[0], dy = y - cen[1];
+        const m = Math.hypot(dx, dy) || 1e-6;
+        const wobble = wob * Math.sin((i / outer.length) * Math.PI * 2 * freq + phase);
+        return [cen[0] + dx * (f + wobble / m), cen[1] + dy * (f + wobble / m)];
+      });
+      raw.push(raw[0]);
+      for (const run of trimmedRuns(raw, region)) {
+        layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--damascus)', strokeWidth: 0.0016, opacity: num(opacity * 0.5), role: 'damascus' });
       }
     }
   }
@@ -1292,6 +1356,8 @@ function buildAxe(p, palette, plan, bounds) {
   const layers = [];
   layers.push(...buildHaft(p, bounds));
   layers.push(...buildHaftHardware(p, plan, bounds));
+  // slice 7: the head mass drops a soft contact shadow onto the haft under it
+  layers.push(aoPool(0, layout.headY - layout.headHalfH - 0.016, p.haft_r * 2.4, 0.022));
   layers.push(...buildPlateCollars(p, plan, layout, bounds));
   if (hp.backForm === 'fluke') layers.push(...buildBackFluke(p, plan, layout, bounds));
   layers.push(...buildHead(p, layout, plan, hp, bounds));

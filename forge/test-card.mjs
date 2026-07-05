@@ -267,8 +267,10 @@ test('E2: ornament tiers add role-tagged layers — ornate > plain on the same b
     const roles = new Set(ornate.layers.map(l => l.role).filter(Boolean));
     assert.ok(roles.has('damascus'), `${weapon_class}: ornate must carry damascus etch layers`);
     assert.ok(roles.has('vein'), `${weapon_class}: ornate must carry gold vein layers`);
-    // plain carries no ornament-role layers at all
-    assert.ok(plain.layers.every(l => !l.role), `${weapon_class}: plain must carry zero ornament layers`);
+    // plain carries no ORNAMENT-role layers; 'ao' contact shadows are a
+    // physical depth cue (slice 7) and render at every tier
+    assert.ok(plain.layers.every(l => !l.role || l.role === 'ao'),
+      `${weapon_class}: plain must carry zero ornament layers (ao excepted)`);
   }
 });
 

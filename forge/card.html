@@ -154,7 +154,28 @@ function gradientDefs(gid, palette, tier) {
     <stop offset="0" stop-color="#fff" stop-opacity="0.10"/>
     <stop offset="1" stop-color="#fff" stop-opacity="0"/>
   </radialGradient>`;
-  return `<defs>${steel}${wood}${bevel}${trim}${glow}${vignette}${sheen}</defs>`;
+  // slice 7 depth filters:
+  // - soft/softer: gaussian blurs for AO pools + form shading (model units —
+  //   these apply to paths INSIDE the flipped/scaled weapon transform)
+  // - fx: whole-weapon chain in viewBox units — forge wobble (displacement
+  //   kills the vector-perfect read), metal tooth (turbulence grain clipped to
+  //   the object, multiply), and a drop shadow that grounds it in the void
+  const filters = `<filter id="${gid}-soft" x="-80%" y="-80%" width="260%" height="260%">
+    <feGaussianBlur stdDeviation="0.0085"/>
+  </filter>
+  <filter id="${gid}-softer" x="-120%" y="-120%" width="340%" height="340%">
+    <feGaussianBlur stdDeviation="0.02"/>
+  </filter>
+  <filter id="${gid}-fx" x="-12%" y="-12%" width="126%" height="130%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2" seed="11" result="warp"/>
+    <feDisplacementMap in="SourceGraphic" in2="warp" scale="1.5" xChannelSelector="R" yChannelSelector="G" result="disp"/>
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" result="noise"/>
+    <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0.55 0 0 0 -0.06" result="grainA"/>
+    <feComposite in="grainA" in2="disp" operator="in" result="grain"/>
+    <feBlend in="disp" in2="grain" mode="multiply" result="lit"/>
+    <feDropShadow in="lit" dx="2.2" dy="3.4" stdDeviation="2.6" flood-color="#000005" flood-opacity="0.55"/>
+  </filter>`;
+  return `<defs>${steel}${wood}${bevel}${trim}${glow}${vignette}${sheen}${filters}</defs>`;
 }
 
 function clamp01x(v) { return Math.max(0, Math.min(100, v)); }
@@ -182,6 +203,10 @@ function varMapFor(gid, palette, tier) {
     '--vein': hslCss(GOLD_HSL),
     '--vein-core': hslCss(GOLD_CORE_HSL),
     '--trim': `url(#${gid}-trim)`,
+    // slice 7 depth slots: contact shadows + form shading + glints
+    '--ao': 'hsl(232 40% 3%)',
+    '--form-shade': 'hsl(233 35% 5%)',
+    '--form-light': hslCss({ h: palette.base.h, s: clamp01x(palette.base.s * 0.3), l: 92 }),
   };
 }
 
@@ -219,7 +244,8 @@ function cardSvg(token, { big = false } = {}) {
     const fill = resolveColor(l.fill, varMap);
     const stroke = resolveColor(l.stroke, varMap);
     const fillRule = l.fillRule ? ` fill-rule="${l.fillRule}"` : '';
-    return `<path d="${l.d}" fill="${fill}"${fillRule} stroke="${stroke}" stroke-width="${l.strokeWidth}" opacity="${l.opacity}"/>`;
+    const filt = l.filter ? ` filter="url(#${gid}-${l.filter})"` : '';
+    return `<path d="${l.d}" fill="${fill}"${fillRule} stroke="${stroke}" stroke-width="${l.strokeWidth}" opacity="${l.opacity}"${filt}/>`;
   }).join('');
   const hashLabel = escapeText(token);
   // the size format is the loot-facing name (DAGGER, GREATAXE...)
@@ -232,7 +258,7 @@ function cardSvg(token, { big = false } = {}) {
     ${gradientDefs(gid, palette, tier)}
     <rect class="card-bg" x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="${CARD_RADIUS}"/>
     <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-glow)"/>
-    <g transform="${transform}">${paths}</g>
+    <g filter="url(#${gid}-fx)"><g transform="${transform}">${paths}</g></g>
     <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-sheen)"/>
     <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-vig)"/>
     <rect class="card-frame" x="2" y="2" width="${CARD_W - 4}" height="${CARD_H - 4}" rx="${CARD_RADIUS - 1}"

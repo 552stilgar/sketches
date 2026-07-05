@@ -92,6 +92,26 @@ blazing edge, gold network radiates, ring void reads punched-through. Remaining
 gaps for eyes-gated tuning: vein network still thinner than reference, damascus
 contours read as growth rings rather than fingerprint swirl, hardware clusters.
 
+## Slice 7 — card depth pass, "drawings -> object" (2026-07-05, shipped)
+Usul's read after slice 6: styling superb but flat — feels drawn, endgame feels
+semi-real. This slice adds the physical cues SVG can carry:
+- **Whole-weapon fx chain** (card.html `gid-fx`, viewBox units): forge-wobble
+  displacement (kills vector-perfect edges), turbulence grain clipped to the
+  object + multiply (metal tooth), drop shadow into the void (grounds it).
+- **Contact shadows** (`aoPool`, role `ao`, every tier — physical, not
+  ornament): head->haft, under plate collars, ring-web joint, guard->blade
+  root, guard->grip. Blurred via per-layer `filter: 'soft'`.
+- **Form shading** (worked+): broad soft core-shadow near the eye + sheen band
+  down the mid-cheek (`--form-shade`/`--form-light`, `softer` blur) — the
+  plate reads curved; bevel glint streak.
+- **Detail octaves**: interleaved half-step damascus contours at half strength
+  (fingerprint density); vein bloom underlay (hot gold glows into the steel).
+- 3D: edge-cut Lipschitz factor 0.7 -> 0.5 (slice-6 belly/recurve steepened
+  the profile; overshoot at horn tips could read as flicker/hole glitches).
+OPEN: 3D "glitch" Usul reported is uncharacterized — headless compiles clean,
+sword renders, ornate axe frame cost is up (bigger head = more shaded pixels).
+Need Usul: what does the glitch look like (freeze / flicker / holes / black)?
+
 ## Slice queue (each lands in BOTH media, eyes-gated between slices)
 1. **Head silhouette craft pass** — craft-geo curves for the head: horns,
    beard hook, cusped eye bracket, composed fluke+pierce back structure,
