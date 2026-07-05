@@ -50,6 +50,27 @@ Target: ~75% parity as the CEILING (rare ornate roll), never the baseline.
 | Veins | 10% | random-walk lines (card), seam gilding (3D) | branching trunk→capillary network radiating from the eye |
 | Hardware | 5% | plate collars only | plate-rim double outlines, rivets, diamond openwork, butt blade, lattice wrap |
 
+## Honest pass — 2026-07-05, after slices 1–5 (viewed, not assumed)
+Rendered #ccdfc795 (ornate greataxe card) beside the reference. Overall parity:
+**~40%.** All five feature layers EXIST but the composition doesn't — the parts
+read as separate decals on a stick, not one designed object. Per dimension:
+
+| Dimension | Score | What the render actually shows |
+|---|---|---|
+| Silhouette | 3/10 | Head is a boxy slab, edge barely curves (no crescent), head tiny vs an over-long reedy haft (~1:4 vs reference ~1:2.2). Ring fluke = small donut floating behind; points are stubs. Top spike = accidental needle. |
+| Damascus | 2/10 | Contours render as a thread-tangle scribble, not banding — wobble amplitude >> contour spacing, trims shred the lines. |
+| Lighting | 5/10 | Void/glow/vignette work. But cheek steel is LIGHT, so the bevel band can't pop — reference has near-black etched cheek vs bright polished edge. |
+| Veins | 2/10 | Orange scribbles lost inside the tangle; accent reads traffic-cone, not gold. |
+| Hardware | 4/10 | Present but disconnected: rivets float beside langets, openwork reads as a sticker, collars thin. |
+
+Root cause ranking (fix order):
+1. COMPOSITION: head mass + crescent sweep + straighter/shorter haft + ring
+   fused INTO the head plate. Name the knob: head-presence ratio.
+2. Damascus wobble ≪ spacing (banding, not tangling); cheek darkens at ornate.
+3. Gold = hue~46 s~70 l~55 + wider/fewer veins; kill the orange trim read.
+4. Bevel contrast: bright band vs dark cheek (value flip, not more geometry).
+5. Integrate hardware into clusters (rivets ON plates, spike gets a base collar).
+
 ## Slice queue (each lands in BOTH media, eyes-gated between slices)
 1. **Head silhouette craft pass** — craft-geo curves for the head: horns,
    beard hook, cusped eye bracket, composed fluke+pierce back structure,
