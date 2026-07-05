@@ -947,14 +947,17 @@ const PLATE_COLLAR_H = 0.018;
 const PLATE_COLLAR_GAP = 0.014;
 const PLATE_COLLAR_W_MUL = 1.45;     // vs haft_r
 
-const DAMASCUS_LINES_MIN = 3;
-const DAMASCUS_LINES_SPAN = 4;       // + round(SPAN * plan.damascus)
-const DAMASCUS_WOBBLE_AMP = 0.14;    // sword: fracX wobble; axe: frac of region width
-const DAMASCUS_OPACITY_BASE = 0.22;
+const DAMASCUS_LINES_MIN = 5;        // slice 3 (flip minimal): denser etch floor
+const DAMASCUS_LINES_SPAN = 7;       // + round(SPAN * plan.damascus)
+const DAMASCUS_WOBBLE_AMP = 0.14;    // sword: fracX wobble
+const DAMASCUS_OPACITY_BASE = 0.30;
 const DAMASCUS_OPACITY_SPAN = 0.38;
-const VEIN_COUNT_SPAN = 3;           // veins = 1 + round(SPAN * plan.veins)
-const VEIN_JITTER = 0.28;            // random-walk step (fracX / frac of region)
-const VEIN_OPACITY = 0.85;
+const DAMASCUS_CONTOUR_SHRINK = 0.92;   // innermost contour scale-down toward centroid
+const DAMASCUS_CONTOUR_WOB = 0.015;     // contour wobble amplitude (model units)
+const VEIN_COUNT_SPAN = 4;           // trunks = 1 + round(SPAN * plan.veins)
+const VEIN_BRANCH_PROB = 0.30;       // per-step branch chance, depth-limited
+const VEIN_MAX_DEPTH = 2;
+const VEIN_STEP_TURN = 1.1;          // radians of drift per step
 const ETCH_WEB = 0.003;              // etch strokes keep off the silhouette edge
 const ETCH_SAMPLES = 16;
 
@@ -1035,6 +1038,35 @@ function regionBox(region) {
   return { minX, maxX, minY, maxY };
 }
 
+// branching kintsugi network (slice 4): trunks walk, spawn thinner branches;
+// every run is double-stroked (accent underglow + hot core) and trimmed to
+// the region so gold never crosses a void or leaves the steel
+function growVeins(rng, region, starts, stepLen, plan) {
+  const layers = [];
+  const emit = (raw, wFrac) => {
+    for (const run of trimmedRuns(raw, region)) {
+      layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--accent)', strokeWidth: num(0.006 * wFrac + 0.002), opacity: 0.4, role: 'vein' });
+      layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--vein-core)', strokeWidth: num(0.003 * wFrac + 0.001), opacity: 0.9, role: 'vein' });
+    }
+  };
+  const branch = (x, y, ang, len, wFrac, depth) => {
+    const raw = [[x, y]];
+    const steps = 6 + Math.floor(rng() * 4);
+    for (let s = 0; s < steps; s++) {
+      ang += (rng() - 0.5) * VEIN_STEP_TURN;
+      x += Math.cos(ang) * len;
+      y += Math.sin(ang) * len;
+      raw.push([x, y]);
+      if (depth < VEIN_MAX_DEPTH && rng() < VEIN_BRANCH_PROB) {
+        branch(x, y, ang + (rng() < 0.5 ? 0.9 : -0.9), len * 0.6, wFrac * 0.55, depth + 1);
+      }
+    }
+    emit(raw, wFrac);
+  };
+  for (const [sx, sy, sAng] of starts) branch(sx, sy, sAng, stepLen, 1, 0);
+  return layers;
+}
+
 function buildAxeOrnament(p, plan, region) {
   const layers = [];
   if (plan.damascus <= 0 && plan.veins <= 0) return layers;
@@ -1042,19 +1074,29 @@ function buildAxeOrnament(p, plan, region) {
   const box = regionBox(region);
   const w = box.maxX - box.minX, h = box.maxY - box.minY;
   if (!(w > 0 && h > 0)) return layers;
+  const outer = Array.isArray(region[0][0]) ? region[0] : region;
+  const cen = [
+    outer.reduce((s, pt) => s + pt[0], 0) / outer.length,
+    outer.reduce((s, pt) => s + pt[1], 0) / outer.length,
+  ];
 
   if (plan.damascus > 0) {
+    // slice 3: concentric contours — nested wobbled offsets of the silhouette
+    // itself, so the grain follows the forged edge (and vanishes over voids)
     const K = DAMASCUS_LINES_MIN + Math.round(DAMASCUS_LINES_SPAN * plan.damascus);
     const opacity = num(DAMASCUS_OPACITY_BASE + DAMASCUS_OPACITY_SPAN * plan.damascus);
-    for (let k = 0; k < K; k++) {
-      const xBase = box.minX + w * (0.15 + 0.7 * (k + 0.5) / K);
+    for (let k = 1; k <= K; k++) {
+      const f = 1 - (k / (K + 1)) * DAMASCUS_CONTOUR_SHRINK;
       const phase = rng() * Math.PI * 2;
-      const freq = 2 + 4 * rng();
-      const raw = [];
-      for (let i = 0; i <= ETCH_SAMPLES; i++) {
-        const ty = -1 + 2 * (i / ETCH_SAMPLES);
-        raw.push([xBase + w * DAMASCUS_WOBBLE_AMP * 0.5 * Math.sin(ty * freq + phase), box.minY + h * (i / ETCH_SAMPLES)]);
-      }
+      const freq = 3 + Math.floor(rng() * 4);
+      const wob = DAMASCUS_CONTOUR_WOB * (0.5 + rng());
+      const raw = outer.map(([x, y], i) => {
+        const dx = x - cen[0], dy = y - cen[1];
+        const m = Math.hypot(dx, dy) || 1e-6;
+        const wobble = wob * Math.sin((i / outer.length) * Math.PI * 2 * freq + phase);
+        return [cen[0] + dx * (f + wobble / m), cen[1] + dy * (f + wobble / m)];
+      });
+      raw.push(raw[0]); // close the contour before trimming
       for (const run of trimmedRuns(raw, region)) {
         layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.0035, opacity, role: 'damascus' });
       }
@@ -1062,22 +1104,17 @@ function buildAxeOrnament(p, plan, region) {
   }
 
   if (plan.veins > 0) {
+    // trunks radiate from the eye side of the cheek, like the reference
     const V = 1 + Math.round(VEIN_COUNT_SPAN * plan.veins);
+    const starts = [];
     for (let v = 0; v < V; v++) {
-      let x = box.minX + w * (0.25 + 0.5 * rng());
-      let y = box.minY + h * (0.2 + 0.6 * rng());
-      const raw = [[x, y]];
-      let ang = rng() * Math.PI * 2;
-      for (let s = 0; s < 10; s++) {
-        ang += (rng() - 0.5) * 1.4;
-        x += Math.cos(ang) * w * VEIN_JITTER * 0.3;
-        y += Math.sin(ang) * h * VEIN_JITTER * 0.3;
-        raw.push([x, y]);
-      }
-      for (const run of trimmedRuns(raw, region)) {
-        layers.push({ d: polylinePath(run), fill: 'none', stroke: 'var(--accent)', strokeWidth: 0.0045, opacity: VEIN_OPACITY, role: 'vein' });
-      }
+      starts.push([
+        box.minX + w * (0.10 + 0.15 * rng()),
+        cen[1] + h * (rng() - 0.5) * 0.5,
+        (rng() - 0.5) * 1.2, // biased forward, toward the edge
+      ]);
     }
+    layers.push(...growVeins(rng, region, starts, w * 0.09, plan));
   }
   return layers;
 }
@@ -1117,12 +1154,29 @@ function buildSwordOrnament(p, plan, bladeRoot) {
   }
 
   if (plan.veins > 0) {
-    const V = 1 + Math.round(VEIN_COUNT_SPAN * plan.veins);
-    for (let v = 0; v < V; v++) {
-      let frac = -0.5 + rng();
-      const pts = line(() => { frac += (rng() - 0.5) * VEIN_JITTER; return frac; });
-      layers.push({ d: polylinePath(pts), fill: 'none', stroke: 'var(--accent)', strokeWidth: 0.0045, opacity: VEIN_OPACITY, role: 'vein' });
+    // blade region polygon (edge samples both sides) so the branching network
+    // can be trimmed honestly, same as the axe cheek
+    const left = [], right = [];
+    for (let i = 0; i <= 20; i++) {
+      const t01 = i / 20;
+      const y = yStart + (yEnd - yStart) * t01;
+      const bt = clamp((y - bladeRoot) / p.blade_len, 0, 1);
+      const off = p.blade_curve * p.blade_len * Math.pow(bt, CURVE_EXP);
+      const wHalf = bladeWidthAt(p, bt);
+      left.push([off - wHalf, y]);
+      right.push([off + wHalf, y]);
     }
+    const region = [...left, ...right.reverse()];
+    const V = 1 + Math.round(VEIN_COUNT_SPAN * plan.veins);
+    const starts = [];
+    for (let v = 0; v < V; v++) {
+      starts.push([
+        p.blade_curve * p.blade_len * 0.02,
+        yStart + (yEnd - yStart) * (0.05 + 0.30 * rng()),
+        Math.PI / 2 + (rng() - 0.5) * 0.8, // biased up-blade, from the root
+      ]);
+    }
+    layers.push(...growVeins(rng, region, starts, p.blade_len * 0.07, plan));
   }
   return layers;
 }

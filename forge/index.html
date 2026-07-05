@@ -587,6 +587,29 @@ vec2 mapSword(vec3 p) {
   return res;
 }
 
+// v7 slice 3: the single-bit edge profile x(ss) — ONE definition, used by both
+// mapAxe (geometry cut) and surfaceMat (edge-following damascus coordinate).
+// Mirrors card-geo headEdgeSamples exactly (minus wear nicks, which stay local
+// to the geometry cut).
+float axeHalfH() {
+  float broad = (u_headType > 0.5 && u_headType < 1.5) ? 1.35 : 1.0;
+  float war   = (u_headType > 2.5) ? 0.72 : 1.0;
+  return u_headHalfH * broad * war;
+}
+float axeEdgeReachAt(float hy) {
+  float halfH = axeHalfH();
+  float yBot = -halfH * (1.0 + 0.85 * u_hdHornBotDrop);
+  float ss = clamp((hy - yBot) / (halfH - yBot), 0.0, 1.0);
+  float blendS = ss * ss * (3.0 - 2.0 * ss);
+  float reachY = u_edgeReach * (mix(u_hdHornBotR, u_hdHornTopR, blendS)
+               + u_hdBelly * 0.22 * sin(3.14159 * ss));
+  float topPull = max(0.0, (ss - 0.86) / 0.14);
+  float botPull = max(0.0, ((1.0 - ss) - 0.90) / 0.10);
+  reachY -= u_edgeReach * 0.22 * u_hdHornTopRec * topPull * topPull;
+  reachY -= u_edgeReach * 0.132 * u_hdHornTopRec * botPull * botPull;
+  return reachY;
+}
+
 vec2 mapAxe(vec3 p) {
   // -- haft (bent space) --
   float t = clamp(p.y / u_haftLen, 0.0, 1.0);
@@ -671,17 +694,10 @@ vec2 mapAxe(vec3 p) {
     float vLim = abs(h.y) - mix(halfH * 0.42, halfH, sx);
     dBody = max(dDisc, max(vLim, -h.x - u_haftR * 1.6));
   } else {
-    // v7 head plan: profile-driven edge — the same x(s) curve card-geo samples
-    // (headEdgeSamples): horn-reach blend + belly S-curve + recurve tip pulls
+    // v7 head plan: profile-driven edge (shared axeEdgeReachAt — also feeds
+    // surfaceMat's edge-following damascus coordinate)
     float yBot = -halfH * (1.0 + 0.85 * u_hdHornBotDrop);
-    float ss = clamp((h.y - yBot) / (halfH - yBot), 0.0, 1.0);
-    float blendS = ss * ss * (3.0 - 2.0 * ss);
-    float reachY = edgeReachA * (mix(u_hdHornBotR, u_hdHornTopR, blendS)
-                 + u_hdBelly * 0.22 * sin(3.14159 * ss));
-    float topPull = max(0.0, (ss - 0.86) / 0.14);
-    float botPull = max(0.0, ((1.0 - ss) - 0.90) / 0.10);
-    reachY -= edgeReachA * 0.22 * u_hdHornTopRec * topPull * topPull;
-    reachY -= edgeReachA * 0.132 * u_hdHornTopRec * botPull * botPull;
+    float reachY = axeEdgeReachAt(h.y);
     // v4 edge nicks ride the profile now
     if (u_wear > 0.55) {
       float nick = smoothstep(0.75, 1.0, vnoise(vec2(h.y * 14.0, 2.3)));
@@ -1072,7 +1088,16 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
           float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
           dc = vec2(pos.x - u_curve * bt * bt * u_bladeLen, pos.y);
         } else {
-          dc = pos.xy - vec2(0.0, u_headY);
+          vec2 hxy = pos.xy - vec2(0.0, u_headY);
+          bool dbit = (u_headType > 1.5 && u_headType < 2.5);
+          if (dbit) {
+            dc = hxy;
+          } else {
+            // v7 slice 3: bands follow the forged edge — the band coordinate is
+            // distance-to-edge-profile, so the grain wraps the crescent (and the
+            // ring void) exactly like the card's concentric contours
+            dc = vec2(hxy.x - axeEdgeReachAt(hxy.y), hxy.y * 0.35);
+          }
         }
         vec2 wp = vec2(fbm(dc * u_damScale * 0.35 + 7.3),
                        fbm(dc * u_damScale * 0.35 + vec2(19.1, 4.7)));
@@ -1089,7 +1114,10 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
         if (u_ornVeins > 0.0) {
           float seam = 1.0 - abs(band);
           float vmask = smoothstep(1.0 - u_ornVeins * 0.5, 1.0, fbm(dc * 3.7 + 11.0) * 1.35);
-          float vein = smoothstep(0.90, 0.985, seam) * vmask;
+          float vein = smoothstep(0.86, 0.985, seam) * vmask;
+          // slice 4: capillaries — finer branches off the trunk seams
+          float cap = smoothstep(0.93, 1.0, seam) * smoothstep(0.55, 0.95, fbm(dc * 7.1 + 3.3)) * u_ornVeins;
+          vein = max(vein, cap * 0.7);
           albedo = mix(albedo, u_accentCol * 1.5, vein);
           rough = mix(rough, 0.18, vein);
           metal = mix(metal, 0.95, vein);

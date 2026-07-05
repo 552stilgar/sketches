@@ -157,6 +157,7 @@ function varMapFor(gid, palette) {
     '--haft-stroke': hslCss(palette.shade),
     '--haft-shade': hslCss(palette.shade),
     '--accent': hslCss(palette.accent),
+    '--vein-core': hslCss({ h: palette.accent.h, s: clamp01x(palette.accent.s + 8), l: clamp01x(palette.accent.l + 18) }),
     '--trim': `url(#${gid}-trim)`,
   };
 }
