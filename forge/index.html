@@ -1614,15 +1614,43 @@ function createRenderer(canvas, { progressive = false } = {}) {
     return { prog, U };
   }
 
-  // v9 (D3D compile fix): preview compiled per weapon class too, lazily —
-  // this was the FIRST GL program the page ever compiled (eager, at renderer
-  // construction), and the PC probe traced the ANGLE-d3d11 GPU-process crash
-  // to it specifically, before PT's own class split ever got a chance to run.
+  // v10 (real-hardware freeze fix): preview compiled per class, same as
+  // before, but now BACKGROUND-compiled like PT already was — on real
+  // ANGLE-d3d11 hardware the first compile+link of the ornate axe's
+  // preview shader can take 10-60s (Usul's report), and this program used
+  // to compile via a synchronous getProgramParameter(LINK_STATUS) call at
+  // the top of render(), blocking the whole tab for that whole stretch.
+  // Same KHR_parallel_shader_compile poll pattern as ensurePT below.
   const previewCache = {};
   function ensurePreview(cls) {
     if (previewCache[cls]) return previewCache[cls];
     const src = cls === 'axe' ? PREVIEW_FRAG_AXE : PREVIEW_FRAG_SWORD;
-    return (previewCache[cls] = makeProg(VERT, src));
+    const par = gl.getExtension('KHR_parallel_shader_compile');
+    const prog = gl.createProgram();
+    const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, VERT); gl.compileShader(vs);
+    const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, src); gl.compileShader(fs);
+    gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+    gl.bindAttribLocation(prog, 0, 'a_pos');
+    gl.linkProgram(prog);
+    const entry = { prog: null, U: null, ready: false, pending: null };
+    entry.pending = () => {
+      if (par && !gl.getProgramParameter(prog, gl.COMPLETION_STATUS_KHR)) return true;
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.error('forge: preview program link failed (' + cls + ') —',
+          gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(prog));
+        entry.pending = null;
+        return false;
+      }
+      const U = {};
+      const nU = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < nU; i++) {
+        const info = gl.getActiveUniform(prog, i);
+        U[info.name] = gl.getUniformLocation(prog, info.name);
+      }
+      entry.prog = prog; entry.U = U; entry.ready = true; entry.pending = null;
+      return false;
+    };
+    return (previewCache[cls] = entry);
   }
   const canPT = progressive && isGL2 && !!gl.getExtension('EXT_color_buffer_float');
   if (progressive && !canPT) console.warn('forge: WebGL2/float buffers unavailable — preview-only stage');
@@ -1806,6 +1834,8 @@ function createRenderer(canvas, { progressive = false } = {}) {
   function render(p, pose, w, h) {
     stop();
     const preview = ensurePreview(p.weapon_class === 'axe' ? 'axe' : 'sword');
+    if (preview.pending && preview.pending()) return false;  // first compile for this class still in flight — non-blocking, caller retries
+    if (!preview.ready) return false;  // link failed — disclosed by console.error above
     canvas.width = w; canvas.height = h;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, w, h);
@@ -1817,7 +1847,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
     // the PT banding already guards against. Big canvases render in scissor
     // bands spread across rAFs (first band immediate); thumbs stay one draw.
     const bands = Math.max(1, Math.ceil((w * h) / CFG.previewPixelsPerDraw));
-    if (bands === 1) { gl.drawArrays(gl.TRIANGLES, 0, 3); return; }
+    if (bands === 1) { gl.drawArrays(gl.TRIANGLES, 0, 3); return true; }
     let band = 0, fence = null;
     const step = () => {
       if (canvas.width !== w || canvas.height !== h) return; // superseded
@@ -1839,6 +1869,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
       if (band < bands) raf = requestAnimationFrame(step);
     };
     step();
+    return true;
   }
 
   function begin(p, pose, w, h, onProgress) {
@@ -1959,9 +1990,10 @@ function paramsFromToken(token) {
 // path-traced render for card.html's rendered mode — normal stage flow is off
 const STILL_SPEC = new URLSearchParams(location.search).get('still');
 
-let idleTimer = 0;
+let idleTimer = 0, previewRetry = 0;
 function renderStage() {
   if (STILL_SPEC) return; // still mode owns the canvas
+  clearTimeout(previewRetry);
   const rect = stageCanvas.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = Math.min(Math.round(rect.width * dpr) || CFG.maxStageRes, CFG.maxStageRes);
@@ -1969,7 +2001,15 @@ function renderStage() {
   const cap = '#' + state.token + ' · ' + state.params.weapon_class + ' · ' +
     (state.params.weapon_class === 'sword' ? state.params.blade_type : state.params.head_type);
   const capEl = document.getElementById('stage-hash');
-  stage.render(state.params, state.pose, w, h);
+  // v10: the first compile of a weapon class's preview shader can take real
+  // time on some drivers (10-60s reported on real ANGLE-d3d11 hardware) —
+  // it's background-compiled now (ensurePreview), so render() returns false
+  // instead of blocking. Poll without freezing the tab; draw once ready.
+  if (!stage.render(state.params, state.pose, w, h)) {
+    capEl.textContent = cap + ' · compiling shader…';
+    previewRetry = setTimeout(renderStage, 200);
+    return;
+  }
   capEl.textContent = cap;
   // camera at rest -> hand the stage to the path tracer.
   // stylized register stays on the preview pipeline — toon shading is not a
@@ -2081,7 +2121,7 @@ function paintThumbsPaced() {
 }
 
 // -- stage interaction --
-let drag = null;
+let drag = null, dragRAF = 0;
 stageCanvas.addEventListener('pointerdown', e => {
   drag = { x: e.clientX, y: e.clientY, yaw: state.pose.yaw, pitch: state.pose.pitch };
   stageCanvas.setPointerCapture(e.pointerId);
@@ -2090,7 +2130,10 @@ stageCanvas.addEventListener('pointermove', e => {
   if (!drag) return;
   state.pose.yaw = drag.yaw + (e.clientX - drag.x) * 0.011;
   state.pose.pitch = clamp(drag.pitch + (e.clientY - drag.y) * 0.009, -1.35, 1.35);
-  renderStage();
+  // v10: pointermove can fire far faster than a render can complete on real
+  // hardware — coalesce to at most one renderStage() per animation frame
+  // instead of one per raw event (Usul's reported drag stutter).
+  if (!dragRAF) dragRAF = requestAnimationFrame(() => { dragRAF = 0; renderStage(); });
 });
 stageCanvas.addEventListener('pointerup', () => { drag = null; });
 stageCanvas.addEventListener('wheel', e => {
@@ -2358,35 +2401,43 @@ function runStill(spec) {
     document.title = `still:${payload.mode}:${payload.spp}:${payload.elapsedMs}`; // DOM-visible status for headless probes (--dump-dom)
     if (window.parent !== window) window.parent.postMessage(payload, '*');
   };
-  stage.stop();
-  stage.render(state.params, POSE, w, h);
-  // &mode=preview: explicit single-pass raster still (instant; used by the
-  // headless harness to verify framing/post without PT convergence time)
-  const wantPreview = new URLSearchParams(location.search).get('mode') === 'preview';
-  if (wantPreview || !stage.canPT) { setTimeout(() => finish('preview', 0), 300); return; } // 300ms: banded preview finishes across a few rAFs
-  let lastN = 0;
-  stage.begin(state.params, POSE, w, h, n => {
-    lastN = n;
-    document.title = `still:progress:${n}:${Math.round(performance.now() - t0)}`;
-    // live telemetry so the card can show progress + the loop can be tuned
-    if (n === 1 || n % 10 === 0) {
-      if (window.parent !== window) window.parent.postMessage({
-        type: 'forge-still-progress', token: state.token, spp: n, target: spp,
-        elapsedMs: Math.round(performance.now() - t0),
-      }, '*');
-    }
-    if (n >= spp) finish('pt', n);
-  });
-  // watchdog: slow accumulation ships the partial render (still a real PT
-  // image, spp disclosed); a PT that never produced a sample falls back to
-  // the preview rasteriser — disclosed, never silent
-  setTimeout(() => {
+  // v10: render() is a background-compiled first draw per class now (can be
+  // pending, not blocking) — wait for it instead of assuming the canvas is
+  // already painted, or a slow first compile would ship a blank "preview".
+  const renderOrRetry = (cb) => {
     if (done) return;
-    if (lastN > 0) { finish('pt', lastN); return; }
-    stage.stop();
-    stage.render(state.params, POSE, w, h);
-    finish('preview', 0);
-  }, STILL_WATCHDOG_MS);
+    if (stage.render(state.params, POSE, w, h)) cb();
+    else setTimeout(() => renderOrRetry(cb), 100);
+  };
+  stage.stop();
+  renderOrRetry(() => {
+    // &mode=preview: explicit single-pass raster still (instant; used by the
+    // headless harness to verify framing/post without PT convergence time)
+    const wantPreview = new URLSearchParams(location.search).get('mode') === 'preview';
+    if (wantPreview || !stage.canPT) { setTimeout(() => finish('preview', 0), 300); return; } // 300ms: banded preview finishes across a few rAFs
+    let lastN = 0;
+    stage.begin(state.params, POSE, w, h, n => {
+      lastN = n;
+      document.title = `still:progress:${n}:${Math.round(performance.now() - t0)}`;
+      // live telemetry so the card can show progress + the loop can be tuned
+      if (n === 1 || n % 10 === 0) {
+        if (window.parent !== window) window.parent.postMessage({
+          type: 'forge-still-progress', token: state.token, spp: n, target: spp,
+          elapsedMs: Math.round(performance.now() - t0),
+        }, '*');
+      }
+      if (n >= spp) finish('pt', n);
+    });
+    // watchdog: slow accumulation ships the partial render (still a real PT
+    // image, spp disclosed); a PT that never produced a sample falls back to
+    // the preview rasteriser — disclosed, never silent
+    setTimeout(() => {
+      if (done) return;
+      if (lastN > 0) { finish('pt', lastN); return; }
+      stage.stop();
+      renderOrRetry(() => finish('preview', 0));
+    }, STILL_WATCHDOG_MS);
+  });
 }
 </script>
 </body>
