@@ -23,13 +23,15 @@ import { dirname, join } from 'node:path';
 import { DNA, paramsFromHash, randHex, mulberry32 } from './params.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const INDEX_HTML = readFileSync(join(HERE, 'index.html'), 'utf8');
+// v11: the SCENE GLSL chunk moved off-main-thread into the render worker
+// (index.html now only holds UI/state code + a message-passing proxy).
+const INDEX_HTML = readFileSync(join(HERE, 'forge-render-worker.mjs'), 'utf8');
 
 // -- extract the shared SCENE GLSL chunk (mapSword/mapAxe live here) --------
 function extractScene(html) {
   const startMarker = 'const SCENE = `';
   const start = html.indexOf(startMarker);
-  assert.ok(start >= 0, 'SCENE template literal not found in index.html');
+  assert.ok(start >= 0, 'SCENE template literal not found in forge-render-worker.mjs');
   const bodyStart = start + startMarker.length;
   const end = html.indexOf('\n`;', bodyStart);
   assert.ok(end > bodyStart, 'SCENE template literal close (`\\n`;`) not found');

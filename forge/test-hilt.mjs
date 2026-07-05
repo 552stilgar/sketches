@@ -35,11 +35,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const HTML = readFileSync(path.join(HERE, 'index.html'), 'utf8');
+// v11: the SCENE GLSL chunk moved off-main-thread into the render worker
+// (index.html now only holds UI/state code + a message-passing proxy).
+const HTML = readFileSync(path.join(HERE, 'forge-render-worker.mjs'), 'utf8');
 
 function extractScene(html) {
   const m = html.match(/const SCENE = `([\s\S]*?)`;/);
-  assert.ok(m, 'SCENE template string not found in index.html');
+  assert.ok(m, 'SCENE template string not found in forge-render-worker.mjs');
   return m[1];
 }
 const SCENE = extractScene(HTML);

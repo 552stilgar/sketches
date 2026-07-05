@@ -1,0 +1,1871 @@
+// forge-render-worker.mjs
+// v11 (off-main-thread render): the entire GL rendering engine (shader
+// source, createRenderer, setScene) runs in a dedicated Worker, driving one
+// or more OffscreenCanvas instances directly. This is the real fix for
+// Usul's freezes on real ANGLE-d3d11 hardware — no matter how slow a
+// shader compile or a per-frame draw genuinely is on his driver, that work
+// happens on THIS thread, never the main UI thread, so the browser tab
+// (tab switching, scrolling, other tabs) stays responsive regardless.
+//
+// Message protocol (main thread -> worker):
+//   {cmd:'init', id, canvas (transferred OffscreenCanvas), progressive, mode}
+//     mode: 'direct' (canvas is composited directly by the browser — the
+//       interactive stage; only status/progress messages come back) or
+//       'bitmap' (thumbnails — a transferable ImageBitmap comes back after
+//       each successful render so the main thread can blit it onto the
+//       real on-screen 2D canvas cell).
+//   {cmd:'render', id, reqId, params, pose, w, h, register}
+//   {cmd:'begin',  id, reqId, params, pose, w, h, register}
+//   {cmd:'stop',   id}
+//   {cmd:'capture', id, reqId}  -- convertToBlob() snapshot for still mode
+//
+// Message protocol (worker -> main thread):
+//   {cmd:'inited', id}
+//   {cmd:'render-result', id, reqId, status: true|'pending'|'failed', bitmap?}
+//   {cmd:'begin-result',  id, reqId, started}
+//   {cmd:'pt-progress',   id, reqId, n}
+//   {cmd:'capture-result', id, reqId, blob}
+
+import { resolveOrnament, packOrnamentUniforms } from './ornament.mjs';
+import { applyFormat } from './format.mjs';
+import { resolveHeadPlan, packHeadUniforms, HAFT_CURVE_TAME } from './axe-head.mjs';
+import { deriveLayout, deriveMaterial, clamp } from './params.mjs';
+
+const CFG = {
+  gridCount: 12,
+  maxStageRes: 900,     // native-res cap for the hero stage (v3: no pixelated upscale)
+  thumbRes: 240,
+  thumbAspect: 1.25,
+  fov: 0.62,
+  ptIdleMs: 250,        // camera stillness before the path tracer starts accumulating
+  ptMaxSamples: 360,    // accumulation budget per view
+  ptPixelsPerDraw: 24000, // max pixels per PT draw call (band tiling keeps each draw under the GPU watchdog / TDR budget; 90k->24k as slices 6-8 made the SDF+shading much heavier — slower is fine, a hung browser is not)
+  previewPixelsPerDraw: 200000, // same guard for the PREVIEW pass (freeze fix: it was the last untiled draw)
+};
+
+// ---------------------------------------------------------------------------
+// Shaders — v3: one shared SDF scene chunk (SCENE), three programs:
+//   preview (ES 1.00)  — immediate raymarch, runs while the camera moves
+//   pathtrace (ES 3.00, WebGL2 + float buffers) — progressive accumulation at rest
+//   display (ES 3.00)  — accumulated radiance / N -> ACES -> screen
+// ---------------------------------------------------------------------------
+const VERT = `
+attribute vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const VERT3 = `#version 300 es
+in vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+// filmic tonemap + register post-grade shared by preview + display passes.
+// v5 registers: 0 museum (neutral macro), 1 loot-card (warm dramatic), 2 stylized (toon).
+// u_register is declared by each including program BEFORE this chunk (SCENE's
+// uniform block / DISPLAY_FRAG prefix) so env functions defined above TONE see it.
+const TONE = `
+const float EXPOSURE = 1.25;
+vec3 aces(vec3 x) {
+  return clamp(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+// post-tonemap grade; suv = centered screen uv (y in [-1,1])
+vec3 postGrade(vec3 c, vec2 suv) {
+  float r2 = dot(suv, suv);
+  if (u_register < 0.5) {                        // museum: barely-there vignette
+    c *= 1.0 - 0.10 * r2;
+  } else if (u_register < 1.5) {                 // loot-card: warm lift, deep vignette, contrast
+    c *= vec3(1.07, 1.00, 0.90);
+    c = clamp(c * c * (3.0 - 2.0 * c) * 0.25 + c * 0.75, 0.0, 1.0);
+    c *= 1.0 - 0.32 * r2;
+  } else {                                       // stylized: saturation push, mild vignette
+    float l = dot(c, vec3(0.299, 0.587, 0.114));
+    c = clamp(mix(vec3(l), c, 1.45), 0.0, 1.0);
+    c *= 1.0 - 0.14 * r2;
+  }
+  return c;
+}
+`;
+
+const SCENE = `
+uniform vec2  u_res;
+uniform float u_yaw, u_pitch, u_dist, u_centerY;
+uniform float u_class;            // 0 sword, 1 axe
+
+// sword
+uniform float u_bladeRoot, u_bladeLen, u_bladeW, u_bladeTh, u_taper, u_curve;
+uniform float u_leaf, u_tipFrac, u_tipStyle;         // tipStyle: 0 point, 1 clip, 2 round
+uniform float u_fullerN, u_fullerDepth;
+uniform float u_bladeSection, u_ricassoLen, u_edgeBevelW;
+uniform float u_guardType, u_guardSpan, u_guardThick, u_guardDroop;
+uniform float u_quillonCurl, u_quillonTip, u_guardShell;
+uniform float u_gripLen, u_gripR, u_wrapBands;
+uniform float u_gripProfile, u_gripRisers, u_ferruleOn;
+uniform float u_pommelType, u_pommelR, u_pommelY, u_pommelFacets;
+
+// axe
+uniform float u_haftLen, u_haftR, u_haftCurve, u_haftWrap;
+uniform float u_headType, u_headY, u_headHalfH, u_edgeReach, u_edgeSweep;
+uniform float u_beardDepth, u_cheek, u_pollType;
+uniform float u_langetLen, u_cheekProfile, u_haftButt;
+
+// material + light
+uniform vec3  u_steelCol, u_accentCol;
+uniform float u_accentOn;
+uniform vec3  u_lightDir;
+
+// v2 finish (from deriveMaterial): 0 brushed, 1 damascus, 2 blued
+uniform float u_finish, u_wear, u_damScale, u_damWarp, u_aniso, u_rough;
+
+// v4 variability: family 0 steel / 1 iron / 2 bronze; grip 0 leather / 1 cord / 2 wire;
+// guardExt 0 inherit / 1 swept / 2 ring
+uniform float u_family, u_gripMat, u_guardExt, u_engraveOn, u_engraveDens;
+
+// v5 presentation register (not DNA): 0 museum, 1 loot-card, 2 stylized
+uniform float u_register;
+
+// v7 ornament plan (ornament.mjs: resolveOrnament -> packOrnamentUniforms;
+// unpackOrnamentUniforms is the reference reader for these slots)
+uniform float u_ornTier, u_ornPierceOn, u_ornPierceT, u_ornPierceR;
+uniform float u_ornFlukeOn, u_ornFlukeReach, u_ornFlukeDroop;
+uniform float u_ornPlateCollars, u_ornDamascus, u_ornVeins, u_ornEdgeLight;
+
+// v7 head-silhouette plan (axe-head.mjs: resolveHeadPlan -> packHeadUniforms;
+// backForm: 0 poll, 1 fluke, 2 ringFluke)
+uniform float u_hdHornTopR, u_hdHornTopRec, u_hdHornBotR, u_hdHornBotDrop;
+uniform float u_hdBelly, u_hdCusps, u_hdBevel;
+uniform float u_hdSpikeOn, u_hdSpikeH, u_hdSpikeLean, u_hdBackForm, u_hdScale;
+
+const float MAT_STEEL = 1.0, MAT_ACCENT = 2.0, MAT_GRIP = 3.0, MAT_WOOD = 4.0;
+
+float sdSphere(vec3 p, float r) { return length(p) - r; }
+float sdBox(vec3 p, vec3 b) {
+  vec3 q = abs(p) - b;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0);
+}
+float sdCapsule(vec3 p, vec3 a, vec3 b, float r) {
+  vec3 pa = p - a, ba = b - a;
+  float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba * h) - r;
+}
+float sdCylY(vec3 p, float h, float r) {
+  vec2 d = abs(vec2(length(p.xz), p.y)) - vec2(r, h);
+  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+}
+float sdCylZ(vec3 p, float h, float r) {
+  vec2 d = abs(vec2(length(p.xy), p.z)) - vec2(r, h);
+  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0));
+}
+float sdTorusZ(vec3 p, float R, float r) {
+  return length(vec2(length(p.xy) - R, p.z)) - r;
+}
+float sdOcta(vec3 p, float s) {
+  p = abs(p);
+  return (p.x + p.y + p.z - s) * 0.57735027;
+}
+float sdConeY(vec3 p, float h, float r1, float r2) {
+  // capped cone along y, base r1 at y=0 up to r2 at y=h
+  float t = clamp(p.y / h, 0.0, 1.0);
+  float r = mix(r1, r2, t);
+  vec2 d = vec2(length(p.xz) - r, max(-p.y, p.y - h));
+  return min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) * 0.9;
+}
+vec2 opU(vec2 a, vec2 b) { return a.x < b.x ? a : b; }
+// v6: polynomial smooth-min — blends a new part into an existing surface with no
+// hard seam (iq's smin). Used where a discrete piece (langet strap, haft butt-cap)
+// is laid onto a continuous body instead of two independent primitives meeting edge-on.
+float smin(float a, float b, float k) {
+  float t6 = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, t6) - k * t6 * (1.0 - t6);
+}
+
+// v6 hilt: rotate around the local x-axis (mixes y/z) — used to rake a flat
+// guard bar and to tilt disc/crescent guard planes off guard_droop.
+vec3 rotX(vec3 p, float a) {
+  float c = cos(a), s = sin(a);
+  return vec3(p.x, c * p.y - s * p.z, s * p.y + c * p.z);
+}
+
+// v6 geometry-depth: smooth max paired with the shared smin helper above.
+float smax(float a, float b, float k) { return -smin(-a, -b, k); }
+
+// -- v6 blade-depth constants (forge/docs/v6-research.md secs 2 & 4) --------
+const float FULLER_WIDTH_FRAC   = 0.34;  // groove half-width, fraction of local blade half-width w
+const float FULLER_DEPTH_SCALE  = 0.85;  // fuller_depth (0-1 gene) -> channel half-depth, fraction of th
+const float FULLER_RIM_K        = 0.012; // smooth-subtraction blend radius -> rounded floor + rim highlight
+const float FULLER_FADE_BIG     = 10.0;  // sentinel multiplier: "no cavity here" near root/tip fade-out
+const float HOLLOW_FLUTE_DEPTH  = 0.16;  // hollow_ground: concave flute depth, fraction of th
+const float EDGE_BEVEL_TH_SCALE = 0.55;  // edge_bevel_w: z-extent scale inside the outer edge-bevel band
+const float TIP_ROUND_R_FRAC    = 0.42;  // tip_style=round: cap-sphere radius, fraction of tip-root width
+const float TIP_ROUND_BLEND_K   = 0.012; // tip_style=round: smooth-union blend radius into the taper
+
+float hash21(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
+
+// -- v2: value noise + fBm (damascus banding + v4 nicks/rust run on these) ----
+float vnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), u.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+float fbm(vec2 p) {
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { v += a * vnoise(p); p = p * 2.03 + 17.7; a *= 0.5; }
+  return v;
+}
+
+vec2 mapSword(vec3 p) {
+  // -- blade (bent space; cross-section per blade_section; taper per blade_taper
+  //    with an optional flat ricasso_len root before the taper begins) --
+  float t = clamp((p.y - u_bladeRoot) / u_bladeLen, 0.0, 1.0);
+  vec3 q = p;
+  q.x -= u_curve * t * t * u_bladeLen;
+
+  // ricasso_len: freeze the taper ramp for the first ricasso_len fraction of the
+  // blade (a flat, unsharpened root strip) before the existing linear taper
+  // begins. ricasso_len == 0 reduces exactly to the legacy tTaper == t behavior.
+  float tTaper = u_ricassoLen > 1e-4
+    ? clamp((t - u_ricassoLen) / max(1.0 - u_ricassoLen, 1e-4), 0.0, 1.0)
+    : t;
+  float wProf = 1.0 - u_taper * tTaper;
+  wProf = mix(wProf, wProf * (0.62 + 3.2 * t * (1.0 - t) * (1.0 - t * 0.35)), u_leaf);
+  float tipT = smoothstep(1.0, 1.0 - u_tipFrac, t);
+  float tipMul = tipT;   // point + round share one taper curve; round gets a real cap sphere below
+  float w = max(u_bladeW * wProf * tipMul, 1e-4);
+
+  float th = u_bladeTh * (0.55 + 0.45 * wProf) * max(tipMul, 0.15);
+
+  // v4: edge nicks — sparse bites out of the working edge once wear is heavy.
+  // sign(q.x) decorrelates the two edges; only w shrinks so the spine is untouched.
+  if (u_wear > 0.55) {
+    float nick = smoothstep(0.75, 1.0, vnoise(vec2(t * 26.0, sign(q.x) * 3.7)));
+    w *= 1.0 - nick * (u_wear - 0.55) * 0.5;
+  }
+
+  // edge_bevel_w: a distinct secondary facet near the outer edge (the z-extent
+  // steps down inside the bevel band) instead of one flat facet from spine to
+  // edge — reads as a ground bevel line, and the existing curvature-driven wear
+  // hooks (calcCurv) pick up the crease as a highlight/grime edge for free.
+  float edgeU = clamp(abs(q.x) / w, 0.0, 1.0);
+  float bevelMix = smoothstep(clamp(1.0 - u_edgeBevelW, 0.0, 1.0), 1.0, edgeU);
+  float thEdge = th * mix(1.0, EDGE_BEVEL_TH_SCALE, bevelMix);
+
+  // blade_section: 0 diamond (legacy rhombic ridge), 1 lenticular (softened,
+  // flattened-oval lens — Oakeshott XIII), 2 hollow_ground (diamond ridge kept,
+  // concave flute scooped into the flat between spine and edge).
+  float csDiamond = (abs(q.x) / w + abs(q.z) / thEdge - 1.0) * min(w, thEdge) * 0.62;
+  float cs;
+  if (u_bladeSection < 0.5) {
+    cs = csDiamond;
+  } else if (u_bladeSection < 1.5) {
+    cs = (length(vec2(q.x / w, q.z / thEdge)) - 1.0) * min(w, thEdge) * 0.62;
+  } else {
+    float flute = HOLLOW_FLUTE_DEPTH * thEdge * sin(clamp(abs(q.x) / w, 0.0, 1.0) * 3.14159265);
+    cs = csDiamond + flute;
+  }
+
+  float yb = max(u_bladeRoot - p.y, p.y - (u_bladeRoot + u_bladeLen));
+  float dBlade = max(cs, yb);
+
+  // fuller_depth: a real carved channel — smooth-subtract an elongated lozenge
+  // (an ellipse in the lateral/thickness plane) along the blade midline instead
+  // of thinning a thickness scalar, so the groove gets its own rounded floor and
+  // a visible rim highlight where it meets the flat. fuller_n==2 mirrors two
+  // off-center grooves via the existing abs(abs(q.x)-w*0.38) pattern.
+  if (u_fullerN > 0.5) {
+    float fMask = smoothstep(0.02, 0.12, t) * smoothstep(1.0, 0.8, t);
+    float gx = u_fullerN < 1.5 ? q.x : (abs(q.x) - w * 0.38);
+    float grooveHalfW = max(w * FULLER_WIDTH_FRAC, 1e-5);
+    float grooveHalfD = max(th * u_fullerDepth * FULLER_DEPTH_SCALE, 1e-5);
+    float cavFull = (length(vec2(gx / grooveHalfW, q.z / grooveHalfD)) - 1.0)
+                  * min(grooveHalfW, grooveHalfD);
+    // fMask -> 0 near root/tip blends the cavity to a large positive ("no groove
+    // here") distance instead of shrinking its shape, avoiding a division blowup.
+    float cav = mix(FULLER_FADE_BIG * grooveHalfW, cavFull, fMask);
+    dBlade = smax(dBlade, -cav, FULLER_RIM_K);
+  }
+
+  if (u_tipStyle > 0.5 && u_tipStyle < 1.5) {
+    // clip point: shear the last stretch of the spine with a plane
+    vec2 tp = q.xy - vec2(0.0, u_bladeRoot + u_bladeLen);
+    dBlade = max(dBlade, dot(tp, normalize(vec2(0.72, 0.35))) - u_bladeLen * u_tipFrac * 0.55);
+  } else if (u_tipStyle > 1.5) {
+    // round: smooth-union a small cap sphere at the true tip vertex so the
+    // silhouette actually rounds off instead of just tapering to zero faster.
+    vec3 tipC = vec3(0.0, u_bladeRoot + u_bladeLen, 0.0);
+    float tipR = max(u_bladeW * (1.0 - u_taper) * TIP_ROUND_R_FRAC, 1e-4);
+    dBlade = smin(dBlade, sdSphere(q - tipC, tipR), TIP_ROUND_BLEND_K);
+  }
+  vec2 res = vec2(dBlade * 0.85, MAT_STEEL);
+
+  // -- guard --
+  // v6: guard_droop used to be dead for 3 of 4 guard_type branches (bar / disc /
+  // crescent) — every branch below now consumes the same roll, either as a
+  // rake/twist rotation (bar) or a plane tilt (disc / crescent).
+  const float DROOP_TILT = 0.9;     // radians of plane tilt per unit droop (disc/crescent)
+  const float DROOP_RAKE = 0.55;    // radians of bar rake per unit droop
+  float g = 1e9;
+  if (u_guardExt > 1.5) {                        // v4 ring: crossbar + parry ring
+    float bar = sdBox(p, vec3(u_guardSpan * 0.85, u_guardThick, u_guardThick * 1.5));
+    float ring = sdTorusZ(p - vec3(0.0, -u_gripLen * 0.22, 0.0),
+                          min(u_guardSpan * 0.55, u_gripLen * 0.5), u_guardThick * 0.85);
+    g = min(bar, ring);
+  } else if (u_guardExt > 0.5) {                 // v4 swept: knuckle-bow + rear quillon
+    vec3 sp = p - vec3(0.0, -u_gripLen * 0.5, 0.0);
+    float bow = sdTorusZ(sp, u_gripLen * 0.62, u_guardThick * 0.8);
+    bow = max(bow, -sp.x - u_guardThick);        // keep the forward half of the bow
+    // v6: rear quillon (single-sided, extends toward -x) gets the same
+    // curl-bend + tip cap treatment as the base quillons branch below.
+    vec3 rTip = vec3(-u_guardSpan * 0.85, u_guardDroop * u_guardSpan * 0.5, 0.0);
+    float rt = clamp(p.x / rTip.x, 0.0, 1.0);      // rTip.x < 0, p.x in [rTip.x, 0]
+    vec3 rp = vec3(p.x, p.y - u_quillonCurl * rt * rt * u_guardSpan, p.z);
+    float rear = sdCapsule(rp, vec3(0.0), rTip, u_guardThick);
+    if (u_quillonTip > 0.5) {
+      if (u_quillonTip < 1.5) {                  // flare: widening cone toward tip
+        vec3 tv = rp - vec3(rTip.x + u_guardThick * 2.2, rTip.y, rTip.z);
+        vec3 tvAx = vec3(tv.y, -tv.x, tv.z);      // axial runs -x -> flip sign vs. the +x quillon arm
+        float flare = sdConeY(tvAx, u_guardThick * 2.2, u_guardThick * 0.9, u_guardThick * 2.0);
+        rear = smin(rear, flare, u_guardThick * 0.5);
+      } else {                                   // spatulate: flattened paddle cap
+        float spat = sdCylZ(rp - rTip, u_guardThick * 0.38, u_guardThick * 1.6);
+        rear = smin(rear, spat, u_guardThick * 0.5);
+      }
+    }
+    g = min(bow, rear);
+  } else if (u_guardType < 0.5) {                // bar — v6: droop rakes/twists the bar
+    g = sdBox(rotX(p, u_guardDroop * DROOP_RAKE), vec3(u_guardSpan, u_guardThick, u_guardThick * 1.5));
+  } else if (u_guardType < 1.5) {                // quillons
+    vec3 qp = vec3(abs(p.x), p.y, p.z);
+    // v6: quillon_curl bends the arm along its length (quadratic, like blade_curve)
+    float qt = clamp(qp.x / max(u_guardSpan, 1e-4), 0.0, 1.0);
+    qp.y -= u_quillonCurl * qt * qt * u_guardSpan;
+    vec3 qTip = vec3(u_guardSpan, u_guardDroop * u_guardSpan, 0.0);
+    g = sdCapsule(qp, vec3(0.0), qTip, u_guardThick);
+    // v6: quillon_tip caps — 0 ball (bare capsule end, no change), 1 flare, 2 spatulate
+    if (u_quillonTip > 0.5) {
+      if (u_quillonTip < 1.5) {                  // flare: widening cone toward tip
+        vec3 tv = qp - vec3(qTip.x - u_guardThick * 2.2, qTip.y, qTip.z);
+        vec3 tvAx = vec3(tv.y, tv.x, tv.z);       // relabel axes: cone axis (y) -> local arm axis (x)
+        float flare = sdConeY(tvAx, u_guardThick * 2.2, u_guardThick * 0.9, u_guardThick * 2.0);
+        g = smin(g, flare, u_guardThick * 0.5);
+      } else {                                   // spatulate: flattened paddle cap
+        float spat = sdCylZ(qp - qTip, u_guardThick * 0.38, u_guardThick * 1.6);
+        g = smin(g, spat, u_guardThick * 0.5);
+      }
+    }
+  } else if (u_guardType < 2.5) {                // disc — v6: droop tilts the guard plane
+    g = sdCylY(rotX(p, u_guardDroop * DROOP_TILT), u_guardThick * 0.9, u_guardSpan * 0.62);
+  } else {                                       // crescent — v6: droop tilts the guard plane
+    vec3 pc = rotX(p, u_guardDroop * DROOP_TILT);
+    float d1 = sdCylZ(pc, u_guardThick * 1.1, u_guardSpan * 0.72);
+    float d2 = sdCylZ(pc - vec3(0.0, u_guardSpan * 0.5, 0.0), u_guardThick * 2.2, u_guardSpan * 0.72);
+    g = max(d1, -d2);
+  }
+  // v6: guard_shell — small additive ring layered onto any guard_type/guard_ext
+  // base (rapier/side-sword side-ring complexity), distinct from guard_ext=ring
+  // which replaces the whole guard silhouette.
+  if (u_guardShell > 0.5) {
+    float shell = sdTorusZ(p - vec3(0.0, 0.0, u_guardThick * 1.6),
+                           min(u_guardSpan * 0.5, u_gripLen * 0.42), u_guardThick * 0.5);
+    g = smin(g, shell, u_guardThick * 0.4);
+  }
+  res = opU(res, vec2(g, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+
+  // -- grip --
+  const float WRAP_RIDGE_AMP = 0.0105;  // v6: was 0.0035 (~10-15% of gr) — raised so cord ridges read
+  const float RISER_AMP = 0.0065;       // v6: grip_risers flute height
+  const float FERRULE_R_MUL = 1.16;
+  float gr = u_gripR;
+  // v6: grip_profile — 0 straight (today's uniform capsule, unchanged), 1 waisted
+  // (pinches at mid-length), 2 barrel (swells at mid-length). Non-exact radius
+  // modulation from the query point's own y, same style as the wrap ripple below.
+  float gt = clamp(-p.y / max(u_gripLen, 1e-4), 0.0, 1.0);
+  if (u_gripProfile > 1.5) {
+    gr *= 1.0 + 0.30 * sin(3.14159265 * gt);           // barrel
+  } else if (u_gripProfile > 0.5) {
+    gr *= 1.0 - 0.32 * sin(3.14159265 * gt);           // waisted
+  }
+  // v6: grip_risers — angular flutes around the circumference (pModPolar-style
+  // azimuth fold), a lengthwise-ridge axis distinct from wrap_bands' coil ripple.
+  if (u_gripRisers > 0.5) {
+    float gang = atan(p.z, p.x);
+    float rseg = 6.283185 / u_gripRisers;
+    float ra = mod(gang + rseg * 0.5, rseg) - rseg * 0.5;
+    float riser = smoothstep(rseg * 0.5, rseg * 0.18, abs(ra));
+    gr += RISER_AMP * riser;
+  }
+  // v6: squared/raised ripple profile (was a shallow sine) so wrap_bands reads
+  // as raised cord ridges rather than an ~invisible sheen.
+  if (u_wrapBands > 0.5) {
+    // same formula surfaceMat uses for the cord/wire band frequency below —
+    // keeps the rolled wrap count and the rendered band count in agreement.
+    float wrapFreqGeo = u_wrapBands * 6.283185 / max(u_gripLen, 1e-4);
+    float wv = sin(p.y * wrapFreqGeo);
+    gr += WRAP_RIDGE_AMP * sign(wv) * pow(abs(wv), 0.35);
+  }
+  gr = max(gr, u_gripR * 0.45);
+  float dGrip = sdCapsule(p, vec3(0.0, -0.01, 0.0), vec3(0.0, -u_gripLen, 0.0), gr);
+  res = opU(res, vec2(dGrip, MAT_GRIP));
+
+  // v6: ferrule_on — short metal collar at the grip root where it meets the guard
+  if (u_ferruleOn > 0.5) {
+    float fH = max(u_gripLen * 0.05, 0.006);
+    float dFerrule = sdCylY(p - vec3(0.0, -fH, 0.0), fH, gr * FERRULE_R_MUL);
+    res = opU(res, vec2(dFerrule, MAT_ACCENT));
+  }
+
+  // -- pommel --
+  vec3 pp = p - vec3(0.0, u_pommelY, 0.0);
+  float pm = 1e9;
+  if (u_pommelType < 0.5)      pm = sdCylZ(pp, u_pommelR * 0.34, u_pommelR);
+  else if (u_pommelType < 1.5) pm = sdSphere(pp, u_pommelR);
+  else if (u_pommelType < 2.5) pm = sdConeY(pp - vec3(0.0, -u_pommelR, 0.0), u_pommelR * 2.0, u_pommelR, u_pommelR * 0.45);
+  else if (u_pommelType < 3.5) {
+    if (u_pommelFacets > 0.5) {
+      // v6: pommel_facets — pModPolar-style azimuth fold generalizes the fixed
+      // octahedron into an n-gon faceted ball (6 = brazil-nut block, 10 = many-
+      // faceted wheel-pommel), intersected with a sphere bound for roundness.
+      float pang = atan(pp.z, pp.x);
+      float pseg = 6.283185 / u_pommelFacets;
+      float pa = mod(pang + pseg * 0.5, pseg) - pseg * 0.5;
+      float prad = length(pp.xz);
+      float poly = prad * cos(pa) - u_pommelR * 1.05;
+      pm = max(poly, sdSphere(pp, u_pommelR * 1.30));
+    } else {
+      pm = sdOcta(pp, u_pommelR * 1.25);
+    }
+  }
+  else                         pm = sdTorusZ(pp, u_pommelR * 0.72, u_pommelR * 0.34);
+  res = opU(res, vec2(pm, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  return res;
+}
+
+// v7 slice 3: the single-bit edge profile x(ss) — ONE definition, used by both
+// mapAxe (geometry cut) and surfaceMat (edge-following damascus coordinate).
+// Mirrors card-geo headEdgeSamples exactly (minus wear nicks, which stay local
+// to the geometry cut).
+float axeHalfH() {
+  float broad = (u_headType > 0.5 && u_headType < 1.5) ? 1.35 : 1.0;
+  float war   = (u_headType > 2.5) ? 0.72 : 1.0;
+  return u_headHalfH * broad * war * u_hdScale;   // slice 6: head-presence scale
+}
+// slice 6 composition: the head hangs from its mount — the top (haft-facing)
+// edge stays put as u_hdScale grows the crescent downward/forward (card:
+// layout.headY shift in buildAxe). All head-space math reads this center.
+float axeHeadY() {
+  return u_headY - u_headHalfH * (u_hdScale - 1.0);
+}
+float axeEdgeReachAt(float hy) {
+  float halfH = axeHalfH();
+  float yBot = -halfH * (1.0 + 0.85 * u_hdHornBotDrop);
+  float ss = clamp((hy - yBot) / (halfH - yBot), 0.0, 1.0);
+  float blendS = ss * ss * (3.0 - 2.0 * ss);
+  float reach0 = u_edgeReach * u_hdScale;
+  float reachY = reach0 * (mix(u_hdHornBotR, u_hdHornTopR, blendS)
+               + u_hdBelly * 0.34 * sin(3.14159 * ss));
+  float topPull = max(0.0, (ss - 0.86) / 0.14);
+  float botPull = max(0.0, ((1.0 - ss) - 0.90) / 0.10);
+  reachY -= reach0 * 0.22 * u_hdHornTopRec * topPull * topPull;
+  reachY -= reach0 * 0.132 * u_hdHornTopRec * botPull * botPull;
+  return reachY;
+}
+
+vec2 mapAxe(vec3 p) {
+  // -- haft (bent space) --
+  float t = clamp(p.y / u_haftLen, 0.0, 1.0);
+  vec3 q = p;
+  // slice 6: haft anchored at the HEAD — the tip meets the eye at x=0, the
+  // base drifts (card: haftSpine). u_haftCurve arrives pre-tamed (HAFT_CURVE_TAME).
+  q.x -= u_haftCurve * (t * t - 1.0) * u_haftLen;
+  float hr = u_haftR * (1.0 + 0.18 * (1.0 - t));
+  float dHaft = sdCapsule(q, vec3(0.0), vec3(0.0, u_haftLen, 0.0), hr) * 0.9;
+  vec2 res = vec2(dHaft, MAT_WOOD);
+
+  // v6: haft_wrap — a real cord-wrapped band at two hand positions (the same
+  // MAT_GRIP treatment the sword grip already gets), replacing the old
+  // sub-pixel radius ripple that never touched surfaceMat's wood-grain response.
+  if (u_haftWrap > 0.5) {
+    const float WRAP_HALF_WIDTH = 0.11;  // half-width of each band, haft-length fraction
+    const float WRAP_BULGE = 1.22;       // cord radius vs bare haft radius
+    const float WRAP_COIL_FREQ = 46.0;   // helical coil count along the band
+    const float WRAP_COIL_AMP = 0.0012;
+    float wMask = max(smoothstep(WRAP_HALF_WIDTH, 0.0, abs(t - 0.16)),
+                       smoothstep(WRAP_HALF_WIDTH, 0.0, abs(t - 0.86)));
+    // slice 8 GLITCH FIX: the old mix(1e9, dWrap, step()) idiom
+    // poisons the distance field (1e9 through mix invites inf/NaN on reduced-
+    // precision drivers) — bisected as the source of the phantom "beige band"
+    // artifact field. A plain branch keeps the union clean; outside the band
+    // the wrap is simply absent.
+    if (wMask > 0.02) {
+      float coil = 0.5 + 0.5 * sin(p.y * WRAP_COIL_FREQ);
+      float wr = hr * mix(1.0, WRAP_BULGE, wMask) + WRAP_COIL_AMP * coil * wMask;
+      float dWrap = sdCapsule(q, vec3(0.0), vec3(0.0, u_haftLen, 0.0), wr) * 0.9;
+      res = opU(res, vec2(dWrap, MAT_GRIP));
+    }
+  }
+
+  // v6: haft_butt — a flared cap knob unioned onto the haft's base end.
+  if (u_haftButt > 0.5) {
+    const float BUTT_HALF_H = 0.028;
+    const float BUTT_FLARE = 1.35;
+    float dButtCap = sdCylY(q, BUTT_HALF_H, hr * BUTT_FLARE);
+    // clamp the fillet to the cap's neighborhood: raw smin(x, dHaft) <= dHaft
+    // along the ENTIRE haft, so this steel branch used to win the material
+    // union over the wood everywhere (whole haft rendered steel).
+    float dButt = max(smin(dButtCap, dHaft, 0.02), dButtCap - 0.03);
+    res = opU(res, vec2(dButt, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  }
+
+  // v7 slice 5: leaf-shaped butt blade on ornate rolls (card: buildHaftHardware,
+  // same 0.085 length / 0.016 half-width leaf profile)
+  if (u_ornTier > 1.5) {
+    float bt2 = clamp(-p.y / 0.085, 0.0, 1.0);
+    float leafW = max(0.016 * sin(3.14159 * min(bt2 * 1.25, 1.0)), 0.0012);
+    vec2 dl = vec2(length(q.xz) - leafW, max(p.y - 0.004, -p.y - 0.085));
+    float dLeaf = min(max(dl.x, dl.y), 0.0) + length(max(dl, 0.0)) * 0.9;
+    res = opU(res, vec2(dLeaf, MAT_STEEL));
+  }
+
+  // v7 ornament: stacked plate collars under the head (card: buildPlateCollars —
+  // same 0.018 band height / 0.014 gap / 1.45 width vocabulary)
+  if (u_ornPlateCollars > 0.5) {
+    for (int ci = 0; ci < 3; ci++) {
+      if (float(ci) < u_ornPlateCollars - 0.5) {
+        float cyy = axeHeadY() - u_headHalfH * u_hdScale - 0.009 - float(ci) * 0.032;
+        float ctt = clamp(cyy / u_haftLen, 0.0, 1.0);
+        float chr = u_haftR * (1.0 + 0.18 * (1.0 - ctt));
+        float dCol = sdCylY(q - vec3(0.0, cyy, 0.0), 0.009, chr * 1.45);
+        res = opU(res, vec2(dCol, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+      }
+    }
+  }
+
+  // -- head: disc-cut wedge, optionally mirrored (double bit) --
+  vec3 h = p - vec3(0.0, axeHeadY(), 0.0);
+  float side = h.x < 0.0 ? -1.0 : 1.0;                 // which bit, retained through the mirror
+  bool isDoubleBit = (u_headType > 1.5 && u_headType < 2.5);
+  if (isDoubleBit) h.x = abs(h.x);   // double_bit
+
+  float halfH = axeHalfH();   // broad/war muls + slice-6 head-presence scale
+
+  // v6: poll_type's roll was dead on double_bit heads (no poll geometry ever
+  // renders there — see below). Repurpose it to skew reach/sweep between the
+  // two bits instead of leaving the draw with zero visual effect: real
+  // double-bits are rarely perfectly symmetric.
+  float pollAsym = isDoubleBit ? u_pollType * 0.14 : 0.0;   // 0 / 0.14 / 0.28
+  float edgeReachA = u_edgeReach * (1.0 + pollAsym * side) * u_hdScale;
+  float dBody;
+  float sx = clamp(h.x / edgeReachA, 0.0, 1.0);
+  if (isDoubleBit) {
+    // double-bit keeps the legacy disc-cut this slice (craft pass later)
+    float R = mix(2.6, 0.55, u_edgeSweep) * halfH * (1.0 - 0.12 * pollAsym * side) + edgeReachA;
+    vec2 c = vec2(edgeReachA - R, 0.0);
+    float dDisc = length(h.xy - c) - R;
+    if (u_wear > 0.55) {
+      float ea = atan(h.y, h.x - c.x);
+      float nick = smoothstep(0.75, 1.0, vnoise(vec2(ea * 14.0, 2.3)));
+      dDisc += nick * (u_wear - 0.55) * halfH * 0.18;
+    }
+    float vLim = abs(h.y) - mix(halfH * 0.42, halfH, sx);
+    dBody = max(dDisc, max(vLim, -h.x - u_haftR * 1.6));
+  } else {
+    // v7 head plan: profile-driven edge (shared axeEdgeReachAt — also feeds
+    // surfaceMat's edge-following damascus coordinate)
+    float yBot = -halfH * (1.0 + 0.85 * u_hdHornBotDrop);
+    float reachY = axeEdgeReachAt(h.y);
+    // v4 edge nicks ride the profile now
+    if (u_wear > 0.55) {
+      float nick = smoothstep(0.75, 1.0, vnoise(vec2(h.y * 14.0, 2.3)));
+      reachY -= nick * (u_wear - 0.55) * halfH * 0.18;
+    }
+    float dEdgeCut = (h.x - reachY) * 0.5;   // heightfield cut, gradient-safe scale
+                                             // (0.5: slice-6 belly/recurve steepened the
+                                             // profile — 0.7 could overshoot at horn tips)
+    float vLim = max(h.y - halfH, yBot - h.y);
+    dBody = max(dEdgeCut, max(vLim, -h.x - u_haftR * 1.6));
+    // gothic eye cusps: scallop bites along the blade root (card: CUSP_DEPTH_FRAC)
+    for (int ci = 0; ci < 3; ci++) {
+      if (float(ci) < u_hdCusps - 0.5) {
+        float yc = mix(halfH * 0.92, -halfH, (float(ci) + 0.5) / max(u_hdCusps, 1.0));
+        float dCusp = length(h.xy - vec2(0.0, yc)) - halfH * 0.10;
+        dBody = max(dBody, -dCusp);
+      }
+    }
+  }
+
+  // v6: beard is gated fully to bearded heads (0 elsewhere) — the other three
+  // head types no longer get a dampened partial hook indistinguishable from
+  // "no beard." beard_depth's reclaimed roll is spent below (war poll spike).
+  bool isBearded = u_headType < 0.5;
+  float beard = isBearded ? max(u_beardDepth, 0.18) : 0.0;
+  float dBeard = length(h.xy - vec2(edgeReachA * 0.42, -halfH * (0.2 + beard)))
+               - halfH * (0.55 + beard * 0.5);
+  // same 1e9-mix idiom as the wrap (slice 8 glitch fix): branch, don't mix
+  if (beard > 0.05) dBody = max(dBody, -dBeard);
+
+  float thick = mix(u_cheek, 0.004, sx);
+  // v6: cheek_profile bows the face radially from the eye instead of the old
+  // flat-slab clamp — concave (hollow-ground hewing face) or convex (forged
+  // bulge). Falls off toward the thin outer edge so the silhouette is unchanged.
+  float rFromEye = length(h.xy) / max(halfH * 1.8, 1e-4);
+  float bowFall = 1.0 - smoothstep(0.0, 1.0, rFromEye);
+  float cheekBow = 0.0;
+  if (u_cheekProfile > 1.5)      cheekBow =  thick * 0.60 * bowFall;   // convex
+  else if (u_cheekProfile > 0.5) cheekBow = -thick * 0.50 * bowFall;   // concave
+  // v7 ornament: pierced cheek cutout — the same placement formula as
+  // piercePlacement() (ornament.mjs), so both media cut the same hole.
+  // Skipped on double-bit heads in BOTH media (no single eye-to-edge span).
+  float dHead = max(dBody, abs(h.z) - (thick + cheekBow));
+  if (u_ornPierceOn > 0.5 && !isDoubleBit && u_hdBackForm < 1.5) {
+    float eyeR = u_haftR * 1.9;
+    float pxMax = edgeReachA * 0.82;
+    float pr = min(u_ornPierceR * halfH * 2.0, halfH * 0.75);
+    float plo = eyeR + 0.008 + pr;
+    float phi = pxMax - pr;
+    if (pr > 0.004 && plo <= phi) {
+      float pcx = plo + (phi - plo) * u_ornPierceT;
+      float dPierce = length(h.xy - vec2(pcx, 0.0)) - pr;
+      dHead = max(dHead, -dPierce);
+    }
+  }
+  res = opU(res, vec2(dHead * 0.8, MAT_STEEL));
+
+  // v7 ornament: rear fluke — a drooping back spike (card: buildBackFluke,
+  // same reach 0.5+0.9r / droop 0.7rad / root-y 0.25 / root-w 0.20 vocabulary)
+  if (u_ornFlukeOn > 0.5 && !isDoubleBit && u_hdBackForm > 0.5 && u_hdBackForm < 1.5) {
+    float fr = edgeReachA * (0.5 + 0.9 * u_ornFlukeReach);
+    float fa = 0.7 * u_ornFlukeDroop;
+    vec2 fdir = vec2(-cos(fa), -sin(fa));
+    vec3 fh = h - vec3(0.0, halfH * 0.25, 0.0);
+    float ft = clamp(dot(fh.xy, fdir) / fr, 0.0, 1.0);
+    vec2 fnear = fdir * (ft * fr);
+    float dFluke = length(vec2(length(fh.xy - fnear), fh.z)) - mix(halfH * 0.20, 0.003, ft);
+    res = opU(res, vec2(dFluke, MAT_STEEL));
+  }
+
+  // v7 head plan: composed ring fluke — annulus (true void) + neck + two points
+  // (card: buildRingFluke, same Ri 0.44 / Ro 0.70 / clear 0.010 / web 0.62 numbers).
+  // slice 6: the neck is a full back PLATE (0.62 halfH) so the ring reads as
+  // fused into the head with the void punched through, not a floating donut.
+  if (u_hdBackForm > 1.5 && !isDoubleBit) {
+    float eyeR2 = u_haftR * 1.9;
+    float rRi = halfH * 0.44, rRo = halfH * 0.70;
+    vec2 bc = vec2(-(eyeR2 + 0.010 + rRo), halfH * 0.10);
+    vec2 rp = h.xy - bc;
+    float ringXY = abs(length(rp) - (rRo + rRi) * 0.5) - (rRo - rRi) * 0.5;
+    float dRing = max(ringXY, abs(h.z) - u_cheek * 0.9);
+    res = opU(res, vec2(dRing * 0.9, MAT_STEEL));
+    vec3 np = h - vec3((bc.x + rRi) * 0.5, bc.y, 0.0);
+    float dNeck = sdBox(np, vec3(abs(bc.x + rRi) * 0.5 + 0.002, halfH * 0.62, u_cheek * 0.8));
+    res = opU(res, vec2(dNeck, MAT_STEEL));
+    float ptReach = halfH * (0.45 + 0.45 * u_ornFlukeReach);
+    for (int pi = 0; pi < 2; pi++) {
+      float pa = pi == 0 ? 2.0595 : 4.2237;            // 118deg / 242deg
+      float pMul = pi == 0 ? 1.0 : 0.55;
+      float pRootW = pi == 0 ? 0.15 : 0.11;
+      vec2 pDir = vec2(cos(pa), sin(pa));
+      vec2 pBase = bc + pDir * rRo * 0.92;
+      float pLen = ptReach * pMul + rRo * 0.08;
+      float pt = clamp(dot(h.xy - pBase, pDir) / pLen, 0.0, 1.0);
+      vec2 pNear = pBase + pDir * (pt * pLen);
+      float dPt = length(vec2(length(h.xy - pNear), h.z)) - mix(halfH * pRootW, 0.003, pt);
+      res = opU(res, vec2(dPt, MAT_STEEL));
+    }
+  }
+
+  // v7 head plan: top spike (card: buildTopSpike, base 0.22R / root 0.16 halfH)
+  if (u_hdSpikeOn > 0.5 && !isDoubleBit) {
+    vec2 sBase = vec2(edgeReachA * 0.22, halfH * 0.88);
+    vec2 sTip = sBase + vec2(u_hdSpikeLean * halfH * 1.2, u_hdSpikeH * halfH * 1.1);
+    vec2 sDelta = sTip - sBase;
+    float sLen = max(length(sDelta), 1e-4);
+    vec2 sDir = sDelta / sLen;
+    float st = clamp(dot(h.xy - sBase, sDir) / sLen, 0.0, 1.0);
+    vec2 sNear = sBase + sDir * (st * sLen);
+    float dSpike = length(vec2(length(h.xy - sNear), h.z)) - mix(halfH * 0.16, 0.003, st);
+    res = opU(res, vec2(dSpike, MAT_STEEL));
+  }
+
+  // -- eye collar --
+  float dEye = sdCylY(h, halfH * 0.5, u_haftR * 1.9);
+  res = opU(res, vec2(dEye, MAT_STEEL));
+
+  // v6: langets — metal straps from the eye collar running down the haft,
+  // hugging its surface front and back via the same abs-fold the eye collar's
+  // radial symmetry already relies on.
+  if (u_langetLen > 0.015) {
+    float lTopY = axeHeadY() - halfH * 0.55;
+    float lMidY = lTopY - u_langetLen * 0.5;
+    float ltt = clamp(lMidY / u_haftLen, 0.0, 1.0);
+    float lhr = u_haftR * (1.0 + 0.18 * (1.0 - ltt));
+    vec3 lp = p - vec3(u_haftCurve * (ltt * ltt - 1.0) * u_haftLen, lMidY, 0.0);
+    lp.z = abs(lp.z) - (lhr + 0.006);
+    float dLanget = sdBox(lp, vec3(u_haftR * 1.4, u_langetLen * 0.5, u_haftR * 0.28));
+    // clamp the fillet to the strap's neighborhood (same bug as the butt cap:
+    // unbounded smin vs dHaft made this steel branch win the whole haft).
+    float dLangetU = max(smin(dLanget, dHaft, 0.018), dLanget - 0.022);
+    res = opU(res, vec2(dLangetU, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  }
+
+  // -- poll (skip on double bit — a real double-bit has an edge on both ends;
+  //    skip under the ring fluke — the composed back replaces it) --
+  if (!isDoubleBit && u_hdBackForm < 1.5) {
+    float pl = 1e9;
+    if (u_pollType > 1.5) {          // spike
+      // v6: war axes reclaim the beard_depth roll (dead on every non-bearded
+      // head) to drive poll spike length — a longer reach on the war-pick.
+      float spikeMul = (u_headType > 2.5) ? (1.0 + u_beardDepth * 1.3) : 1.0;
+      float spikeReach = edgeReachA * 0.5 * spikeMul;
+      float tt = clamp(-h.x / spikeReach, 0.0, 1.0);
+      vec2 d = vec2(length(h.yz) - mix(halfH * 0.22, 0.002, tt), max(h.x, -h.x - spikeReach));
+      pl = min(max(d.x, d.y), 0.0) + length(max(d, 0.0)) * 0.85;
+    } else if (u_pollType > 0.5) {   // hammer: stubby block, must not read as a second blade
+      pl = sdBox(h - vec3(-u_haftR * 2.2, 0.0, 0.0), vec3(u_haftR * 1.05, halfH * 0.26, u_cheek * 1.2));
+    } else {                        // flat: a deliberate flat poll plate, not just bare head-back
+      pl = sdBox(h - vec3(-u_haftR * 1.5, 0.0, 0.0), vec3(u_haftR * 0.85, halfH * 0.30, u_cheek * 1.3));
+    }
+    res = opU(res, vec2(pl, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
+  }
+  return res;
+}
+
+vec2 map(vec3 p) { return u_class < 0.5 ? mapSword(p) : mapAxe(p); }
+
+vec3 calcNormal(vec3 p) {
+  const vec2 e = vec2(0.0008, -0.0008);
+  return normalize(
+    e.xyy * map(p + e.xyy).x + e.yyx * map(p + e.yyx).x +
+    e.yxy * map(p + e.yxy).x + e.xxx * map(p + e.xxx).x);
+}
+
+float calcAO(vec3 p, vec3 n) {
+  float occ = 0.0, sca = 1.0;
+  for (int i = 0; i < 5; i++) {
+    float hh = 0.01 + 0.05 * float(i);
+    occ += (hh - map(p + n * hh).x) * sca;
+    sca *= 0.6;
+  }
+  return clamp(1.0 - 2.2 * occ, 0.0, 1.0);
+}
+
+// -- v2: procedural studio environment, blurred analytically by roughness ----
+// dark floor + cool dome + horizon glow + two softbox strips; the strips are
+// what sells the metal. Rough surfaces widen and dim every edge (soft term).
+vec3 procEnv(vec3 rd, float rough) {
+  float soft = rough * rough;
+  float up = rd.y;
+  vec3 sky = mix(vec3(0.045, 0.055, 0.075), vec3(0.012, 0.016, 0.028),
+                 clamp(up * 1.4 + 0.4, 0.0, 1.0));
+  vec3 env = mix(vec3(0.020, 0.016, 0.013), sky,
+                 smoothstep(-0.12 - soft * 0.4, 0.10 + soft * 0.4, up));
+  env += vec3(0.050, 0.055, 0.065) * 0.6 * smoothstep(0.25 + soft, 0.0, abs(up));
+  float az = atan(rd.x, rd.z);
+  float strip1 = smoothstep(0.22 + soft * 0.9, 0.06 + soft * 0.3, abs(up - 0.55))
+               * smoothstep(1.5 + soft, 0.4, abs(az - 0.9));
+  float strip2 = smoothstep(0.30 + soft * 0.9, 0.08 + soft * 0.3, abs(up - 0.30))
+               * smoothstep(1.8 + soft, 0.5, abs(az + 1.7));
+  env += (vec3(1.0, 0.98, 0.92) * strip1 * 2.2 + vec3(0.85, 0.90, 1.0) * strip2 * 1.1)
+       / (1.0 + 6.0 * soft);
+  // presentation: cool rim strip opposite the key — separates the silhouette
+  // from the void in the museum register (loot gets its own warm rim below)
+  if (u_register < 0.5) {
+    vec3 Lm = normalize(u_lightDir);
+    float mraz = atan(-Lm.x, -Lm.z);
+    float mdAz = abs(atan(sin(az - mraz), cos(az - mraz)));
+    float mrim = smoothstep(1.1 + soft, 0.3, mdAz)
+               * smoothstep(0.55 + soft * 0.9, 0.12 + soft * 0.3, abs(up - 0.42));
+    env += vec3(0.42, 0.58, 0.95) * mrim * 1.5 / (1.0 + 6.0 * soft);
+  }
+  // v5 loot-card: warm rim strip opposite the key light — ember edge highlights
+  if (u_register > 0.5 && u_register < 1.5) {
+    vec3 L = normalize(u_lightDir);
+    float raz = atan(-L.x, -L.z);
+    float dAz = abs(atan(sin(az - raz), cos(az - raz)));
+    float rim = smoothstep(1.0 + soft, 0.25, dAz)
+              * smoothstep(0.50 + soft * 0.9, 0.10 + soft * 0.3, abs(up - 0.40));
+    env += vec3(1.0, 0.58, 0.26) * rim * 2.8 / (1.0 + 6.0 * soft);
+    env *= vec3(1.04, 0.99, 0.90);
+  }
+  return env;
+}
+
+// -- v2: grind-line tangent per part — blades along the bent spine, grips and
+// wraps circumferential, axe steel arcs around the eye, wood grain up the haft
+vec3 surfTangent(vec3 pos, vec3 n, float m) {
+  vec3 t;
+  if (u_class < 0.5) {
+    if (m < 2.5) {
+      float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
+      t = vec3(2.0 * u_curve * bt, 1.0, 0.0);        // dx/dy of the bent spine
+    } else {
+      t = vec3(-pos.z, 0.0, pos.x);
+    }
+  } else {
+    if (m < 2.5) {
+      t = vec3(-(pos.y - u_headY), pos.x, 0.0);      // sharpening arc
+    } else {
+      t = vec3(0.0, 1.0, 0.0);
+    }
+  }
+  t -= n * dot(n, t);
+  if (dot(t, t) < 1e-6) t = cross(n, vec3(0.0, 0.0, 1.0));
+  return normalize(t);
+}
+
+// -- v2: anisotropic GGX — highlight stretches along the grind tangent -------
+float ggxAniso(vec3 n, vec3 v, vec3 l, vec3 t, float rough, float aniso) {
+  vec3 h = normalize(l + v);
+  vec3 b = cross(n, t);
+  float r2 = rough * rough;
+  float ax = max(r2 * (1.0 + aniso), 2e-3);
+  float ay = max(r2 * (1.0 - aniso), 2e-3);
+  float th = dot(t, h), bh = dot(b, h), nh = clamp(dot(n, h), 0.0, 1.0);
+  float d = th * th / (ax * ax) + bh * bh / (ay * ay) + nh * nh;
+  float D = 1.0 / (3.14159265 * ax * ay * d * d + 1e-5);
+  float nl = clamp(dot(n, l), 0.0, 1.0);
+  float nv = clamp(dot(n, v), 0.0, 1.0) + 1e-3;
+  float k = 0.5 * r2 + 1e-3;
+  float G = (nl / (nl * (1.0 - k) + k)) * (nv / (nv * (1.0 - k) + k));
+  return min(D * G * nl * 0.25, 14.0);
+}
+
+// -- v2: SDF Laplacian curvature — convex (edges) > 0, concave (hollows) < 0.
+// The SDF is deliberately non-exact in places, so this is a noisy estimate;
+// the noise reads as natural wear speckle.
+float calcCurv(vec3 p) {
+  const float e = 0.012;
+  float lap =
+    map(p + vec3(e, 0.0, 0.0)).x + map(p - vec3(e, 0.0, 0.0)).x +
+    map(p + vec3(0.0, e, 0.0)).x + map(p - vec3(0.0, e, 0.0)).x +
+    map(p + vec3(0.0, 0.0, e)).x + map(p - vec3(0.0, 0.0, e)).x - 6.0 * map(p).x;
+  return lap / (e * e);
+}
+
+// background: near-black with faint vignette (linear values chosen so the
+// gamma-corrected color lands near the page's #0b0d12 stage tone)
+vec3 bgColor(vec2 uv) {
+  float vig = 1.0 - 0.35 * length(uv * 0.6);
+  vec3 c = vec3(0.0010, 0.0014, 0.0030) * vig;
+  // presentation: a soft floor pool + a flattened contact shadow under the
+  // piece, so it reads as grounded loot instead of floating in the void.
+  float pool = exp(-2.6 * length((uv - vec2(0.0, -0.66)) * vec2(1.0, 2.2)));
+  float contact = exp(-14.0 * length((uv - vec2(0.0, -0.52)) * vec2(1.6, 7.0)));
+  if (u_register > 0.5 && u_register < 1.5) {
+    // loot-card: warm ember pool low behind the piece — pedestal glow
+    c = vec3(0.0008, 0.0009, 0.0016) * vig + vec3(0.060, 0.030, 0.011) * pool;
+  } else {
+    c += vec3(0.016, 0.020, 0.030) * pool;
+  }
+  c *= 1.0 - 0.55 * contact;
+  return c;
+}
+
+// the studio env doubles as the path tracer's light field
+const float ENV_GAIN = 2.6;
+vec3 envRadiance(vec3 rd) { return procEnv(rd, 0.05) * ENV_GAIN; }
+const vec3 SUN_COL = vec3(3.2, 3.07, 2.82);
+
+// -- v3: micro-surface detail — scratch streaks stretched along the grind
+// tangent + fine isotropic pitting; amplitude follows roughness (polished =
+// cleaner). This is what makes the metal hold up at item-shot distances.
+const float MICRO_SCALE = 22.0;
+const float MICRO_AMP = 0.05;
+float microH(vec2 uv) {
+  return 0.62 * fbm(uv * vec2(3.0, 40.0)) + 0.38 * fbm(uv * vec2(44.0, 44.0) + 31.7);
+}
+vec3 microNormal(vec3 pos, vec3 n, vec3 t, float m, float rough) {
+  vec3 b = cross(n, t);
+  vec2 uv = vec2(dot(pos, t), dot(pos, b)) * MICRO_SCALE;
+  float e = 0.05;
+  float h0 = microH(uv);
+  vec2 g = vec2(microH(uv + vec2(e, 0.0)) - h0, microH(uv + vec2(0.0, e)) - h0) / e;
+  // metals get full scratch depth; leather grip is smoother; wood grain bumps hard
+  float amp = MICRO_AMP * (0.30 + 0.70 * rough) * (m < 2.5 ? 1.0 : (m > 3.5 ? 0.85 : 0.45));
+  return normalize(n - (g.x * t + g.y * b) * amp);
+}
+
+// -- v4: engraving — a chiseled inscription band along the blade flat / axe
+// cheek. Per-cell hashed tilted strokes (runic variety) between two border
+// rails. Returns groove intensity 0..1; consumed as albedo darkening + rough.
+float engraveG(vec3 pos) {
+  if (u_engraveOn < 0.5) return 0.0;
+  float lx, ly;                          // lx across (-1..1 of local width), ly along
+  if (u_class < 0.5) {
+    float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
+    if (bt < 0.10 || bt > 0.70) return 0.0;
+    float bx = pos.x - u_curve * bt * bt * u_bladeLen;
+    lx = bx / max(u_bladeW * (1.0 - u_taper * bt), 1e-4);
+    ly = bt * 22.0;
+  } else {
+    vec2 hc = pos.xy - vec2(0.0, u_headY);
+    if (abs(hc.x - u_edgeReach * 0.30) > u_edgeReach * 0.35) return 0.0;
+    lx = hc.y / max(u_headHalfH * 0.6, 1e-4);
+    ly = hc.x * 26.0;
+  }
+  if (abs(lx) > 0.8) return 0.0;
+  float cells = ly * (0.5 + u_engraveDens);
+  float cell = floor(cells);
+  float on = step(0.3, hash21(vec2(cell, 7.7)));
+  float tilt = (hash21(vec2(cell, 3.1)) - 0.5) * 1.6;
+  float stroke = smoothstep(0.30, 0.10, abs(fract(cells) - 0.5 + tilt * lx * 0.5)) * on
+               * smoothstep(0.62, 0.50, abs(lx));
+  float rail = smoothstep(0.10, 0.03, abs(abs(lx) - 0.70));
+  return max(stroke, rail * 0.8);
+}
+
+// slice 6: the kintsugi network is GOLD, period — reference carries one warm
+// accent; the rolled accent hue kept reading traffic-cone (card: GOLD_HSL)
+const vec3 VEIN_GOLD = vec3(0.865, 0.718, 0.235);
+
+// finish layer + curvature wear -> material response (shared preview / PT)
+void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float metal, out float brush) {
+  if (m < 1.5) {
+    albedo = u_steelCol;  rough = u_rough;
+    // slice 6: two-regime steel — the etched cheek darkens as the tier rises so
+    // the polished bevel can blaze against it (card: CHEEK_L_MUL_BY_TIER).
+    // slice 8: eased 0.40 -> 0.60 — the studio env is dim; 0.40 starved the
+    // path tracer and the ornate weapon vanished into the void (still-mode
+    // evidence). Dark-but-lit is the reference read; post handles the rest.
+    albedo *= u_ornTier > 1.5 ? 0.60 : (u_ornTier > 0.5 ? 0.80 : 1.0);
+    // family F0 response: bronze is intensely metallic (colored reflections),
+    // iron a duller working metal, steel in between
+    metal = u_family > 1.5 ? 0.94 : (u_family > 0.5 ? 0.82 : 0.88);
+  }
+  else if (m < 2.5) {
+    // ornate hardware trims in gold (card: gid-trim gold ramp at ornate)
+    albedo = u_ornTier > 1.5 ? VEIN_GOLD : u_accentCol;
+    rough = min(u_rough * 1.35, 0.6);  metal = 0.72;
+  }
+  else if (m < 3.5) {
+    // grip material: leather / helical cord wrap / wound wire (metallic)
+    float gang = atan(pos.z, pos.x);
+    // v6: thread u_wrapBands into the cord/wire visual band frequency so the
+    // rolled wrap count and the rendered band count agree (was hardcoded
+    // 230/420, fully decoupled from the DNA gene). Falls back to the legacy
+    // fine-grain frequency when wrap_bands is off (0 is the majority roll).
+    float wrapFreq = u_wrapBands > 0.5
+      ? (u_wrapBands * 6.283185 / max(u_gripLen, 1e-4))
+      : 230.0;
+    if (u_gripMat < 0.5) {
+      albedo = vec3(0.16, 0.11, 0.08) * (0.85 + 0.30 * fbm(vec2(pos.y * 14.0, gang * 2.0)));
+      rough = 0.62; metal = 0.0;
+    } else if (u_gripMat < 1.5) {
+      float band = 0.5 + 0.5 * sin(pos.y * wrapFreq + gang);
+      albedo = vec3(0.23, 0.17, 0.10) * (0.75 + 0.45 * band);
+      rough = 0.75 - 0.10 * band; metal = 0.0;
+    } else {
+      float wireFreq = u_wrapBands > 0.5 ? wrapFreq : 420.0;
+      float band = 0.5 + 0.5 * sin(pos.y * wireFreq + gang);
+      albedo = mix(vec3(0.45, 0.42, 0.38), vec3(0.62, 0.55, 0.42), band);
+      rough = 0.38; metal = 0.85;
+    }
+  }
+  else {
+    // wood: lengthwise grain (fast around the shaft, slow along it) + tone patches
+    float ang = atan(pos.z, pos.x);
+    float streak = fbm(vec2(ang * 5.0, pos.y * 2.4) * 4.0);
+    float tone = fbm(vec2(pos.y * 1.6, ang * 0.8) + 5.7);
+    albedo = vec3(0.30, 0.20, 0.12) * (0.72 + 0.42 * streak) * (0.85 + 0.30 * tone);
+    rough = 0.58 - 0.12 * streak;
+    metal = 0.0;
+    // v7 slice 5: criss-cross lattice carving on dressed hafts (card: buildHaftHardware)
+    if (u_ornTier > 0.5) {
+      float lat = smoothstep(0.70, 0.95, sin(pos.y * 46.0 + ang * 2.0) * sin(pos.y * 46.0 - ang * 2.0));
+      albedo *= 1.0 - 0.25 * lat;
+      rough = mix(rough, 0.72, lat * 0.5);
+    }
+  }
+
+  brush = 1.0;
+  if (m < 2.5) {
+    // -- finish layer --
+    if (u_finish < 0.5) {                 // brushed: streaks along the long axis
+      brush = 0.9 + 0.2 * hash21(vec2(floor(pos.y * 340.0), m));
+    } else if (u_finish < 1.5) {          // damascus: domain-warped welded bands
+      if (m < 1.5) {
+        vec2 dc;                          // blade-local so bands follow the curve
+        if (u_class < 0.5) {
+          float bt = clamp((pos.y - u_bladeRoot) / max(u_bladeLen, 1e-4), 0.0, 1.0);
+          dc = vec2(pos.x - u_curve * bt * bt * u_bladeLen, pos.y);
+        } else {
+          vec2 hxy = pos.xy - vec2(0.0, axeHeadY());
+          bool dbit = (u_headType > 1.5 && u_headType < 2.5);
+          if (dbit) {
+            dc = hxy;
+          } else {
+            // v7 slice 3: bands follow the forged edge — the band coordinate is
+            // distance-to-edge-profile, so the grain wraps the crescent (and the
+            // ring void) exactly like the card's concentric contours
+            dc = vec2(hxy.x - axeEdgeReachAt(hxy.y), hxy.y * 0.35);
+          }
+        }
+        vec2 wp = vec2(fbm(dc * u_damScale * 0.35 + 7.3),
+                       fbm(dc * u_damScale * 0.35 + vec2(19.1, 4.7)));
+        // slice 6: warp tamed 22 -> 12 — banding, not tangling (the same
+        // wobble<<spacing rule the card's contour etch enforces)
+        float band = sin(dot(dc, vec2(u_damScale * 0.9, u_damScale * 0.5))
+                       + (wp.x - 0.5) * u_damWarp * 12.0 + (wp.y - 0.5) * 8.0);
+        float dam = smoothstep(-0.7, 0.7, band);
+        // v7 ornament: etch depth follows the plan's damascus intensity —
+        // etch = 1.0 reproduces the legacy contrast, ornate rolls cut deeper
+        float etch = mix(0.7, 1.35, clamp(u_ornDamascus, 0.0, 1.0));
+        albedo *= mix(1.0 - 0.22 * etch, 1.0 + 0.12 * etch, dam);
+        rough = clamp(mix(rough * 0.8, rough * 1.3, dam), 0.05, 0.7);
+        // v7 ornament: gold veins gild a masked subset of band seams
+        // (kintsugi reading — ornate tier only, u_ornVeins is 0 elsewhere)
+        if (u_ornVeins > 0.0) {
+          float seam = 1.0 - abs(band);
+          float vmask = smoothstep(1.0 - u_ornVeins * 0.5, 1.0, fbm(dc * 3.7 + 11.0) * 1.35);
+          float vein = smoothstep(0.86, 0.985, seam) * vmask;
+          // slice 4: capillaries — finer branches off the trunk seams
+          float cap = smoothstep(0.93, 1.0, seam) * smoothstep(0.55, 0.95, fbm(dc * 7.1 + 3.3)) * u_ornVeins;
+          vein = max(vein, cap * 0.7);
+          albedo = mix(albedo, VEIN_GOLD * 1.35, vein);
+          rough = mix(rough, 0.18, vein);
+          metal = mix(metal, 0.95, vein);
+        }
+        // slice 8 (3D detail octaves): interleaved finer band set + micro
+        // tooth — relief reads through ROUGHNESS variation under real light
+        // transport (the same wobble<<spacing banding rule as octave 1)
+        float band2 = sin(dot(dc, vec2(u_damScale * 2.4, u_damScale * 1.3))
+                        + (wp.y - 0.5) * u_damWarp * 7.0 + wp.x * 5.0);
+        float dam2 = smoothstep(-0.6, 0.6, band2);
+        albedo *= mix(0.94, 1.05, dam2);
+        rough = clamp(rough + (dam2 - 0.5) * 0.10, 0.05, 0.75);
+        float mic = fbm(dc * u_damScale * 2.2 + 31.7);
+        albedo *= 0.92 + 0.16 * mic;
+        rough = clamp(rough + (mic - 0.5) * 0.08, 0.05, 0.8);
+      }
+    } else {                              // blued: oxidized blue-black, tight sheen
+      // bronze doesn't blue — it antiques to a browned dark patina instead
+      vec3 oxide = u_family > 1.5 ? vec3(0.52, 0.40, 0.28) : vec3(0.34, 0.42, 0.66);
+      albedo = mix(albedo * oxide * 0.6, albedo, 0.12);
+    }
+
+    // -- v4: engraved band — chiseled grooves darken and dull the floor.
+    // Applied before wear so a polished edge can still cut across the band.
+    if (m < 1.5) {
+      float eg = engraveG(pos);
+      albedo *= 1.0 - 0.55 * eg;
+      rough = mix(rough, 0.55, eg * 0.7);
+    }
+
+    // -- curvature wear: convex edges polish bright, hollows collect grime --
+    // v7 ornament: edge-light — the plan can polish edges independently of
+    // wear (baseline 0.35 = legacy wear-only behavior)
+    float curv = calcCurv(pos);
+    float edgePolish = max(u_wear, (u_ornEdgeLight - 0.35) * 1.4);
+    float edgeWear = smoothstep(3.0, 26.0, curv) * edgePolish;
+    float grime = smoothstep(3.0, 18.0, -curv) * (0.25 + 0.75 * u_wear);
+    rough = mix(rough, 0.10, edgeWear);
+    albedo = mix(albedo, albedo * 0.5, grime * 0.55);
+    albedo = mix(albedo, min(albedo * 1.25 + 0.05, vec3(1.0)), edgeWear * 0.6);
+
+    // slice 6: bevel value flip — the polished band along the axe edge blazes
+    // (bright, near-mirror, faint blue-violet iridescence) against the etched
+    // cheek. Card twin: the gid-bevel iridescent ramp + near-solid band opacity.
+    if (m < 1.5 && u_class > 0.5 && !(u_headType > 1.5 && u_headType < 2.5)) {
+      vec2 bxy = pos.xy - vec2(0.0, axeHeadY());
+      float bhh = axeHalfH();
+      if (bxy.x > 0.0 && bxy.y < bhh * 1.05 && bxy.y > -bhh * (1.05 + 0.85 * u_hdHornBotDrop)) {
+        float edist = axeEdgeReachAt(bxy.y) - bxy.x;            // >0 inside the edge
+        float bw = max(u_hdBevel, 0.05) * u_edgeReach * u_hdScale * 1.4;
+        float bev = smoothstep(bw, bw * 0.45, edist) * step(-0.004, edist);
+        float blaze = bev * (0.45 + 0.55 * u_ornEdgeLight);
+        vec3 irid = mix(vec3(0.80, 0.86, 1.00), vec3(0.93, 0.86, 1.02), 0.5 + 0.5 * sin(bxy.y * 24.0));
+        albedo = mix(albedo, irid * 0.92, blaze);
+        rough = mix(rough, 0.05, blaze);
+        metal = mix(metal, 0.92, blaze);
+      }
+    }
+
+    // -- v4: family degradation — iron rusts, bronze grows verdigris. Blotches
+    // seed from fbm, favor grimy hollows, and scale with wear. Steel unaffected.
+    if (u_family > 0.5 && m < 1.5) {
+      float blotch = fbm(vec2(pos.y * 7.0, pos.x * 9.0 + pos.z * 5.0));
+      float spread = smoothstep(0.62, 0.95, blotch + grime * 0.35)
+                   * smoothstep(0.15, 0.80, u_wear);
+      if (u_family < 1.5) {
+        albedo = mix(albedo, vec3(0.42, 0.20, 0.10) * (0.7 + 0.6 * blotch), spread);
+        rough = mix(rough, 0.85, spread);
+        metal = mix(metal, 0.15, spread);
+      } else {
+        albedo = mix(albedo, vec3(0.24, 0.50, 0.42) * (0.6 + 0.5 * blotch), spread * 0.85);
+        rough = mix(rough, 0.80, spread * 0.85);
+        metal = mix(metal, 0.20, spread * 0.85);
+      }
+    }
+  }
+}
+` + TONE;
+
+// -- D3D compile fix (2026-07-05) ---------------------------------------
+// ANGLE-d3d11 (Chrome's Windows default) crashes its GPU process compiling
+// this combined shader (PC-headless probe, forge-compile-ab.ps1) — the
+// dominant cost is map()'s u_class branch, inlined at ~500 call sites
+// across the march/shadow/AO/normal loops, so the compiler must generate
+// BOTH mapSword and mapAxe at every site even though only one is ever live
+// for a given weapon. Specializing per class removes the dead half from
+// each call site instead of trying to shrink either function. ANGLE-gl
+// survives the combined shader either way; this is purely for d3d11.
+function sliceBraceFn(src, signature) {
+  const sigIdx = src.indexOf(signature);
+  if (sigIdx < 0) throw new Error('sliceBraceFn: not found — ' + signature);
+  const braceIdx = src.indexOf('{', sigIdx);
+  let depth = 0, endIdx = -1;
+  for (let i = braceIdx; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) { endIdx = i; break; } }
+  }
+  if (endIdx < 0) throw new Error('sliceBraceFn: unbalanced braces — ' + signature);
+  return { start: sigIdx, end: endIdx + 1 };
+}
+function specializeScene(keepFn) {
+  const dropFn = keepFn === 'mapSword' ? 'mapAxe' : 'mapSword';
+  const dispatch = sliceBraceFn(SCENE, 'vec2 map(vec3 p)');
+  const dropped = sliceBraceFn(SCENE, 'vec2 ' + dropFn + '(vec3 p) {');
+  const ops = [
+    { ...dispatch, replacement: 'vec2 map(vec3 p) { return ' + keepFn + '(p); }' },
+    { ...dropped, replacement: '' },
+  ].sort((a, b) => b.start - a.start);
+  let s = SCENE;
+  for (const op of ops) s = s.slice(0, op.start) + op.replacement + s.slice(op.end);
+  return s;
+}
+const SCENE_SWORD = specializeScene('mapSword');
+const SCENE_AXE = specializeScene('mapAxe');
+
+const PREVIEW_MAIN = `
+void main() {
+  vec2 uv = (2.0 * gl_FragCoord.xy - u_res) / u_res.y;
+
+  vec3 target = vec3(0.0, u_centerY, 0.0);
+  float cp = cos(u_pitch), sp = sin(u_pitch);
+  float cy = cos(u_yaw),  sy = sin(u_yaw);
+  vec3 ro = target + u_dist * vec3(sy * cp, sp, cy * cp);
+  vec3 fw = normalize(target - ro);
+  vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(rt, fw);
+  vec3 rd = normalize(fw + 0.62 * (uv.x * rt + uv.y * up));
+
+  vec3 col = bgColor(uv);
+
+  float tt = 0.0; float mat = -1.0;
+  for (int i = 0; i < 100; i++) {
+    vec3 pos = ro + rd * tt;
+    vec2 h = map(pos);
+    if (h.x < 0.0008 * tt) { mat = h.y; break; }
+    tt += h.x;
+    if (tt > 20.0) break;
+  }
+
+  if (mat > 0.0) {
+    vec3 pos = ro + rd * tt;
+    vec3 n = calcNormal(pos);
+    float ao = calcAO(pos, n);
+    float isMetal = mat < 2.5 ? 1.0 : 0.0;
+
+    vec3 tan1 = surfTangent(pos, n, mat);
+    vec3 albedo; float rough; float metal; float brush;
+    surfaceMat(pos, mat, albedo, rough, metal, brush);
+    // stylized keeps the raw normal — micro scratches speckle the toon bands
+    if (u_register < 1.5) n = microNormal(pos, n, tan1, mat, rough);
+    tan1 = normalize(tan1 - n * dot(n, tan1));
+
+    vec3 L = normalize(u_lightDir);
+    float dif = clamp(dot(n, L), 0.0, 1.0);
+    float aniso = isMetal > 0.5 ? u_aniso : 0.12;
+    float spec = ggxAniso(n, -rd, L, tan1, rough, aniso) * brush;
+    float fre = pow(1.0 - clamp(dot(n, -rd), 0.0, 1.0), 3.0);
+    vec3 env = procEnv(reflect(rd, n), rough);
+
+    if (u_register > 1.5) {          // v5 stylized: banded light, stepped highlight
+      dif = floor(dif * 3.0 + 0.35) / 3.0;
+      spec = smoothstep(0.30, 0.45, spec) * 1.1;
+      env = mix(vec3(dot(env, vec3(0.333))), env, 0.35) * 0.8;
+      fre *= 0.4;
+    }
+
+    vec3 c = albedo * (0.16 * ao + 0.80 * dif);
+    c += metal * env * (albedo * 0.7 + 0.3) * (0.30 + 0.70 * fre) * 2.4 * ao;
+    c += spec * vec3(1.0, 0.985, 0.95) * (0.35 + 0.65 * dif) * mix(0.02, 0.16, isMetal);
+    c += (1.0 - metal) * env * fre * 0.5 * ao;
+    if (u_register > 1.5) {          // ink silhouette rim
+      c *= 0.15 + 0.85 * smoothstep(0.04, 0.30, dot(n, -rd));
+    }
+    col = c;
+  }
+
+  col = aces(col * EXPOSURE);
+  col = pow(col, vec3(0.4545));
+  col = postGrade(col, uv);
+  col += (hash21(gl_FragCoord.xy) - 0.5) / 255.0;
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+// per-class preview programs (D3D compile fix, see specializeScene above) —
+// the crash was traced to THIS program (compiled eagerly, first thing the
+// page does): even the single-bounce preview shader crashes ANGLE-d3d11's
+// GPU process when both mapSword and mapAxe are compiled into it together.
+const PREVIEW_FRAG_SWORD = 'precision highp float;\n' + SCENE_SWORD + PREVIEW_MAIN;
+const PREVIEW_FRAG_AXE = 'precision highp float;\n' + SCENE_AXE + PREVIEW_MAIN;
+
+// Progressive path tracer: one sample per frame, summed into a float buffer.
+// Real light transport is what single-bounce can't fake: the blade reflecting
+// the guard, soft light from the studio strips, true anti-aliasing via jitter.
+const PT_MAIN = `
+uniform sampler2D u_prev;
+uniform float u_frame;
+out vec4 fragOut;
+
+float rnd(inout uint s) {
+  s = s * 747796405u + 2891336453u;
+  uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return float((w >> 22u) ^ w) / 4294967296.0;
+}
+
+void main() {
+  // decorrelate neighboring pixels: sequential seeds (x + y*W) through the
+  // one-step PCG stay correlated, and the DOF disc sampling turns that into
+  // visible dashed bokeh rings of the env strips at low sample counts.
+  uint seed = uint(gl_FragCoord.x) * 1973u
+            ^ uint(gl_FragCoord.y) * 9277u
+            ^ (uint(u_frame) + 1u) * 26699u;
+  rnd(seed); rnd(seed);
+  vec2 jit = vec2(rnd(seed), rnd(seed)) - 0.5;
+  vec2 uv = (2.0 * (gl_FragCoord.xy + jit) - u_res) / u_res.y;
+
+  vec3 target = vec3(0.0, u_centerY, 0.0);
+  float cp = cos(u_pitch), sp = sin(u_pitch);
+  float cy = cos(u_yaw),  sy = sin(u_yaw);
+  vec3 ro = target + u_dist * vec3(sy * cp, sp, cy * cp);
+  vec3 fw = normalize(target - ro);
+  vec3 rt = normalize(cross(fw, vec3(0.0, 1.0, 0.0)));
+  vec3 up = cross(rt, fw);
+  vec3 rd = normalize(fw + 0.62 * (uv.x * rt + uv.y * up));
+
+  // v5: thin-lens DoF — focal plane through the orbit target. Museum opens the
+  // aperture for a macro-photo feel; loot-card keeps most of the piece sharp.
+  {
+    float aperture = u_register < 0.5 ? 0.030 : 0.014;
+    float lr = sqrt(rnd(seed)) * aperture, lphi = 6.2831853 * rnd(seed);
+    vec3 fp = ro + rd * (u_dist / max(dot(rd, fw), 1e-3));
+    ro += (cos(lphi) * rt + sin(lphi) * up) * lr;
+    rd = normalize(fp - ro);
+  }
+
+  vec3 col = vec3(0.0), thr = vec3(1.0);
+  for (int b = 0; b < 3; b++) {
+    float tt = 0.0; float mat = -1.0;
+    for (int i = 0; i < 110; i++) {
+      vec2 hh = map(ro + rd * tt);
+      if (hh.x < max(0.0004, 0.0008 * tt)) { mat = hh.y; break; }
+      tt += hh.x;
+      if (tt > 20.0) break;
+    }
+    if (mat < 0.0) {
+      col += thr * (b == 0 ? bgColor(uv) : envRadiance(rd));
+      break;
+    }
+
+    vec3 pos = ro + rd * tt;
+    vec3 n = calcNormal(pos);
+    if (dot(n, rd) > 0.0) n = -n;
+    vec3 t = surfTangent(pos, n, mat);
+    vec3 albedo; float rough; float metal; float brush;
+    surfaceMat(pos, mat, albedo, rough, metal, brush);
+    n = microNormal(pos, n, t, mat, rough);
+    t = normalize(t - n * dot(n, t));
+    vec3 bt = cross(n, t);
+    float aniso = mat < 2.5 ? u_aniso : 0.10;
+    vec3 F0 = mix(vec3(0.04), albedo, metal);
+
+    // next-event estimation: one shadow ray to the key light per bounce
+    vec3 L = normalize(u_lightDir);
+    float nl = dot(n, L);
+    if (nl > 0.0) {
+      float occ = 1.0;
+      float st = 0.012;
+      for (int i = 0; i < 40; i++) {
+        float hh = map(pos + n * 0.004 + L * st).x;
+        if (hh < 0.0006) { occ = 0.0; break; }
+        st += max(hh, 0.006);
+        if (st > 6.0) break;
+      }
+      if (occ > 0.0) {
+        float sp2 = ggxAniso(n, -rd, L, t, rough, aniso);
+        vec3 brdf = albedo * (1.0 - metal) * 0.3183 * nl + F0 * sp2;
+        col += thr * brdf * SUN_COL;
+      }
+    }
+
+    // sample the next direction: anisotropic GGX lobe or cosine diffuse
+    float pSpec = clamp(metal + 0.25, 0.05, 1.0);
+    if (rnd(seed) < pSpec) {
+      float r2v = rough * rough;
+      float ax = max(r2v * (1.0 + aniso), 2e-3), ay = max(r2v * (1.0 - aniso), 2e-3);
+      float phi = 6.2831853 * rnd(seed);
+      float rr = rnd(seed);
+      float tn = sqrt(rr / max(1.0 - rr, 1e-6));
+      vec3 h = normalize((tn * ax * cos(phi)) * t + (tn * ay * sin(phi)) * bt + n);
+      vec3 nd = reflect(rd, h);
+      float ndl2 = dot(n, nd);
+      if (ndl2 <= 0.0) break;
+      float vh = max(dot(-rd, h), 1e-4);
+      float nh = max(dot(n, h), 1e-4);
+      float nv = max(dot(n, -rd), 1e-3);
+      vec3 F = F0 + (1.0 - F0) * pow(1.0 - vh, 5.0);
+      float k = r2v * 0.5 + 1e-3;
+      float G = (ndl2 / (ndl2 * (1.0 - k) + k)) * (nv / (nv * (1.0 - k) + k));
+      thr *= min(F * (G * vh / (nh * nv)) / pSpec, vec3(3.0));
+      rd = nd;
+    } else {
+      float r1 = 6.2831853 * rnd(seed);
+      float r2d = rnd(seed);
+      float sr = sqrt(r2d);
+      vec3 nd = normalize(sr * cos(r1) * t + sr * sin(r1) * bt + sqrt(1.0 - r2d) * n);
+      thr *= albedo * (1.0 - metal) / max(1.0 - pSpec, 0.05);
+      rd = nd;
+    }
+    ro = pos + n * 0.004;
+    if (max(thr.x, max(thr.y, thr.z)) < 0.01) break;
+  }
+
+  vec3 prev = texelFetch(u_prev, ivec2(gl_FragCoord.xy), 0).rgb;
+  fragOut = vec4(prev + col, 1.0);
+}
+`;
+const PT_HEADER = '#version 300 es\nprecision highp float;\nprecision highp int;\n';
+// per-class PT programs (D3D compile fix, see specializeScene above) — the
+// combined dual-class program is gone; nothing else compiles it.
+const PT_FRAG_SWORD = PT_HEADER + SCENE_SWORD + PT_MAIN;
+const PT_FRAG_AXE = PT_HEADER + SCENE_AXE + PT_MAIN;
+
+const DISPLAY_FRAG = '#version 300 es\nprecision highp float;\nuniform float u_register;\n' + TONE + `
+uniform sampler2D u_acc;
+uniform float u_n;
+out vec4 fragOut;
+float dhash(vec2 v) { return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453); }
+void main() {
+  ivec2 pc = ivec2(gl_FragCoord.xy);
+  ivec2 rs = textureSize(u_acc, 0);
+  vec3 c = texelFetch(u_acc, pc, 0).rgb / max(u_n, 1.0);
+  // v5: cheap two-ring threshold bloom straight off the HDR accumulation —
+  // highlights past BLOOM_KNEE bleed; loot-card leans on it, museum barely
+  float bw = u_register < 0.5 ? 0.10 : (u_register < 1.5 ? 0.34 : 0.0);
+  if (bw > 0.0) {
+    const float BLOOM_KNEE = 1.15;
+    vec3 bl = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+      float a = 0.7853982 * float(i);
+      vec2 d = vec2(cos(a), sin(a));
+      ivec2 p1 = clamp(pc + ivec2(d * 4.0), ivec2(0), rs - 1);
+      ivec2 p2 = clamp(pc + ivec2(d * 10.0), ivec2(0), rs - 1);
+      bl += max(texelFetch(u_acc, p1, 0).rgb / max(u_n, 1.0) - BLOOM_KNEE, 0.0)
+          + max(texelFetch(u_acc, p2, 0).rgb / max(u_n, 1.0) - BLOOM_KNEE, 0.0) * 0.6;
+    }
+    c += bl * bw / 8.0;
+  }
+  c = aces(c * EXPOSURE);
+  c = pow(c, vec3(0.4545));
+  vec2 suv = (2.0 * gl_FragCoord.xy - vec2(rs)) / float(rs.y);
+  c = postGrade(c, suv);
+  c += (dhash(gl_FragCoord.xy) - 0.5) / 255.0;
+  fragOut = vec4(c, 1.0);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Renderer
+// ---------------------------------------------------------------------------
+const BLADE_TYPES = ['arming', 'longsword', 'falchion', 'scimitar', 'leaf', 'estoc'];
+const TIP_STYLES = ['point', 'clip', 'round'];
+const BLADE_SECTIONS = ['diamond', 'lenticular', 'hollow_ground'];
+const GUARD_TYPES = ['bar', 'quillons', 'disc', 'crescent'];
+const QUILLON_TIPS = ['ball', 'flare', 'spatulate'];
+const GRIP_PROFILES = ['straight', 'waisted', 'barrel'];
+const POMMEL_TYPES = ['disc', 'sphere', 'scent_stopper', 'faceted', 'ring'];
+const HEAD_TYPES = ['bearded', 'broad', 'double_bit', 'war'];
+const CHEEK_PROFILES = ['flat', 'concave', 'convex'];
+const POLL_TYPES = ['flat', 'hammer', 'spike'];
+
+const GUARD_EXTS = ['inherit', 'swept', 'ring'];
+
+// v4 family color (craft knobs): iron dark + desaturated, bronze warm copper-gold.
+// steel_hue (185-235) leaks a little into bronze so bronzes vary hash to hash.
+const FAMILY_COLOR = {
+  steel: p => hsl2rgb(p.steel_hue, p.steel_sat, 62),
+  iron: p => hsl2rgb(p.steel_hue, p.steel_sat * 0.35, 45),
+  bronze: p => hsl2rgb(26 + (p.steel_hue - 185) * 0.14, 46, 48),
+};
+
+function hsl2rgb(h, s, l) {
+  h = ((h % 360) + 360) % 360; s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  const m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g] = [c, x]; else if (h < 120) [r, g] = [x, c];
+  else if (h < 180) [g, b] = [c, x]; else if (h < 240) [g, b] = [x, c];
+  else if (h < 300) [r, b] = [x, c]; else [r, b] = [c, x];
+  return [r + m, g + m, b + m];
+}
+
+// blade_type expresses itself through width / thickness / curve / tip emphasis
+function bladeTypeMods(p) {
+  switch (p.blade_type) {
+    case 'longsword': return { wMul: 0.90, thMul: 1.05, curveMul: 0.12 };
+    case 'falchion':  return { wMul: 1.22, thMul: 0.85, curveMul: 1.0 };
+    case 'scimitar':  return { wMul: 0.95, thMul: 0.80, curveMul: 1.25 };
+    case 'leaf':      return { wMul: 1.10, thMul: 0.95, curveMul: 0.25 };
+    case 'estoc':     return { wMul: 0.58, thMul: 1.55, curveMul: 0.08 };
+    default:          return { wMul: 1.0, thMul: 1.0, curveMul: 0.18 };   // arming
+  }
+}
+
+function createRenderer(canvas, { progressive = false } = {}) {
+  const glOpts = { antialias: false, preserveDrawingBuffer: true };
+  let gl = canvas.getContext('webgl2', glOpts);
+  const isGL2 = !!gl;
+  if (!gl) gl = canvas.getContext('webgl', glOpts);
+  if (!gl) throw new Error('WebGL unavailable');
+
+  // slice 8 freeze fix: after a GPU watchdog reset (TDR) the context dies and
+  // the canvas silently goes white — disclose it instead. (Draw tiling above
+  // is the prevention; this is the honest failure surface if it still fires.)
+  canvas.addEventListener('webglcontextlost', e => {
+    e.preventDefault();
+    const cap = document.getElementById('stage-hash');
+    if (cap) cap.textContent = '⚠ GPU context lost (driver reset) — reload the page; if it recurs, tell the forge to shrink its draw tiles';
+  });
+
+  function sh(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      throw new Error(gl.getShaderInfoLog(s));
+    }
+    return s;
+  }
+  function makeProg(vsrc, fsrc) {
+    const prog = gl.createProgram();
+    gl.attachShader(prog, sh(gl.VERTEX_SHADER, vsrc));
+    gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fsrc));
+    gl.bindAttribLocation(prog, 0, 'a_pos');
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      throw new Error(gl.getProgramInfoLog(prog));
+    }
+    const U = {};
+    const nU = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
+    for (let i = 0; i < nU; i++) {
+      const info = gl.getActiveUniform(prog, i);
+      U[info.name] = gl.getUniformLocation(prog, info.name);
+    }
+    return { prog, U };
+  }
+
+  // v10 (real-hardware freeze fix): preview compiled per class, same as
+  // before, but now BACKGROUND-compiled like PT already was — on real
+  // ANGLE-d3d11 hardware the first compile+link of the ornate axe's
+  // preview shader can take 10-60s (Usul's report), and this program used
+  // to compile via a synchronous getProgramParameter(LINK_STATUS) call at
+  // the top of render(), blocking the whole tab for that whole stretch.
+  // Same KHR_parallel_shader_compile poll pattern as ensurePT below.
+  const previewCache = {};
+  function ensurePreview(cls) {
+    if (previewCache[cls]) return previewCache[cls];
+    const src = cls === 'axe' ? PREVIEW_FRAG_AXE : PREVIEW_FRAG_SWORD;
+    const par = gl.getExtension('KHR_parallel_shader_compile');
+    const prog = gl.createProgram();
+    const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, VERT); gl.compileShader(vs);
+    const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, src); gl.compileShader(fs);
+    gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+    gl.bindAttribLocation(prog, 0, 'a_pos');
+    gl.linkProgram(prog);
+    const entry = { prog: null, U: null, ready: false, failed: false, pending: null };
+    // v11: COMPLETION_STATUS_KHR is unreliable on some driver/ANGLE combos —
+    // it can just never flip true even once the real compile has finished,
+    // which looped "compiling shader..." forever (Usul's report on real
+    // d3d11 hardware). Cap the async wait, then force the one guaranteed-
+    // correct synchronous check regardless of what the extension says.
+    const t0 = performance.now();
+    const MAX_ASYNC_WAIT_MS = 8000;
+    entry.pending = () => {
+      const asyncPending = par && !gl.getProgramParameter(prog, gl.COMPLETION_STATUS_KHR);
+      if (asyncPending && (performance.now() - t0) < MAX_ASYNC_WAIT_MS) return true;
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+        console.error('forge: preview program link failed (' + cls + ') —',
+          gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(prog));
+        entry.failed = true; entry.pending = null;
+        return false;
+      }
+      const U = {};
+      const nU = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < nU; i++) {
+        const info = gl.getActiveUniform(prog, i);
+        U[info.name] = gl.getUniformLocation(prog, info.name);
+      }
+      entry.prog = prog; entry.U = U; entry.ready = true; entry.pending = null;
+      return false;
+    };
+    return (previewCache[cls] = entry);
+  }
+  const canPT = progressive && isGL2 && !!gl.getExtension('EXT_color_buffer_float');
+  if (progressive && !canPT) console.warn('forge: WebGL2/float buffers unavailable — preview-only stage');
+
+  // v9 (D3D compile fix): PT is compiled per weapon class, not once combined
+  // — see specializeScene() above for why. Lazy + cached per class: the first
+  // begin() for a class kicks off its background compile (same
+  // KHR_parallel_shader_compile poll pattern as before, still non-blocking);
+  // switching classes later reuses the cached program.
+  const ptCache = {};
+  function ensurePT(cls) {
+    if (ptCache[cls]) return ptCache[cls];
+    const ptSrc = cls === 'axe' ? PT_FRAG_AXE : PT_FRAG_SWORD;
+    const par = gl.getExtension('KHR_parallel_shader_compile');
+    const start = (vsrc, fsrc) => {
+      const prog = gl.createProgram();
+      const vs = gl.createShader(gl.VERTEX_SHADER); gl.shaderSource(vs, vsrc); gl.compileShader(vs);
+      const fs = gl.createShader(gl.FRAGMENT_SHADER); gl.shaderSource(fs, fsrc); gl.compileShader(fs);
+      gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+      gl.bindAttribLocation(prog, 0, 'a_pos');
+      gl.linkProgram(prog);
+      return { prog, fs };
+    };
+    const jobs = [start(VERT3, ptSrc), start(VERT3, DISPLAY_FRAG)];
+    const finish = (job) => {
+      if (!gl.getProgramParameter(job.prog, gl.LINK_STATUS)) {
+        console.error('forge: PT program link failed (' + cls + ') — staying on preview.',
+          gl.getShaderInfoLog(job.fs) || gl.getProgramInfoLog(job.prog));
+        return null;
+      }
+      const U = {};
+      const nU = gl.getProgramParameter(job.prog, gl.ACTIVE_UNIFORMS);
+      for (let i = 0; i < nU; i++) {
+        const info = gl.getActiveUniform(job.prog, i);
+        U[info.name] = gl.getUniformLocation(job.prog, info.name);
+      }
+      return { prog: job.prog, U };
+    };
+    const entry = { pt: null, disp: null, pending: null };
+    // v11: same COMPLETION_STATUS_KHR unreliability guard as ensurePreview —
+    // cap the async wait so an extension that never reports done can't loop
+    // the retry forever; force the sync check after the cap either way.
+    const ptT0 = performance.now();
+    const PT_MAX_ASYNC_WAIT_MS = 8000;
+    entry.pending = () => {
+      const asyncPending = par && !jobs.every(j => gl.getProgramParameter(j.prog, gl.COMPLETION_STATUS_KHR));
+      if (asyncPending && (performance.now() - ptT0) < PT_MAX_ASYNC_WAIT_MS) return true;
+      // ready (or forced sync check past the cap — pays the wait once, here)
+      entry.pt = finish(jobs[0]);
+      entry.disp = entry.pt ? finish(jobs[1]) : null;
+      if (!entry.disp) entry.pt = null;
+      entry.pending = null;
+      return false;
+    };
+    return (ptCache[cls] = entry);
+  }
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  function setScene(U, pRaw, pose, w, h, register) {
+    const p = applyFormat(pRaw); // size format first — every uniform below reads scaled genes
+    const f = (name, v) => U[name] != null && gl.uniform1f(U[name], v);
+    const v3 = (name, a) => U[name] != null && gl.uniform3f(U[name], a[0], a[1], a[2]);
+    const L = deriveLayout(p);
+    const ornPlan = resolveOrnament(p);
+    const headPlan = resolveHeadPlan(p, ornPlan);
+
+    gl.uniform2f(U.u_res, w, h);
+    f('u_yaw', pose.yaw); f('u_pitch', pose.pitch);
+    f('u_class', p.weapon_class === 'axe' ? 1 : 0);
+
+    let centerY, span;
+    if (L.kind === 'sword') {
+      centerY = (L.tipY + L.pommelY - p.pommel_r) / 2;
+      span = L.totalLen;
+    } else {
+      centerY = p.haft_len * 0.52;
+      span = Math.max(p.haft_len, 2 * L.edgeReach * headPlan.headScale * 1.6);
+    }
+    f('u_centerY', centerY);
+    f('u_dist', span * 1.12 * pose.zoom);
+
+    const m = bladeTypeMods(p);
+    f('u_bladeRoot', p.guard_thick / 2);
+    f('u_bladeLen', p.blade_len);
+    f('u_bladeW', p.blade_w * m.wMul);
+    f('u_bladeTh', p.blade_w * 0.34 * m.thMul);
+    f('u_taper', p.blade_taper);
+    f('u_curve', p.blade_curve * m.curveMul);
+    f('u_leaf', p.blade_type === 'leaf' ? 1 : 0);
+    f('u_tipFrac', p.tip_style === 'round' ? 0.06 : p.tip_style === 'clip' ? 0.16 : 0.11);
+    f('u_tipStyle', TIP_STYLES.indexOf(p.tip_style));
+    f('u_fullerN', p.fuller_n);
+    f('u_fullerDepth', p.fuller_depth);
+    f('u_bladeSection', BLADE_SECTIONS.indexOf(p.blade_section));
+    f('u_ricassoLen', p.ricasso_len);
+    f('u_edgeBevelW', p.edge_bevel_w);
+    f('u_guardType', GUARD_TYPES.indexOf(p.guard_type));
+    f('u_guardSpan', p.guard_span);
+    f('u_guardThick', p.guard_thick);
+    f('u_guardDroop', p.guard_droop);
+    f('u_quillonCurl', p.quillon_curl);
+    f('u_quillonTip', QUILLON_TIPS.indexOf(p.quillon_tip));
+    f('u_guardShell', p.guard_shell);
+    f('u_gripLen', p.grip_len);
+    f('u_gripR', p.grip_r);
+    f('u_wrapBands', p.wrap_bands);
+    f('u_gripProfile', GRIP_PROFILES.indexOf(p.grip_profile));
+    f('u_gripRisers', p.grip_risers);
+    f('u_ferruleOn', p.ferrule_on);
+    f('u_pommelType', POMMEL_TYPES.indexOf(p.pommel_type));
+    f('u_pommelR', p.pommel_r);
+    f('u_pommelY', L.kind === 'sword' ? L.pommelY : 0);
+    f('u_pommelFacets', p.pommel_facets);
+
+    f('u_haftLen', p.haft_len);
+    f('u_haftR', p.haft_r);
+    f('u_haftCurve', p.haft_curve * HAFT_CURVE_TAME); // slice 6: near-straight hafts, head-anchored bend
+    f('u_haftWrap', p.haft_wrap);
+    f('u_headType', HEAD_TYPES.indexOf(p.head_type));
+    f('u_headY', L.kind === 'axe' ? L.headY : 0);
+    f('u_headHalfH', p.head_w / 2);
+    f('u_edgeReach', L.kind === 'axe' ? L.edgeReach : 0.2);
+    f('u_edgeSweep', p.edge_sweep);
+    // v6: beard_depth's roll is gated fully to bearded axes in-shader (0 elsewhere is
+    // enforced by u_headType branching, not here) — send the raw roll through so the
+    // war/double_bit branches can reclaim it (poll spike length / bit asymmetry) instead
+    // of the old blanket 0.4x "fake partial beard" on every non-bearded head.
+    f('u_beardDepth', p.beard_depth);
+    f('u_cheek', p.cheek_thick);
+    f('u_pollType', POLL_TYPES.indexOf(p.poll_type));
+    f('u_langetLen', p.langet_len);
+    f('u_cheekProfile', CHEEK_PROFILES.indexOf(p.cheek_profile));
+    f('u_haftButt', p.haft_butt);
+
+    v3('u_steelCol', FAMILY_COLOR[p.metal_family](p));
+    v3('u_accentCol', hsl2rgb(p.accent_hue, 58, 48));
+    f('u_accentOn', p.accent_on);
+    const M = deriveMaterial(p);
+    f('u_finish', M.finishIdx);
+    f('u_wear', M.wear);
+    f('u_damScale', M.damascusScale);
+    f('u_damWarp', M.damascusWarp);
+    f('u_aniso', M.anisoStrength);
+    f('u_rough', M.baseRoughness);
+    f('u_family', M.familyIdx);
+    f('u_gripMat', M.gripIdx);
+    f('u_guardExt', GUARD_EXTS.indexOf(p.guard_ext));
+    f('u_engraveOn', M.engraveOn);
+    f('u_engraveDens', M.engraveDensity);
+    const orn = packOrnamentUniforms(ornPlan);
+    for (const k in orn) f(k, orn[k]);
+    const hd = packHeadUniforms(headPlan);
+    for (const k in hd) f(k, hd[k]);
+    f('u_register', register);
+    const az = p.light_az * Math.PI / 180, el = p.light_el * Math.PI / 180;
+    v3('u_lightDir', [Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)]);
+  }
+
+  // -- progressive accumulation (path-traced stage only) --
+  let texs = null, fbo = null, accW = 0, accH = 0, raf = 0, running = false;
+
+  function makeTex(w, h) {
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, w, h, 0, gl.RGBA, gl.FLOAT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+
+  let ptRetry = 0;
+  function stop() {
+    running = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = 0;
+    if (ptRetry) clearTimeout(ptRetry);
+    ptRetry = 0;
+  }
+
+  function render(p, pose, w, h, register) {
+    stop();
+    const preview = ensurePreview(p.weapon_class === 'axe' ? 'axe' : 'sword');
+    if (preview.pending && preview.pending()) return 'pending';  // first compile for this class still in flight — non-blocking, caller retries
+    if (!preview.ready) return preview.failed ? 'failed' : 'pending';  // link failed (disclosed by console.error above) vs transiently not-yet-ready
+    canvas.width = w; canvas.height = h;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+    gl.useProgram(preview.prog);
+    setScene(preview.U, p, pose, w, h, register);
+    // slice 8 freeze fix: the PREVIEW pass was the last untiled draw — at
+    // stage res (~1M px) with the slice-6-8 SDF/shading it can blow the GPU
+    // watchdog (Windows TDR ~2s) and hang the whole browser, same failure
+    // the PT banding already guards against. Big canvases render in scissor
+    // bands spread across rAFs (first band immediate); thumbs stay one draw.
+    const bands = Math.max(1, Math.ceil((w * h) / CFG.previewPixelsPerDraw));
+    if (bands === 1) { gl.drawArrays(gl.TRIANGLES, 0, 3); return true; }
+    let band = 0, fence = null;
+    const step = () => {
+      if (canvas.width !== w || canvas.height !== h) return; // superseded
+      if (fence && isGL2) {
+        const ws = gl.clientWaitSync(fence, 0, 0);
+        if (ws === gl.TIMEOUT_EXPIRED) { raf = requestAnimationFrame(step); return; }
+        gl.deleteSync(fence); fence = null;
+      }
+      gl.useProgram(preview.prog);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      const y0 = Math.floor(h * band / bands), y1 = Math.floor(h * (band + 1) / bands);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, y0, w, y1 - y0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.disable(gl.SCISSOR_TEST);
+      if (isGL2) { fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); }
+      band++;
+      if (band < bands) raf = requestAnimationFrame(step);
+    };
+    step();
+    return true;
+  }
+
+  function begin(p, pose, w, h, register, onProgress) {
+    if (!canPT) return false;
+    stop();
+    const cls = p.weapon_class === 'axe' ? 'axe' : 'sword';
+    const entry = ensurePT(cls);
+    if (entry.pending && entry.pending()) {
+      // PT program still compiling in driver threads — preview stays up,
+      // re-check shortly and take over when the link lands.
+      ptRetry = setTimeout(() => begin(p, pose, w, h, onProgress), 400);
+      return false;
+    }
+    if (!entry.pt) return false;  // link failed — disclosed above, preview-only
+    const pt = entry.pt, disp = entry.disp;
+    canvas.width = w; canvas.height = h;
+    if (w !== accW || h !== accH || !texs) {
+      if (texs) texs.forEach(t => gl.deleteTexture(t));
+      texs = [makeTex(w, h), makeTex(w, h)];
+      accW = w; accH = h;
+      if (!fbo) fbo = gl.createFramebuffer();
+    }
+    for (const t of texs) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      gl.viewport(0, 0, w, h);
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    gl.useProgram(pt.prog);
+    setScene(pt.U, p, pose, w, h, register);
+    gl.useProgram(disp.prog);
+    if (disp.U.u_register != null) gl.uniform1f(disp.U.u_register, register);
+
+    let sample = 0, src = 0, tile = 0;
+    // v6 hotfix: one full-res path-trace draw can exceed the GPU watchdog
+    // budget (Windows TDR ~2s -> context loss) now that the SDF is heavier.
+    // Render each sample in horizontal bands so no single draw is ever big.
+    const tiles = Math.max(1, Math.ceil((w * h) / CFG.ptPixelsPerDraw));
+    running = true;
+    // slice 8 responsiveness fix: fence-gate submission (WebGL2) — queuing a
+    // new tile every rAF while the GPU is still chewing the last one fills
+    // the command queue until ordinary GL calls BLOCK the main thread; that
+    // read as "buttons do nothing" while the PT ran. Never more than one
+    // tile in flight; if the GPU is busy we just yield the frame.
+    let fence = null;
+    const tick = () => {
+      if (!running) return;
+      if (fence && isGL2) {
+        const ws = gl.clientWaitSync(fence, 0, 0);
+        if (ws === gl.TIMEOUT_EXPIRED) { raf = requestAnimationFrame(tick); return; }
+        gl.deleteSync(fence); fence = null;
+      }
+      // one band of the current sample: read texs[src], write sum into texs[1-src]
+      gl.useProgram(pt.prog);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texs[1 - src], 0);
+      gl.viewport(0, 0, w, h);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, texs[src]);
+      gl.uniform1i(pt.U.u_prev, 0);
+      gl.uniform1f(pt.U.u_frame, sample);
+      const y0 = Math.floor(h * tile / tiles), y1 = Math.floor(h * (tile + 1) / tiles);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, y0, w, y1 - y0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.disable(gl.SCISSOR_TEST);
+      if (isGL2) { fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); }
+      tile++;
+      if (tile < tiles) { raf = requestAnimationFrame(tick); return; }
+      tile = 0;
+      // sample complete -> display: accumulated / N -> ACES -> screen
+      gl.useProgram(disp.prog);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      gl.bindTexture(gl.TEXTURE_2D, texs[1 - src]);
+      gl.uniform1i(disp.U.u_acc, 0);
+      gl.uniform1f(disp.U.u_n, sample + 1);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      src = 1 - src;
+      sample++;
+      if (onProgress) onProgress(sample);
+      if (sample < CFG.ptMaxSamples) raf = requestAnimationFrame(tick);
+      else running = false;
+    };
+    raf = requestAnimationFrame(tick);
+    return true;
+  }
+
+  return { render, begin, stop, canPT, canvas };
+}
+
+// ---------------------------------------------------------------------------
+// Message dispatcher — owns one createRenderer() instance per canvas id.
+// ---------------------------------------------------------------------------
+const renderers = new Map(); // id -> { r: {render,begin,stop,canPT,canvas}, mode }
+
+self.onmessage = async (e) => {
+  const msg = e.data;
+  try {
+    if (msg.cmd === 'init') {
+      const r = createRenderer(msg.canvas, { progressive: !!msg.progressive });
+      renderers.set(msg.id, { r, mode: msg.mode || 'direct' });
+      self.postMessage({ cmd: 'inited', id: msg.id, canPT: r.canPT });
+      return;
+    }
+    const entry = renderers.get(msg.id);
+    if (!entry) return; // canvas not initialized (or already torn down) — drop stale messages
+
+    if (msg.cmd === 'render') {
+      const status = entry.r.render(msg.params, msg.pose, msg.w, msg.h, msg.register);
+      const reply = { cmd: 'render-result', id: msg.id, reqId: msg.reqId, status };
+      if (status === true && entry.mode === 'bitmap') {
+        const bitmap = entry.r.canvas.transferToImageBitmap();
+        reply.bitmap = bitmap;
+        self.postMessage(reply, [bitmap]);
+      } else {
+        self.postMessage(reply);
+      }
+    } else if (msg.cmd === 'begin') {
+      const started = entry.r.begin(msg.params, msg.pose, msg.w, msg.h, msg.register, (n) => {
+        self.postMessage({ cmd: 'pt-progress', id: msg.id, reqId: msg.reqId, n });
+      });
+      self.postMessage({ cmd: 'begin-result', id: msg.id, reqId: msg.reqId, started });
+    } else if (msg.cmd === 'stop') {
+      entry.r.stop();
+    } else if (msg.cmd === 'capture') {
+      const blob = await entry.r.canvas.convertToBlob({ type: 'image/png' });
+      self.postMessage({ cmd: 'capture-result', id: msg.id, reqId: msg.reqId, blob });
+    }
+  } catch (err) {
+    self.postMessage({ cmd: 'worker-error', id: msg.id, reqId: msg.reqId, message: String(err && err.message || err) });
+  }
+};
