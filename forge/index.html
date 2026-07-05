@@ -649,6 +649,16 @@ vec2 mapAxe(vec3 p) {
     res = opU(res, vec2(dButt, u_accentOn > 0.5 ? MAT_ACCENT : MAT_STEEL));
   }
 
+  // v7 slice 5: leaf-shaped butt blade on ornate rolls (card: buildHaftHardware,
+  // same 0.085 length / 0.016 half-width leaf profile)
+  if (u_ornTier > 1.5) {
+    float bt2 = clamp(-p.y / 0.085, 0.0, 1.0);
+    float leafW = max(0.016 * sin(3.14159 * min(bt2 * 1.25, 1.0)), 0.0012);
+    vec2 dl = vec2(length(q.xz) - leafW, max(p.y - 0.004, -p.y - 0.085));
+    float dLeaf = min(max(dl.x, dl.y), 0.0) + length(max(dl, 0.0)) * 0.9;
+    res = opU(res, vec2(dLeaf, MAT_STEEL));
+  }
+
   // v7 ornament: stacked plate collars under the head (card: buildPlateCollars —
   // same 0.018 band height / 0.014 gap / 1.45 width vocabulary)
   if (u_ornPlateCollars > 0.5) {
@@ -1074,6 +1084,12 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
     albedo = vec3(0.30, 0.20, 0.12) * (0.72 + 0.42 * streak) * (0.85 + 0.30 * tone);
     rough = 0.58 - 0.12 * streak;
     metal = 0.0;
+    // v7 slice 5: criss-cross lattice carving on dressed hafts (card: buildHaftHardware)
+    if (u_ornTier > 0.5) {
+      float lat = smoothstep(0.70, 0.95, sin(pos.y * 46.0 + ang * 2.0) * sin(pos.y * 46.0 - ang * 2.0));
+      albedo *= 1.0 - 0.25 * lat;
+      rough = mix(rough, 0.72, lat * 0.5);
+    }
   }
 
   brush = 1.0;

@@ -773,6 +773,17 @@ function buildCraftHead(p, layout, plan, hp, bounds) {
   layers.push({ d: polygonPath([...bevelEdge, ...ridge.slice().reverse()]), fill: 'var(--bevel-fill)', stroke: 'none', strokeWidth: 0, opacity: num(0.35 + 0.45 * plan.edgeLight), role: 'bevel' });
   layers.push({ d: polylinePath(ridge), fill: 'none', stroke: 'var(--blade-shade)', strokeWidth: 0.003, opacity: 0.6, role: 'bevel' });
 
+  // slice 5: raised plate-rim border — the "someone made this" double outline
+  if (plan.tier !== 'plain') {
+    const rcen = [
+      outline.reduce((s, pt) => s + pt[0], 0) / outline.length,
+      outline.reduce((s, pt) => s + pt[1], 0) / outline.length,
+    ];
+    const rim = outline.map(([x, y]) => [rcen[0] + (x - rcen[0]) * 0.965, rcen[1] + (y - rcen[1]) * 0.965]);
+    rim.push(rim[0]);
+    layers.push({ d: polylinePath(rim), fill: 'none', stroke: 'var(--blade-highlight)', strokeWidth: 0.0025, opacity: 0.45, role: 'rim' });
+  }
+
   if (plan.tier !== 'plain') {
     layers.push({ d: polylinePath(bevelEdge.map(([x, y]) => [x * EDGE_LIGHT_INSET, y])), fill: 'none', stroke: 'var(--blade-highlight)', strokeWidth: 0.005, opacity: num(plan.edgeLight), role: 'edge-light' });
   }
@@ -908,7 +919,7 @@ function buildCheekLine(p, cy, hh, reach) {
   return [{ d: polylinePath(pts), fill: 'none', stroke: 'var(--haft-shade)', strokeWidth: 0.003, opacity: 0.55 }];
 }
 
-function buildLangets(p, layout, bounds) {
+function buildLangets(p, layout, bounds, plan) {
   if (p.langet_len < LANGET_MIN_VISIBLE) return [];
   const yTop = layout.headY - layout.headHalfH;
   const yBot = yTop - p.langet_len * p.haft_len;
@@ -921,6 +932,12 @@ function buildLangets(p, layout, bounds) {
     const rect = [[xBase - w / 2, yTop], [xBase + w / 2, yTop], [xBase + w * 0.3, yBot], [xBase - w * 0.3, yBot]];
     bounds.noteAll(rect);
     layers.push({ d: polygonPath(rect), ...style });
+  }
+  // slice 5: riveted langets on dressed rolls — a bolt line down the strap
+  if (plan && plan.tier !== 'plain') {
+    for (let i = 0; i < 3; i++) {
+      layers.push(rivet(0, yTop + (yBot - yTop) * ((i + 0.5) / 3)));
+    }
   }
   return layers;
 }
@@ -997,6 +1014,15 @@ function buildBackFluke(p, plan, layout, bounds) {
   return [{ d: polygonPath(outline), fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.005, opacity: 1, role: 'fluke' }];
 }
 
+const RIVET_R = 0.0055;
+
+function rivet(cx, cy) {
+  return {
+    d: polygonPath(circlePoints(cx, cy, RIVET_R, RIVET_R, 8)),
+    fill: 'var(--blade-highlight)', stroke: 'var(--blade-stroke)', strokeWidth: 0.0015, opacity: 0.9, role: 'rivet',
+  };
+}
+
 function buildPlateCollars(p, plan, layout, bounds) {
   if (!(plan.plateCollars > 0)) return [];
   const spine = haftSpine(p);
@@ -1008,6 +1034,59 @@ function buildPlateCollars(p, plan, layout, bounds) {
     const band = collar(spine, t, p.haft_r * PLATE_COLLAR_W_MUL, PLATE_COLLAR_H);
     bounds.noteAll(band);
     layers.push({ d: polygonPath(band), fill: 'var(--trim)', stroke: 'none', strokeWidth: 0, opacity: 0.95, role: 'collar' });
+    // slice 5: a rivet on each shoulder of every plate collar
+    const c = spine.evalAt(t);
+    const n = spine.normalAt(t);
+    layers.push(rivet(c[0] - n[0] * p.haft_r * 0.85, c[1] - n[1] * p.haft_r * 0.85));
+    layers.push(rivet(c[0] + n[0] * p.haft_r * 0.85, c[1] + n[1] * p.haft_r * 0.85));
+  }
+  return layers;
+}
+
+// slice 5 (ornate): diamond-openwork plate near the butt + leaf butt blade +
+// criss-cross lattice wrap along the mid-haft (worked gets the lattice only)
+const OPENWORK_T = 0.16;             // haft fraction, plate center
+const OPENWORK_H = 0.075;
+const LATTICE_ZONE = [0.28, 0.72];
+const LATTICE_CROSSES = 7;
+const BUTT_BLADE_LEN = 0.085;
+const BUTT_BLADE_HALF_W = 0.016;
+
+function buildHaftHardware(p, plan, bounds) {
+  if (plan.tier === 'plain') return [];
+  const spine = haftSpine(p);
+  const layers = [];
+
+  // lattice wrap: paired diagonals crossing the shaft
+  const [z0, z1] = LATTICE_ZONE;
+  for (let i = 0; i < LATTICE_CROSSES; i++) {
+    const t0 = z0 + (z1 - z0) * (i / LATTICE_CROSSES);
+    const t1 = z0 + (z1 - z0) * ((i + 0.85) / LATTICE_CROSSES);
+    const a0 = spine.evalAt(t0), a1 = spine.evalAt(t1);
+    const n0 = spine.normalAt(t0), n1 = spine.normalAt(t1);
+    const r = p.haft_r * 0.98;
+    layers.push({ d: polylinePath([[a0[0] - n0[0] * r, a0[1] - n0[1] * r], [a1[0] + n1[0] * r, a1[1] + n1[1] * r]]), fill: 'none', stroke: 'var(--haft-shade)', strokeWidth: 0.0035, opacity: 0.55, role: 'hardware' });
+    layers.push({ d: polylinePath([[a0[0] + n0[0] * r, a0[1] + n0[1] * r], [a1[0] - n1[0] * r, a1[1] - n1[1] * r]]), fill: 'none', stroke: 'var(--haft-shade)', strokeWidth: 0.0035, opacity: 0.55, role: 'hardware' });
+  }
+
+  if (plan.tier === 'ornate') {
+    // diamond openwork plate: riveted frame with a true diamond void
+    const plate = collar(spine, OPENWORK_T, p.haft_r * 1.35, OPENWORK_H);
+    bounds.noteAll(plate);
+    const c = spine.evalAt(OPENWORK_T);
+    const dW = p.haft_r * 0.62, dH = OPENWORK_H * 0.30;
+    const diamond = [[c[0], c[1] + dH], [c[0] + dW, c[1]], [c[0], c[1] - dH], [c[0] - dW, c[1]]];
+    const rings = pierce(plate, diamond);
+    layers.push({ d: toPath(rings), fillRule: 'evenodd', fill: 'var(--trim)', stroke: 'var(--blade-stroke)', strokeWidth: 0.002, opacity: 1, role: 'hardware', outline: rings });
+    layers.push(rivet(c[0], c[1] + OPENWORK_H * 0.40));
+    layers.push(rivet(c[0], c[1] - OPENWORK_H * 0.40));
+
+    // leaf-shaped double-edged butt blade below the base
+    const base = spine.evalAt(0);
+    const leafSpine = bend([base[0], base[1] + 0.004], [base[0], base[1] - BUTT_BLADE_LEN], 0.0015);
+    const leaf = sweep(leafSpine, t => Math.max(BUTT_BLADE_HALF_W * Math.sin(Math.PI * Math.min(t * 1.25, 1)), 0.0012));
+    bounds.noteAll(leaf);
+    layers.push({ d: polygonPath(leaf), fill: 'var(--blade-fill)', stroke: 'var(--blade-stroke)', strokeWidth: 0.003, opacity: 1, role: 'hardware' });
   }
   return layers;
 }
@@ -1186,10 +1265,11 @@ function buildAxe(p, palette, plan, bounds) {
   const hp = resolveHeadPlan(p, plan);
   const layers = [];
   layers.push(...buildHaft(p, bounds));
+  layers.push(...buildHaftHardware(p, plan, bounds));
   layers.push(...buildPlateCollars(p, plan, layout, bounds));
   if (hp.backForm === 'fluke') layers.push(...buildBackFluke(p, plan, layout, bounds));
   layers.push(...buildHead(p, layout, plan, hp, bounds));
-  layers.push(...buildLangets(p, layout, bounds));
+  layers.push(...buildLangets(p, layout, bounds, plan));
   return layers;
 }
 
