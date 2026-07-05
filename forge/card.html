@@ -351,8 +351,10 @@ function startStillRender(token) {
 function armStallTimer() {
   if (stillTimer) clearTimeout(stillTimer);
   stillTimer = setTimeout(() => {
-    stopStillRender();
-    emptyNote.textContent = '⚠ render stalled (no progress for 45s) — vector card shown';
+    // do NOT kill the iframe: on software-WebGL machines the first sample can
+    // take minutes — keep the vector card up, keep listening, swap when (if)
+    // the render lands. Honest state, no lost work.
+    emptyNote.textContent = '⚠ no render progress in 45s — vector shown; still trying in the background (if this persists, check chrome://gpu — WebGL may be software-rendered)';
   }, STILL_STALL_MS);
 }
 
