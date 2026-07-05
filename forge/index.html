@@ -188,7 +188,8 @@ const CFG = {
   fov: 0.62,
   ptIdleMs: 250,        // camera stillness before the path tracer starts accumulating
   ptMaxSamples: 360,    // accumulation budget per view
-  ptPixelsPerDraw: 55000, // max pixels per PT draw call (band tiling keeps each draw under the GPU watchdog / TDR budget; lowered from 90k — slice 6-8 SDF+shading got heavier)
+  ptPixelsPerDraw: 24000, // max pixels per PT draw call (band tiling keeps each draw under the GPU watchdog / TDR budget; 90k->24k as slices 6-8 made the SDF+shading much heavier — slower is fine, a hung browser is not)
+  previewPixelsPerDraw: 200000, // same guard for the PREVIEW pass (freeze fix: it was the last untiled draw)
 };
 
 // ---------------------------------------------------------------------------
@@ -1531,6 +1532,15 @@ function createRenderer(canvas, { progressive = false } = {}) {
   if (!gl) gl = canvas.getContext('webgl', glOpts);
   if (!gl) throw new Error('WebGL unavailable');
 
+  // slice 8 freeze fix: after a GPU watchdog reset (TDR) the context dies and
+  // the canvas silently goes white — disclose it instead. (Draw tiling above
+  // is the prevention; this is the honest failure surface if it still fires.)
+  canvas.addEventListener('webglcontextlost', e => {
+    e.preventDefault();
+    const cap = document.getElementById('stage-hash');
+    if (cap) cap.textContent = '⚠ GPU context lost (driver reset) — reload the page; if it recurs, tell the forge to shrink its draw tiles';
+  });
+
   function sh(type, src) {
     const s = gl.createShader(type);
     gl.shaderSource(s, src);
@@ -1741,7 +1751,28 @@ function createRenderer(canvas, { progressive = false } = {}) {
     gl.viewport(0, 0, w, h);
     gl.useProgram(preview.prog);
     setScene(preview.U, p, pose, w, h);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    // slice 8 freeze fix: the PREVIEW pass was the last untiled draw — at
+    // stage res (~1M px) with the slice-6-8 SDF/shading it can blow the GPU
+    // watchdog (Windows TDR ~2s) and hang the whole browser, same failure
+    // the PT banding already guards against. Big canvases render in scissor
+    // bands spread across rAFs (first band immediate); thumbs stay one draw.
+    const bands = Math.max(1, Math.ceil((w * h) / CFG.previewPixelsPerDraw));
+    if (bands === 1) { gl.drawArrays(gl.TRIANGLES, 0, 3); return; }
+    let band = 0;
+    const step = () => {
+      if (canvas.width !== w || canvas.height !== h) return; // superseded
+      gl.useProgram(preview.prog);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      const y0 = Math.floor(h * band / bands), y1 = Math.floor(h * (band + 1) / bands);
+      gl.enable(gl.SCISSOR_TEST);
+      gl.scissor(0, y0, w, y1 - y0);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.disable(gl.SCISSOR_TEST);
+      band++;
+      if (band < bands) raf = requestAnimationFrame(step);
+    };
+    step();
   }
 
   function begin(p, pose, w, h, onProgress) {
@@ -2197,7 +2228,7 @@ function stillPose() {
     zoom: Number.isFinite(z) ? z : STILL_POSE.zoom,
   };
 }
-const STILL_WATCHDOG_MS = 45000;
+const STILL_WATCHDOG_MS = 75000; // smaller PT tiles stretch a 220spp still to ~1min on mid GPUs
 if (STILL_SPEC) runStill(STILL_SPEC);
 
 function runStill(spec) {
@@ -2227,7 +2258,7 @@ function runStill(spec) {
   // &mode=preview: explicit single-pass raster still (instant; used by the
   // headless harness to verify framing/post without PT convergence time)
   const wantPreview = new URLSearchParams(location.search).get('mode') === 'preview';
-  if (wantPreview || !stage.canPT) { setTimeout(() => finish('preview', 0), 60); return; }
+  if (wantPreview || !stage.canPT) { setTimeout(() => finish('preview', 0), 300); return; } // 300ms: banded preview finishes across a few rAFs
   let lastN = 0;
   stage.begin(state.params, POSE, w, h, n => {
     lastN = n;
