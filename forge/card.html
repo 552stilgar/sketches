@@ -63,6 +63,7 @@
 <header>
   <h1>forge :: loot cards</h1>
   <button id="btn-grid">new grid</button>
+  <button id="btn-mode" hidden>vector</button>
   <span id="empty-note"></span>
 </header>
 <div id="stage" hidden></div>
@@ -258,8 +259,8 @@ function cardSvg(token, { big = false } = {}) {
     ${gradientDefs(gid, palette, tier)}
     <rect class="card-bg" x="0" y="0" width="${CARD_W}" height="${CARD_H}" rx="${CARD_RADIUS}"/>
     <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-glow)"/>
-    <g filter="url(#${gid}-fx)"><g transform="${transform}">${paths}</g></g>
-    <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-sheen)"/>
+    <g class="card-weapon" filter="url(#${gid}-fx)"><g transform="${transform}">${paths}</g></g>
+    <rect class="card-sheen" x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-sheen)"/>
     <rect x="6" y="6" width="${CARD_W - 12}" height="${CARD_H - 12}" rx="${CARD_RADIUS - 3}" fill="url(#${gid}-vig)"/>
     <rect class="card-frame" x="2" y="2" width="${CARD_W - 4}" height="${CARD_H - 4}" rx="${CARD_RADIUS - 1}"
       fill="none" stroke="${borderColor}"/>
@@ -290,6 +291,8 @@ function currentToken() {
 }
 
 function renderGrid() {
+  stopStillRender();
+  modeBtn.hidden = true;
   stageEl.hidden = true;
   gridEl.hidden = false;
   emptyNote.textContent = `${GRID_COUNT} random weapons — click a card to inspect, or drop a hash in the URL (#<hash>)`;
@@ -305,7 +308,128 @@ function renderBig(token) {
   emptyNote.textContent = '';
   stageEl.innerHTML = '';
   stageEl.appendChild(cardWrap(token, { big: true }));
+  startStillRender(token); // slice 8: the path tracer becomes the card's engine
 }
+
+// ---------------------------------------------------------------------------
+// slice 8 — rendered mode (the D2 pre-render pipeline): a hidden iframe runs
+// index.html?still=… (one path-traced still of the same DNA), the bitmap gets
+// a paint-over pass (levels + S-curve + gentle posterize + saturation) and is
+// composited into the card under the SVG chrome. Vector weapon stays as the
+// instant proof and the toggle target; every mode change is DISCLOSED.
+// ---------------------------------------------------------------------------
+
+const STILL_SIZE = new URLSearchParams(location.search).get('stillsize') || '440x660';
+const STILL_SPP = +(new URLSearchParams(location.search).get('spp')) || 220;
+const STILL_TIMEOUT_MS = 120000;
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+let stillFrame = null, stillTimer = 0, renderedOn = false;
+const modeBtn = document.getElementById('btn-mode');
+
+function stopStillRender() {
+  if (stillFrame) { stillFrame.remove(); stillFrame = null; }
+  if (stillTimer) { clearTimeout(stillTimer); stillTimer = 0; }
+}
+
+function startStillRender(token) {
+  stopStillRender();
+  renderedOn = false;
+  modeBtn.hidden = true;
+  emptyNote.textContent = 'rendering ✦ path-traced still…';
+  stillFrame = document.createElement('iframe');
+  stillFrame.style.cssText = 'position:absolute;left:-9999px;width:8px;height:8px;opacity:0;pointer-events:none;';
+  const passMode = new URLSearchParams(location.search).get('mode');
+  stillFrame.src = `./index.html?still=${STILL_SIZE}&spp=${STILL_SPP}${passMode ? `&mode=${passMode}` : ''}#${token}`;
+  document.body.appendChild(stillFrame);
+  stillTimer = setTimeout(() => {
+    stopStillRender();
+    emptyNote.textContent = '⚠ render timed out — vector card shown';
+  }, STILL_TIMEOUT_MS);
+}
+
+window.addEventListener('message', e => {
+  const d = e.data;
+  if (!d || d.type !== 'forge-still') return;
+  if (d.token !== currentToken()) { stopStillRender(); return; }
+  stopStillRender();
+  const img = new Image();
+  img.onload = () => applyStill(img, d);
+  img.src = d.dataURL;
+});
+
+// paint-over: slight black lift, S-curve contrast, gentle quantize (the
+// "painted, not screenshot" read), saturation push
+function paintOver(img) {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth; c.height = img.naturalHeight;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const d = ctx.getImageData(0, 0, c.width, c.height);
+  const px = d.data;
+  const Q = 30, SAT = 1.16, GAIN = 1.35;
+  for (let i = 0; i < px.length; i += 4) {
+    let r = px[i] / 255, g = px[i + 1] / 255, b = px[i + 2] / 255;
+    const curve = v => {
+      v = Math.min(1, v * GAIN);                   // exposure (dim studio env)
+      v = Math.pow(v, 0.88);                       // lift
+      v = v * 0.45 + (v * v * (3 - 2 * v)) * 0.55; // S-curve blend
+      return v * 0.84 + (Math.round(v * Q) / Q) * 0.16; // posterize-lite
+    };
+    r = curve(r); g = curve(g); b = curve(b);
+    const l = (r + g + b) / 3;
+    px[i]     = Math.max(0, Math.min(255, (l + (r - l) * SAT) * 255));
+    px[i + 1] = Math.max(0, Math.min(255, (l + (g - l) * SAT) * 255));
+    px[i + 2] = Math.max(0, Math.min(255, (l + (b - l) * SAT) * 255));
+  }
+  ctx.putImageData(d, 0, 0);
+  return c.toDataURL('image/png');
+}
+
+function applyStill(img, meta) {
+  const svg = stageEl.querySelector('svg');
+  if (!svg) return;
+  const weaponG = svg.querySelector('.card-weapon');
+  const sheen = svg.querySelector('.card-sheen');
+  if (!weaponG || !sheen) return;
+  const gid = 'g' + meta.token.replace(/[^a-zA-Z0-9]/g, '');
+  const defs = svg.querySelector('defs');
+  const clip = document.createElementNS(SVGNS, 'clipPath');
+  clip.setAttribute('id', `${gid}-stillclip`);
+  const cr = document.createElementNS(SVGNS, 'rect');
+  cr.setAttribute('x', 6); cr.setAttribute('y', 6);
+  cr.setAttribute('width', CARD_W - 12); cr.setAttribute('height', CARD_H - 12);
+  cr.setAttribute('rx', CARD_RADIUS - 3);
+  clip.appendChild(cr);
+  defs.appendChild(clip);
+  const image = document.createElementNS(SVGNS, 'image');
+  image.setAttribute('class', 'card-still');
+  image.setAttribute('x', 6); image.setAttribute('y', 6);
+  image.setAttribute('width', CARD_W - 12); image.setAttribute('height', CARD_H - 12);
+  image.setAttribute('preserveAspectRatio', 'xMidYMid slice');
+  image.setAttribute('clip-path', `url(#${gid}-stillclip)`);
+  image.setAttribute('href', paintOver(img));
+  svg.insertBefore(image, weaponG);
+  setRenderedMode(true);
+  emptyNote.textContent = meta.mode === 'pt'
+    ? `✦ path-traced render · ${meta.spp} spp (paint-over post)`
+    : '⚠ path tracer unavailable — raster preview composited';
+  modeBtn.hidden = false;
+}
+
+function setRenderedMode(on) {
+  renderedOn = on;
+  const svg = stageEl.querySelector('svg');
+  if (!svg) return;
+  const weaponG = svg.querySelector('.card-weapon');
+  const still = svg.querySelector('.card-still');
+  if (!weaponG || !still) return;
+  weaponG.style.display = on ? 'none' : '';
+  still.style.display = on ? '' : 'none';
+  modeBtn.textContent = on ? 'vector' : 'rendered';
+}
+
+modeBtn.addEventListener('click', () => setRenderedMode(!renderedOn));
 
 function render() {
   const token = currentToken();

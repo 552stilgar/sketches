@@ -112,6 +112,36 @@ OPEN: 3D "glitch" Usul reported is uncharacterized — headless compiles clean,
 sword renders, ornate axe frame cost is up (bigger head = more shaded pixels).
 Need Usul: what does the glitch look like (freeze / flicker / holes / black)?
 
+## Slice 8 — render-to-card pipeline, the D2 move (2026-07-05, shipped)
+Usul's endgame quality bar ("Diablo II but more convincing") + the reference's
+studio-render look → the path tracer becomes the card's engine (D2 item art
+was pre-rendered 3D, downscaled, painted over — same pipeline, ours is live):
+- **index.html still mode** (`?still=WxH&spp=N[&mode=preview]`): strips the
+  page to the bare canvas, one PT render of the hash at a fixed presentation
+  pose (`STILL_POSE`), delivers via postMessage + `window.__forgeStill`.
+  Disclosed fallbacks: partial-spp ships as `pt·N`, no-PT ships as `preview`.
+- **card.html rendered mode**: hidden iframe runs the still; bitmap gets a
+  paint-over post (exposure gain, lift, S-curve, posterize-lite, saturation —
+  the "painted, not screenshot" read) and composites under the SVG chrome.
+  Vector weapon stays as instant proof + toggle (`btn-mode`); every mode is
+  disclosed in the header note.
+- **3D detail octaves** (surfaceMat): interleaved finer damascus band set +
+  micro tooth via roughness variation; ornate cheek eased 0.40→0.60 (0.40
+  starved the dim studio env — still-mode evidence); PT tile size 90k→55k px
+  (TDR headroom on the heavier SDF).
+- Headless harness: `card.html?mode=preview&stillsize=…&spp=…` verifies the
+  full composite chain instantly; converged PT quality is GPU-eyes territory.
+**GLITCH ROOT-CAUSED + FIXED (the "3D glitches" Usul reported):** bisected via
+the still+pose harness to the v6 haft-wrap block's `mix(1e9, dWrap, step(...))`
+idiom — 1e9 through mix poisons the distance field (inf/NaN territory on
+reduced-precision paths), producing a phantom "beige band" artifact field
+around the weapon AND making rays creep (the grinding/slow renders). Fixed by
+replacing the idiom with a plain branch; the beard subtraction carried the
+same idiom and got the same fix. Verified: ornate greataxe preview clean,
+wrap visible, PT still converges fast and reads correctly at 6spp.
+TUNING OPEN (Usul's GPU eyes): still exposure/GAIN balance, STILL_POSE zoom
+fit per format, paint-over strength.
+
 ## Slice queue (each lands in BOTH media, eyes-gated between slices)
 1. **Head silhouette craft pass** — craft-geo curves for the head: horns,
    beard hook, cusped eye bracket, composed fluke+pierce back structure,

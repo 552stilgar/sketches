@@ -188,7 +188,7 @@ const CFG = {
   fov: 0.62,
   ptIdleMs: 250,        // camera stillness before the path tracer starts accumulating
   ptMaxSamples: 360,    // accumulation budget per view
-  ptPixelsPerDraw: 90000, // max pixels per PT draw call (band tiling keeps each draw under the GPU watchdog / TDR budget)
+  ptPixelsPerDraw: 55000, // max pixels per PT draw call (band tiling keeps each draw under the GPU watchdog / TDR budget; lowered from 90k — slice 6-8 SDF+shading got heavier)
 };
 
 // ---------------------------------------------------------------------------
@@ -638,11 +638,16 @@ vec2 mapAxe(vec3 p) {
     const float WRAP_COIL_AMP = 0.0012;
     float wMask = max(smoothstep(WRAP_HALF_WIDTH, 0.0, abs(t - 0.16)),
                        smoothstep(WRAP_HALF_WIDTH, 0.0, abs(t - 0.86)));
-    if (wMask > 0.002) {
+    // slice 8 GLITCH FIX: the old mix(1e9, dWrap, step()) idiom
+    // poisons the distance field (1e9 through mix invites inf/NaN on reduced-
+    // precision drivers) — bisected as the source of the phantom "beige band"
+    // artifact field. A plain branch keeps the union clean; outside the band
+    // the wrap is simply absent.
+    if (wMask > 0.02) {
       float coil = 0.5 + 0.5 * sin(p.y * WRAP_COIL_FREQ);
       float wr = hr * mix(1.0, WRAP_BULGE, wMask) + WRAP_COIL_AMP * coil * wMask;
       float dWrap = sdCapsule(q, vec3(0.0), vec3(0.0, u_haftLen, 0.0), wr) * 0.9;
-      res = opU(res, vec2(mix(1e9, dWrap, step(0.02, wMask)), MAT_GRIP));
+      res = opU(res, vec2(dWrap, MAT_GRIP));
     }
   }
 
@@ -742,7 +747,8 @@ vec2 mapAxe(vec3 p) {
   float beard = isBearded ? max(u_beardDepth, 0.18) : 0.0;
   float dBeard = length(h.xy - vec2(edgeReachA * 0.42, -halfH * (0.2 + beard)))
                - halfH * (0.55 + beard * 0.5);
-  dBody = max(dBody, -mix(1e9, dBeard, step(0.05, beard)));
+  // same 1e9-mix idiom as the wrap (slice 8 glitch fix): branch, don't mix
+  if (beard > 0.05) dBody = max(dBody, -dBeard);
 
   float thick = mix(u_cheek, 0.004, sx);
   // v6: cheek_profile bows the face radially from the eye instead of the old
@@ -1063,8 +1069,11 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
   if (m < 1.5) {
     albedo = u_steelCol;  rough = u_rough;
     // slice 6: two-regime steel — the etched cheek darkens as the tier rises so
-    // the polished bevel can blaze against it (card: CHEEK_L_MUL_BY_TIER)
-    albedo *= u_ornTier > 1.5 ? 0.40 : (u_ornTier > 0.5 ? 0.72 : 1.0);
+    // the polished bevel can blaze against it (card: CHEEK_L_MUL_BY_TIER).
+    // slice 8: eased 0.40 -> 0.60 — the studio env is dim; 0.40 starved the
+    // path tracer and the ornate weapon vanished into the void (still-mode
+    // evidence). Dark-but-lit is the reference read; post handles the rest.
+    albedo *= u_ornTier > 1.5 ? 0.60 : (u_ornTier > 0.5 ? 0.80 : 1.0);
     // family F0 response: bronze is intensely metallic (colored reflections),
     // iron a duller working metal, steel in between
     metal = u_family > 1.5 ? 0.94 : (u_family > 0.5 ? 0.82 : 0.88);
@@ -1162,6 +1171,17 @@ void surfaceMat(vec3 pos, float m, out vec3 albedo, out float rough, out float m
           rough = mix(rough, 0.18, vein);
           metal = mix(metal, 0.95, vein);
         }
+        // slice 8 (3D detail octaves): interleaved finer band set + micro
+        // tooth — relief reads through ROUGHNESS variation under real light
+        // transport (the same wobble<<spacing banding rule as octave 1)
+        float band2 = sin(dot(dc, vec2(u_damScale * 2.4, u_damScale * 1.3))
+                        + (wp.y - 0.5) * u_damWarp * 7.0 + wp.x * 5.0);
+        float dam2 = smoothstep(-0.6, 0.6, band2);
+        albedo *= mix(0.94, 1.05, dam2);
+        rough = clamp(rough + (dam2 - 0.5) * 0.10, 0.05, 0.75);
+        float mic = fbm(dc * u_damScale * 2.2 + 31.7);
+        albedo *= 0.92 + 0.16 * mic;
+        rough = clamp(rough + (mic - 0.5) * 0.08, 0.05, 0.8);
       }
     } else {                              // blued: oxidized blue-black, tight sheen
       // bronze doesn't blue — it antiques to a browned dark patina instead
@@ -1823,8 +1843,13 @@ function paramsFromToken(token) {
   return applyOverrides(paramsFromHash(baseHash), overrides);
 }
 
+// slice 8: still mode (?still=WxH&spp=N) hands the stage to a one-shot
+// path-traced render for card.html's rendered mode — normal stage flow is off
+const STILL_SPEC = new URLSearchParams(location.search).get('still');
+
 let idleTimer = 0;
 function renderStage() {
+  if (STILL_SPEC) return; // still mode owns the canvas
   const rect = stageCanvas.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const w = Math.min(Math.round(rect.width * dpr) || CFG.maxStageRes, CFG.maxStageRes);
@@ -2153,6 +2178,72 @@ window.addEventListener('hashchange', () => {
 const boot = location.hash.replace(/^#/, '') || randHex(8);
 rebuildGrid(boot);
 select(boot, { fromGrid: true });
+
+// -- still mode (slice 8): one path-traced still of the current token, handed
+// to the embedding page (card.html rendered mode — the D2 pre-render pipeline).
+// Result lands in window.__forgeStill AND a postMessage to the parent frame.
+// Fallback to the preview rasteriser is DISCLOSED via mode: 'preview'.
+// still presentation pose; zoom backed off so the weapon fits the portrait.
+
+
+const STILL_POSE = { yaw: 0.22, pitch: 0.06, zoom: 1.32 }; // yaw 0.22 = blade screen-RIGHT like the card (verified by preview yaw sweep)
+function stillPose() {
+  const raw = new URLSearchParams(location.search).get('pose');
+  if (!raw) return STILL_POSE;
+  const [y, p, z] = raw.split(',').map(Number);
+  return {
+    yaw: Number.isFinite(y) ? y : STILL_POSE.yaw,
+    pitch: Number.isFinite(p) ? p : STILL_POSE.pitch,
+    zoom: Number.isFinite(z) ? z : STILL_POSE.zoom,
+  };
+}
+const STILL_WATCHDOG_MS = 45000;
+if (STILL_SPEC) runStill(STILL_SPEC);
+
+function runStill(spec) {
+  clearTimeout(idleTimer); // select() queued a stage PT — still mode owns the canvas
+  // strip the page down to the bare canvas: a viewport screenshot of a still
+  // page IS the render (headless GPU capture path — pc-render style)
+  for (const el of document.body.children) el.style.display = 'none';
+  document.body.appendChild(stageCanvas);
+  document.body.style.background = '#000';
+  stageCanvas.style.cssText = 'display:block;position:fixed;inset:0;width:100vw;height:100vh;';
+  const m = /^(\d+)x(\d+)$/.exec(spec);
+  const w = m ? +m[1] : 440, h = m ? +m[2] : 660;
+  const sppReq = +(new URLSearchParams(location.search).get('spp')) || 200;
+  const spp = Math.max(4, Math.min(sppReq, CFG.ptMaxSamples));
+  const POSE = stillPose();
+  let done = false;
+  const finish = (mode, sppDone) => {
+    if (done) return;
+    done = true;
+    stage.stop();
+    const payload = { type: 'forge-still', token: state.token, mode, spp: sppDone, dataURL: stage.canvas.toDataURL('image/png') };
+    window.__forgeStill = payload;
+    if (window.parent !== window) window.parent.postMessage(payload, '*');
+  };
+  stage.stop();
+  stage.render(state.params, POSE, w, h);
+  // &mode=preview: explicit single-pass raster still (instant; used by the
+  // headless harness to verify framing/post without PT convergence time)
+  const wantPreview = new URLSearchParams(location.search).get('mode') === 'preview';
+  if (wantPreview || !stage.canPT) { setTimeout(() => finish('preview', 0), 60); return; }
+  let lastN = 0;
+  stage.begin(state.params, POSE, w, h, n => {
+    lastN = n;
+    if (n >= spp) finish('pt', n);
+  });
+  // watchdog: slow accumulation ships the partial render (still a real PT
+  // image, spp disclosed); a PT that never produced a sample falls back to
+  // the preview rasteriser — disclosed, never silent
+  setTimeout(() => {
+    if (done) return;
+    if (lastN > 0) { finish('pt', lastN); return; }
+    stage.stop();
+    stage.render(state.params, POSE, w, h);
+    finish('preview', 0);
+  }, STILL_WATCHDOG_MS);
+}
 </script>
 </body>
 </html>
