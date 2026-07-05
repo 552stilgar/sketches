@@ -1758,9 +1758,14 @@ function createRenderer(canvas, { progressive = false } = {}) {
     // bands spread across rAFs (first band immediate); thumbs stay one draw.
     const bands = Math.max(1, Math.ceil((w * h) / CFG.previewPixelsPerDraw));
     if (bands === 1) { gl.drawArrays(gl.TRIANGLES, 0, 3); return; }
-    let band = 0;
+    let band = 0, fence = null;
     const step = () => {
       if (canvas.width !== w || canvas.height !== h) return; // superseded
+      if (fence && isGL2) {
+        const ws = gl.clientWaitSync(fence, 0, 0);
+        if (ws === gl.TIMEOUT_EXPIRED) { raf = requestAnimationFrame(step); return; }
+        gl.deleteSync(fence); fence = null;
+      }
       gl.useProgram(preview.prog);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, w, h);
@@ -1769,6 +1774,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
       gl.scissor(0, y0, w, y1 - y0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.disable(gl.SCISSOR_TEST);
+      if (isGL2) { fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); }
       band++;
       if (band < bands) raf = requestAnimationFrame(step);
     };
@@ -1810,8 +1816,19 @@ function createRenderer(canvas, { progressive = false } = {}) {
     // Render each sample in horizontal bands so no single draw is ever big.
     const tiles = Math.max(1, Math.ceil((w * h) / CFG.ptPixelsPerDraw));
     running = true;
+    // slice 8 responsiveness fix: fence-gate submission (WebGL2) — queuing a
+    // new tile every rAF while the GPU is still chewing the last one fills
+    // the command queue until ordinary GL calls BLOCK the main thread; that
+    // read as "buttons do nothing" while the PT ran. Never more than one
+    // tile in flight; if the GPU is busy we just yield the frame.
+    let fence = null;
     const tick = () => {
       if (!running) return;
+      if (fence && isGL2) {
+        const ws = gl.clientWaitSync(fence, 0, 0);
+        if (ws === gl.TIMEOUT_EXPIRED) { raf = requestAnimationFrame(tick); return; }
+        gl.deleteSync(fence); fence = null;
+      }
       // one band of the current sample: read texs[src], write sum into texs[1-src]
       gl.useProgram(pt.prog);
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
@@ -1826,6 +1843,7 @@ function createRenderer(canvas, { progressive = false } = {}) {
       gl.scissor(0, y0, w, y1 - y0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.disable(gl.SCISSOR_TEST);
+      if (isGL2) { fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0); gl.flush(); }
       tile++;
       if (tile < tiles) { raf = requestAnimationFrame(tick); return; }
       tile = 0;
@@ -2233,6 +2251,13 @@ if (STILL_SPEC) runStill(STILL_SPEC);
 
 function runStill(spec) {
   clearTimeout(idleTimer); // select() queued a stage PT — still mode owns the canvas
+  // low-visibility iframes get their rAF throttled (this starved the card's
+  // render into its timeout) — pace the still on timeouts instead; the fence
+  // gating keeps the GPU queue shallow either way
+  if (window.parent !== window) {
+    window.requestAnimationFrame = cb => setTimeout(() => cb(performance.now()), 4);
+    window.cancelAnimationFrame = id => clearTimeout(id);
+  }
   // strip the page down to the bare canvas: a viewport screenshot of a still
   // page IS the render (headless GPU capture path — pc-render style)
   for (const el of document.body.children) el.style.display = 'none';
@@ -2244,12 +2269,14 @@ function runStill(spec) {
   const sppReq = +(new URLSearchParams(location.search).get('spp')) || 200;
   const spp = Math.max(4, Math.min(sppReq, CFG.ptMaxSamples));
   const POSE = stillPose();
+  const t0 = performance.now();
   let done = false;
   const finish = (mode, sppDone) => {
     if (done) return;
     done = true;
     stage.stop();
-    const payload = { type: 'forge-still', token: state.token, mode, spp: sppDone, dataURL: stage.canvas.toDataURL('image/png') };
+    const payload = { type: 'forge-still', token: state.token, mode, spp: sppDone,
+      elapsedMs: Math.round(performance.now() - t0), dataURL: stage.canvas.toDataURL('image/png') };
     window.__forgeStill = payload;
     if (window.parent !== window) window.parent.postMessage(payload, '*');
   };
@@ -2262,6 +2289,13 @@ function runStill(spec) {
   let lastN = 0;
   stage.begin(state.params, POSE, w, h, n => {
     lastN = n;
+    // live telemetry so the card can show progress + the loop can be tuned
+    if (n === 1 || n % 10 === 0) {
+      if (window.parent !== window) window.parent.postMessage({
+        type: 'forge-still-progress', token: state.token, spp: n, target: spp,
+        elapsedMs: Math.round(performance.now() - t0),
+      }, '*');
+    }
     if (n >= spp) finish('pt', n);
   });
   // watchdog: slow accumulation ships the partial render (still a real PT

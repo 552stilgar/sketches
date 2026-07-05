@@ -321,7 +321,7 @@ function renderBig(token) {
 
 const STILL_SIZE = new URLSearchParams(location.search).get('stillsize') || '440x660';
 const STILL_SPP = +(new URLSearchParams(location.search).get('spp')) || 140; // converged enough; wall-time matters more since the small-tile freeze fix
-const STILL_TIMEOUT_MS = 150000;
+const STILL_STALL_MS = 45000;   // fail only on SILENCE — progress events keep resetting this
 const SVGNS = 'http://www.w3.org/2000/svg';
 
 let stillFrame = null, stillTimer = 0, renderedOn = false;
@@ -345,16 +345,27 @@ function startStillRender(token) {
   const passMode = new URLSearchParams(location.search).get('mode');
   stillFrame.src = `./index.html?still=${STILL_SIZE}&spp=${STILL_SPP}${passMode ? `&mode=${passMode}` : ''}#${token}`;
   document.body.appendChild(stillFrame);
+  armStallTimer();
+}
+
+function armStallTimer() {
+  if (stillTimer) clearTimeout(stillTimer);
   stillTimer = setTimeout(() => {
     stopStillRender();
-    emptyNote.textContent = '⚠ render timed out — vector card shown';
-  }, STILL_TIMEOUT_MS);
+    emptyNote.textContent = '⚠ render stalled (no progress for 45s) — vector card shown';
+  }, STILL_STALL_MS);
 }
 
 window.addEventListener('message', e => {
   const d = e.data;
-  if (!d || d.type !== 'forge-still') return;
+  if (!d || (d.type !== 'forge-still' && d.type !== 'forge-still-progress')) return;
   if (d.token !== currentToken()) { stopStillRender(); return; }
+  if (d.type === 'forge-still-progress') {
+    // live telemetry (Usul's ask): spp + elapsed, and progress resets the stall timer
+    emptyNote.textContent = `rendering ✦ ${d.spp}/${d.target} spp · ${(d.elapsedMs / 1000).toFixed(1)}s`;
+    armStallTimer();
+    return;
+  }
   stopStillRender();
   const img = new Image();
   img.onload = () => applyStill(img, d);
@@ -415,7 +426,7 @@ function applyStill(img, meta) {
   svg.insertBefore(image, weaponG);
   setRenderedMode(true);
   emptyNote.textContent = meta.mode === 'pt'
-    ? `✦ path-traced render · ${meta.spp} spp (paint-over post)`
+    ? `✦ path-traced render · ${meta.spp} spp · ${((meta.elapsedMs || 0) / 1000).toFixed(1)}s (paint-over post)`
     : '⚠ path tracer unavailable — raster preview composited';
   modeBtn.hidden = false;
 }
