@@ -1,11 +1,15 @@
 # sketches — Campaign Log
 
 ## Active Thread
-_Checkpoint: 2026-07-06T05:15:00Z_
+_Checkpoint: 2026-07-06T19:12:00Z_
 
-### ⇢ NEXT SESSION — heighliner: run the approved orchestration (do this FIRST)
+### ⇢ heighliner: orchestration SHIPPED + roles APPROVED (pushed f55cd10). Next = #3 metallic craft loop.
 
-**Where we are:** heighliner layer-5 livery shipped+approved+pushed (`d918133`, main = `73b03e2` clean). `/usul-orchestrate-task` was run on "all 3 queued topics" and **Usul APPROVED the topology + spend** — but he closed for the day *before* the Workflow was emitted. **Next session: emit + run the Workflow below.** No re-deriving; the decision is made.
+**DONE 2026-07-06 (this session):** the approved A∥B Workflow ran clean (roles ∥ inspector, 2 sonnet worktree lanes → merge, 82/82, zero conflicts). Then a **session-4 role legibility pass** (operator verdict: "the 3 types aren't immediately recognizable") added per-role **girth + nose character + mid boxiness** to `ROLE_PROFILES` in `structure.ts` — corvette = thin needle dart, hauler = fat blunt cargo slab, frigate = unchanged baseline. **Usul approved ("looking great now"), pushed `f55cd10`.** Inspector + export (main.ts) also shipped (per-sub-seed re-roll, SVG + 2048px PNG export, browser-verified). Also this session: **stained-glass.html** built + approved + pushed (`b569752`); **nebula-biome.html** browser-verified PASS.
+
+**⇢ ACTIVE NEXT — #3 metallic / 3D-finish shading craft loop (interactive, me+Usul, art-gated):** deepen `emit.ts` shading + `paint.ts shadingTones` — multi-stop light falloff across the curve, rim/edge light, reflective cylindrical bands, sharper specular. Usul directs in words → Claude executes via named constants; NOT automatable (headless can't grade metallic feel). Judgment row (8 pinned seeds in `src/app/main.ts`) is frozen — re-baseline only with a fresh regression pass. **Also open (non-blocking):** #4 codex-dispatch settings entry (`"Bash(codex-dispatch:*)"` in `~/.claude/settings.json` — guard-blocked, Usul's to add).
+
+_(historical provenance: the approved orchestration tree + lane specs that produced the above are kept below.)_
 
 **Approved plan (Usul picked both recommended options):**
 - **Fan out A∥B** as 2 concurrent **sonnet** worktree lanes → merge → **Usul re-baseline gate** → metallic as a **follow-on interactive craft loop** (NOT in the Workflow — headless can't grade metallic feel).
@@ -125,7 +129,7 @@ A forest that reveals its own anatomy at every scale. L-system rewriting rules g
 ---
 
 ## Next actions
-1. Test `nebula-biome.html` in browser — check cellFillAlpha, edgeGlowAlpha, nebula-biome alignment visibility
-2. Build `stained-glass.html` — L-system architecture + Voronoi glass cells + Worley veining + fBm luminance + mouse sun
+1. ✓ DONE 2026-07-06 — `nebula-biome.html` browser-verified PASS (biome alignment, edge glow, P/I panels all good); `stained-glass.html` built + approved + pushed (`b569752`)
+2. #3 heighliner metallic / 3D-finish shading craft loop (see Active Thread) — interactive, next up
 3. Add `generative-art` to newsletters topics-registry.json
 4. Fix reddit-session.mjs OAuth (552stilgar app — check Preferences→Apps) to resume sourcing ideas
