@@ -115,13 +115,35 @@ export interface KitSpec {
 
 // --- detail ------------------------------------------------------------------
 
-export type Treatment = "panel-grid";
+// Enumerated cell treatments (brief §4.5). "blank" is the calm-panel default.
+export type Treatment =
+  | "panel-grid"
+  | "rib-lines"
+  | "recessed-strip"
+  | "vent-row"
+  | "stripe-band"
+  | "blank";
+
+/**
+ * One lattice cell on the +x half (emit mirrors across the centerline).
+ * A cell occupies grid slot (band, col); its taper-following quad is derived
+ * in emit from the segment outline. `density` is the focal-hierarchy weight
+ * (0 = calm mid-panel, 1 = busy join/module zone) — emit scales rib/vent
+ * counts by it so busy zones read denser without new spec fields.
+ */
+export interface DetailCell {
+  band: number;
+  col: number;
+  treatment: Treatment;
+  density: number;
+}
 
 export interface SegmentDetail {
   segmentId: string;
-  treatment: Treatment;
-  /** Lattice counts; emit derives mirrored line geometry from these. */
+  /** Lattice counts; emit maps (band, col) to taper-following cell quads. */
   lattice: { bands: number; cols: number };
+  /** Per-cell treatments on the +x half, band-major order. */
+  cells: DetailCell[];
 }
 
 export interface DetailSpec {

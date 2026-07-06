@@ -4,7 +4,7 @@
 
 import { seedToHex } from "../core/prng";
 import { PALETTES, shadingTones } from "./paint";
-import type { Placement, SegmentDetail, Shape, ShipSpecs, StrokeWeight } from "./types";
+import type { Placement, Shape, ShipSpecs, StrokeWeight } from "./types";
 import { frames, halfWidthAt, segmentOutline, yAt, type SegmentFrame } from "./structure";
 
 // Global three-weight stroke system (brief §4.6). No other widths anywhere.
@@ -75,26 +75,86 @@ function shapeToSVG(shape: Shape, palette: Record<string, string>): string {
   }
 }
 
-function panelGridLines(frame: SegmentFrame, d: SegmentDetail): { half: string[]; full: string[] } {
-  const { bands, cols } = d.lattice;
-  const full: string[] = [];
-  const half: string[] = [];
+// --- detail lattice (brief §4.5 / §6 layer 3) --------------------------------
+// Per-cell treatments on the +x half; emit maps each (band, col) to a
+// taper-following quad and draws the enumerated treatment inside it. Rib/vent
+// counts scale with the cell's focal density — no new PRNG draws (density is
+// already baked into the spec). All lines obey the three-weight system.
+const RIB_MIN = 2; // ribs at density 0
+const RIB_SPAN = 3; // extra ribs at density 1
+const VENT_MIN = 2;
+const VENT_SPAN = 2;
+const RECESS_INSET = 0.16; // recessed-strip inset, fraction of the cell
+const VENT_INSET = 0.24; // vent slot margin from the cell edge
 
-  // bands: full-width horizontal seams at even axial fractions
-  for (let i = 1; i < bands; i++) {
-    const t = i / bands;
-    const y = fmt(yAt(frame, t));
-    const hw = fmt(halfWidthAt(frame.segment, t));
-    full.push(`<line x1="-${hw}" y1="${y}" x2="${hw}" y2="${y}"${strokeAttrs("minorDetail")}/>`);
+/** Parametric point inside a cell: u axial (0 aft->1 fore), v lateral
+ *  (0 inboard->1 outboard), on the +x half, following the real taper. */
+function cellPoint(
+  frame: SegmentFrame,
+  bands: number,
+  cols: number,
+  band: number,
+  col: number,
+  u: number,
+  v: number,
+): [number, number] {
+  const t = (band + u) / bands;
+  const f = (col + v) / cols;
+  return [f * halfWidthAt(frame.segment, t), yAt(frame, t)];
+}
+
+function detailCellSVG(
+  frame: SegmentFrame,
+  bands: number,
+  cols: number,
+  cell: { band: number; col: number; treatment: string; density: number },
+  palette: Record<string, string>,
+): string {
+  const { band, col, treatment, density } = cell;
+  if (treatment === "blank") return "";
+  const p = (u: number, v: number) => cellPoint(frame, bands, cols, band, col, u, v);
+  const quad = (u0: number, v0: number, u1: number, v1: number): [number, number][] => [
+    p(u0, v0),
+    p(u0, v1),
+    p(u1, v1),
+    p(u1, v0),
+  ];
+
+  switch (treatment) {
+    case "panel-grid":
+      // cell outline as a thin panel seam
+      return `<polygon points="${pointsAttr(quad(0, 0, 1, 1))}" fill="none"${strokeAttrs("minorDetail")}/>`;
+    case "rib-lines": {
+      const n = RIB_MIN + Math.round(density * RIB_SPAN);
+      const lines: string[] = [];
+      for (let i = 1; i <= n; i++) {
+        const u = i / (n + 1);
+        const [ax, ay] = p(u, 0.08);
+        const [bx, by] = p(u, 0.92);
+        lines.push(`<line x1="${fmt(ax)}" y1="${fmt(ay)}" x2="${fmt(bx)}" y2="${fmt(by)}"${strokeAttrs("minorDetail")}/>`);
+      }
+      return lines.join("");
+    }
+    case "recessed-strip":
+      // dark inset panel with a proud border — reads recessed
+      return `<polygon points="${pointsAttr(quad(RECESS_INSET, RECESS_INSET, 1 - RECESS_INSET, 1 - RECESS_INSET))}" fill="${palette.dark}"${strokeAttrs("majorSeam")}/>`;
+    case "vent-row": {
+      const n = VENT_MIN + Math.round(density * VENT_SPAN);
+      const slots: string[] = [];
+      const m = VENT_INSET;
+      for (let i = 0; i < n; i++) {
+        const u0 = m + (i / n) * (1 - 2 * m);
+        const u1 = m + ((i + 0.55) / n) * (1 - 2 * m);
+        slots.push(`<polygon points="${pointsAttr(quad(u0, m, u1, 1 - m))}" fill="${palette.dark}"${strokeAttrs("minorDetail")}/>`);
+      }
+      return slots.join("");
+    }
+    case "stripe-band":
+      // painted band filling the cell — neutral trim (livery accents are §5)
+      return `<polygon points="${pointsAttr(quad(0, 0, 1, 1))}" fill="${palette.trim}"/>`;
+    default:
+      return "";
   }
-  // columns: taper-following axial lines on the +x half, mirrored via MIRROR
-  for (let j = 1; j <= cols; j++) {
-    const f = j / (cols + 1);
-    half.push(
-      `<line x1="${fmt(f * frame.segment.halfWidth.aft)}" y1="${fmt(frame.yAft)}" x2="${fmt(f * frame.segment.halfWidth.fore)}" y2="${fmt(frame.yFore)}"${strokeAttrs("minorDetail")}/>`,
-    );
-  }
-  return { half, full };
 }
 
 /**
@@ -182,13 +242,14 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     ];
   });
 
-  // detail layer: panel grid per segment, clipped to the segment silhouette,
-  // columns mirrored through the shared helper
+  // detail layer: per-cell treatments on the +x half, mirrored through the
+  // shared helper, clipped to the segment silhouette
   const detailGroups = specs.detail.perSegment.map((d) => {
     const frame = segFrames.find((f) => f.segment.id === d.segmentId);
     if (!frame) throw new Error(`detail references unknown segment: ${d.segmentId}`);
-    const { half, full } = panelGridLines(frame, d);
-    return `<g clip-path="url(#${ns}-clip-${d.segmentId})">${full.join("")}<g>${half.join("")}</g><g transform="${MIRROR}">${half.join("")}</g></g>`;
+    const { bands, cols } = d.lattice;
+    const half = d.cells.map((c) => detailCellSVG(frame, bands, cols, c, palette)).join("");
+    return `<g clip-path="url(#${ns}-clip-${d.segmentId})"><g>${half}</g><g transform="${MIRROR}">${half}</g></g>`;
   });
 
   // kit layer: part instances, lateral pairs mirrored via transform
