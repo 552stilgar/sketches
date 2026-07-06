@@ -8,6 +8,7 @@ import { derive, hexToSeed, seedToHex } from "../core/prng";
 import { shipSVG } from "../gen/ship";
 import type { SubSeedOverrides } from "../gen/ship";
 import { parseViewBox, pngCanvasSize } from "./svg-utils";
+import type { Finish } from "../gen/paint";
 
 // Never change these — they are the before/after eyeball baseline for every
 // grammar tweak (brief §5).
@@ -26,6 +27,11 @@ const JUDGMENT_SEEDS = [
 const FLEET_BASE = 0x1f2a0001;
 const FLEET_COUNT = 12;
 
+// Locked look (Usul's call, #3 craft loop): brushed steel with the axial grain
+// on. flat and darkGunmetal were the craft-loop alternates; brushedSteel won.
+const currentFinish: Finish = "brushedSteel";
+const brushed = true;
+
 // The four re-rollable layers, in the fixed pipeline order (brief §4.1).
 const LAYERS = ["structure", "kit", "detail", "paint"] as const;
 type Layer = (typeof LAYERS)[number];
@@ -34,7 +40,7 @@ function card(seedHex: string, instanceId: string): HTMLElement {
   const el = document.createElement("div");
   el.className = "card";
   el.title = "click to inspect";
-  el.innerHTML = `${shipSVG(hexToSeed(seedHex), {}, instanceId)}<div class="seed">${seedHex}</div>`;
+  el.innerHTML = `${shipSVG(hexToSeed(seedHex), {}, instanceId, currentFinish, brushed)}<div class="seed">${seedHex}</div>`;
   el.addEventListener("click", () => openInspector(seedHex));
   return el;
 }
@@ -54,15 +60,18 @@ function section(title: string, className: string, seeds: string[], idTag: strin
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("#app missing");
 
-const header = document.createElement("div");
-header.innerHTML = `<h1>heighliner <span class="accent">//</span> seeded torch-ship generator</h1>
-<div class="subtitle">frigates, corvettes &amp; haulers — silhouette · shading · detail · kit · livery. click a ship to inspect it.</div>`;
-app.appendChild(header);
-
-app.appendChild(section("Judgment row — pinned seeds", "row-judgment", [...JUDGMENT_SEEDS], "j"));
-
 const fleetSeeds = Array.from({ length: FLEET_COUNT }, (_, i) => seedToHex(FLEET_BASE + i));
-app.appendChild(section("Fleet — sequential seeds", "grid-fleet", fleetSeeds, "f"));
+
+function renderGallery(): void {
+  app!.textContent = "";
+  const header = document.createElement("div");
+  header.innerHTML = `<h1>heighliner <span class="accent">//</span> seeded torch-ship generator</h1>
+<div class="subtitle">frigates, corvettes &amp; haulers — silhouette · shading · detail · kit · livery · brushed-steel finish. click a ship to inspect it.</div>`;
+  app!.appendChild(header);
+  app!.appendChild(section("Judgment row — pinned seeds", "row-judgment", [...JUDGMENT_SEEDS], "j"));
+  app!.appendChild(section("Fleet — sequential seeds", "grid-fleet", fleetSeeds, "f"));
+}
+renderGallery();
 
 // ---------------------------------------------------------------------------
 // Inspector: large render + per-layer re-roll + copy seed + export SVG/PNG.

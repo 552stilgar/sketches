@@ -3,7 +3,7 @@
 //   defs (segment clip paths) + layer groups hull / detail / kit / paint.
 
 import { seedToHex } from "../core/prng";
-import { resolvePalette, shadingTones } from "./paint";
+import { finishSpec, resolvePalette, shadingTones, type Finish } from "./paint";
 import type { LiveryScheme, Placement, Shape, ShipSpecs, StrokeWeight } from "./types";
 import { frames, halfWidthAt, segmentOutline, yAt, type SegmentFrame } from "./structure";
 
@@ -25,6 +25,17 @@ const AO_OPACITY = 0.22; // AO blob fill-opacity
 const AO_BLUR_STD_DEV = 1.1; // shared feGaussianBlur stdDeviation
 const SPEC_WIDTH = 0.9; // specular strip width, world units
 const SPEC_OFFSET_FRAC = 0.42; // specular strip offset from centerline, fraction of local half-width, toward the light (-x) side
+// Metallic finishes soften the outline so the gradient carries the form (Usul:
+// the flat black borders read "too thick and overpowering" over metal). Self-
+// coloured (palette.dark), much thinner than the cel silhouette/seam widths.
+const METAL_SILHOUETTE_W = 0.5;
+const METAL_SEAM_W = 0.35;
+// Brushed-metal grain: fine axial streak lines (the brush runs along the hull).
+// Colours come from the palette-derived spec/shade tones (no new hex); the
+// gradient glaze lights them from on top. Toggle is a render option, not seeded.
+const BRUSH_SPACING = 1.0; // world units between streak lines
+const BRUSH_W = 0.4; // streak line width
+const BRUSH_OPACITY = 0.11; // base streak opacity (× per-line hash)
 
 // --- livery + decals + grime (brief §6 layer 5) -----------------------------
 // All accent placement is symmetric about the centerline, so the livery layer
@@ -87,6 +98,13 @@ const STENCIL_ROWS = 5;
 const fmt = (n: number): string => {
   const r = Math.round(n * 1000) / 1000;
   return Object.is(r, -0) ? "0" : String(r);
+};
+
+/** Deterministic [0,1) hash for brushed-streak variation — a pure function of
+ *  an index, so the grain adds no PRNG draw and stays stable per ship. */
+const hash01 = (n: number): number => {
+  const s = Math.sin(n * 12.9898) * 43758.5453;
+  return s - Math.floor(s);
 };
 
 const strokeAttrs = (w: StrokeWeight | undefined): string =>
@@ -251,11 +269,18 @@ function shapeFootprint(shapes: Shape[]): { rx: number; ry: number } {
   return { rx: Math.max(1, (maxX - minX) / 2), ry: Math.max(1, (maxY - minY) / 2) };
 }
 
-export function emit(specs: ShipSpecs, idPrefix?: string): string {
+export function emit(specs: ShipSpecs, idPrefix?: string, finish: Finish = "flat", brushed = false): string {
   // Resolved palette = authored bank + seeded jitter (resolvePalette throws on
   // an unknown id). Shading and every fill below derive from this record.
   const palette = resolvePalette(specs.paint.paletteId, specs.paint.jitter);
   const ns = idPrefix ?? `s${seedToHex(specs.seed)}`;
+  // Metallic finishes replace the heavy black cel outline with a thin,
+  // self-coloured edge; flat keeps the approved three-weight ink system.
+  const metallic = finish !== "flat";
+  const edgeStroke = (w: "silhouette" | "majorSeam"): string =>
+    metallic
+      ? ` stroke="${palette.dark}" stroke-width="${fmt(w === "silhouette" ? METAL_SILHOUETTE_W : METAL_SEAM_W)}"`
+      : strokeAttrs(w);
   const segFrames = frames(specs.structure);
   const outlines = segFrames.map((f) => segmentOutline(f));
 
@@ -273,11 +298,11 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
   // hull layer: segment silhouettes (base tone from paint) + join seams + collars
   const hullShapes = segFrames.map((f, i) => {
     const tone = specs.paint.toneBySegment[f.segment.id] ?? "base";
-    return `<polygon points="${pointsAttr(outlines[i]!)}" fill="${palette[tone]}"${strokeAttrs("silhouette")}/>`;
+    return `<polygon points="${pointsAttr(outlines[i]!)}" fill="${palette[tone]}"${edgeStroke("silhouette")}/>`;
   });
   const joinSeams = segFrames.slice(1).map((f) => {
     const hw = fmt(halfWidthAt(f.segment, 0));
-    return `<line x1="-${hw}" y1="${fmt(f.yAft)}" x2="${hw}" y2="${fmt(f.yAft)}"${strokeAttrs("majorSeam")}/>`;
+    return `<line x1="-${hw}" y1="${fmt(f.yAft)}" x2="${hw}" y2="${fmt(f.yAft)}"${edgeStroke("majorSeam")}/>`;
   });
   // join collars: proud lip band straddling the fore boundary of the segment
   // that owns the join; rendered after the segment polygons so the lip reads
@@ -288,7 +313,7 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     const next = segFrames[i + 1]!.segment;
     const hw = j.widthFactor * Math.max(halfWidthAt(f.segment, 1), halfWidthAt(next, 0));
     return [
-      `<rect x="${fmt(-hw)}" y="${fmt(f.yFore - j.length / 2)}" width="${fmt(2 * hw)}" height="${fmt(j.length)}" fill="${palette.trim}"${strokeAttrs("majorSeam")}/>`,
+      `<rect x="${fmt(-hw)}" y="${fmt(f.yFore - j.length / 2)}" width="${fmt(2 * hw)}" height="${fmt(j.length)}" fill="${palette.trim}"${edgeStroke("majorSeam")}/>`,
     ];
   });
 
@@ -314,6 +339,7 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
   // order — lit strip, shade strip, AO, axial specular. Pure function of the
   // already-computed specs; no new PRNG draws anywhere below.
   const tones = shadingTones(palette);
+  const fin = finishSpec(palette, finish);
   const aoBlurFilterId = `${ns}-ao-blur`;
 
   // 2-3: lit (light side, -x) / shade (far side, +x) strips, built from the
@@ -366,8 +392,61 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     return `<g clip-path="url(#${ns}-clip-${f.segment.id})"><polygon points="${pointsAttr(pts)}" fill="${tones.spec}"/></g>`;
   });
 
-  const shadingGroup = `<g id="${ns}-shading">${shadingStrips.join("")}${kitAO.join("")}${joinAO.join("")}${specStrips.join("")}</g>`;
+  // Legacy cel-strips (lit/shade/spec) only paint under the "flat" finish; the
+  // metallic finishes replace them with a cross-section gradient glaze (below).
+  // AO always paints — it's contact shadow, valid under any finish.
+  const legacyStrips = fin.keepStrips ? shadingStrips.join("") + specStrips.join("") : "";
+  const shadingGroup = `<g id="${ns}-shading">${legacyStrips}${kitAO.join("")}${joinAO.join("")}</g>`;
   const aoBlurFilter = `<filter id="${aoBlurFilterId}" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="${AO_BLUR_STD_DEV}"/></filter>`;
+
+  // Metallic finish group (over kit): a per-segment cross-section gradient
+  // (objectBoundingBox → offset 0 = lit -x edge, 1 = shadow +x edge) glazed
+  // through each silhouette clip, plus an optional bright rim on the outline.
+  const finishGradient = fin.stops.length
+    ? `<linearGradient id="${ns}-fin" x1="0" y1="0" x2="1" y2="0">${fin.stops
+        .map((s) => `<stop offset="${s.offset}" stop-color="${s.hex}" stop-opacity="${s.opacity}"/>`)
+        .join("")}</linearGradient>`
+    : "";
+  const glaze = fin.stops.length
+    ? segFrames
+        .map((f, i) => {
+          const hw = Math.max(...outlines[i]!.map(([x]) => Math.abs(x)));
+          return `<g clip-path="url(#${ns}-clip-${f.segment.id})"><rect x="${fmt(-hw)}" y="${fmt(f.yFore)}" width="${fmt(2 * hw)}" height="${fmt(f.segment.length)}" fill="url(#${ns}-fin)"/></g>`;
+        })
+        .join("")
+    : "";
+  const rimStrokes = fin.rim
+    ? segFrames
+        .map(
+          (_, i) =>
+            `<polygon points="${pointsAttr(outlines[i]!)}" fill="none" stroke="${fin.rim!.hex}" stroke-opacity="${fin.rim!.opacity}" stroke-width="${fmt(fin.rim!.width)}"/>`,
+        )
+        .join("")
+    : "";
+  // Brushed grain: fine axial streaks per segment, under the glaze so the light
+  // plays over them. Only on the metallic finishes, only when toggled on.
+  const brushLines =
+    metallic && brushed
+      ? segFrames
+          .map((f, i) => {
+            const hw = Math.max(...outlines[i]!.map(([x]) => Math.abs(x)));
+            const nLines = Math.max(3, Math.round((2 * hw) / BRUSH_SPACING));
+            const segLines: string[] = [];
+            for (let k = 0; k <= nLines; k++) {
+              const x = -hw + 2 * hw * (k / nLines);
+              const r = hash01(k + i * 31.7);
+              const col = r < 0.5 ? tones.spec : tones.shade;
+              const op = BRUSH_OPACITY * (0.4 + r * 0.9);
+              segLines.push(
+                `<line x1="${fmt(x)}" y1="${fmt(f.yFore)}" x2="${fmt(x)}" y2="${fmt(f.yAft)}" stroke="${col}" stroke-opacity="${fmt(op)}" stroke-width="${fmt(BRUSH_W)}"/>`,
+              );
+            }
+            return `<g clip-path="url(#${ns}-clip-${f.segment.id})">${segLines.join("")}</g>`;
+          })
+          .join("")
+      : "";
+  const finishGroup =
+    brushLines || glaze || rimStrokes ? `<g id="${ns}-finish">${brushLines}${glaze}${rimStrokes}</g>` : "";
 
   // paint layer (brief §6 layer 5): accent livery scheme + decals + grime.
   // Pure function of the paint spec; painted over the kit so accents read on
@@ -547,7 +626,7 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">`,
-    `<defs>${defs}${aoBlurFilter}</defs>`,
+    `<defs>${defs}${aoBlurFilter}${finishGradient}</defs>`,
     `<g id="${ns}-hull">${hullShapes.join("")}${joinSeams.join("")}${collars.join("")}</g>`,
     `<g id="${ns}-detail">${detailGroups.join("")}</g>`,
     // Shading paints BEFORE kit (brief §4.7 intent: AO sits *under* modules,
@@ -555,6 +634,9 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     // This overrides §4.8's literal group order, which put shading after kit.
     shadingGroup,
     `<g id="${ns}-kit">${kitGroups.join("")}</g>`,
+    // Metallic finish glazes the unified light OVER the kit (a lighting pass on
+    // the finished surface); empty string under the flat finish.
+    finishGroup,
     `<g id="${ns}-paint">${paintGroup}</g>`,
     `</svg>`,
   ].join("");

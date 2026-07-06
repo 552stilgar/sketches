@@ -225,3 +225,70 @@ export function shadingTones(palette: Record<PaletteRole, string>): ShadingTones
     spec: withLightness(palette.base, SPEC_L_DELTA),
   };
 }
+
+// --- metallic finish (session 4, #3 craft loop) ------------------------------
+// A "finish" is a LIGHTING treatment glazed over the whole surface: a
+// cross-section gradient (each segment is a cylinder lit from -x) plus an
+// optional silhouette rim. It's orthogonal to the palette — every colour below
+// still derives, by lightness delta, from the palette's own base/dark tones
+// (the same no-independent-hex law as shadingTones). Tune the look by editing
+// the delta/offset/opacity tables here, never with hex in emit.
+//   flat         = the legacy cel-strip shading (kept as the internal default
+//                  and the test baseline; the app never selects it).
+//   brushedSteel = high-key, hard specular + axial brushed grain. The locked
+//                  ship look (Usul's call, session 4).
+export type Finish = "flat" | "brushedSteel";
+
+// A gradient stop, authored as a lightness delta off a palette tone. offset 0 =
+// the lit (-x) edge, offset 1 = the far (+x) shadow edge.
+interface StopTune {
+  offset: number;
+  tone: "base" | "dark";
+  dl: number; // lightness delta
+  opacity: number;
+}
+interface FinishTune {
+  stops: StopTune[];
+  rim: { tone: "base" | "dark"; dl: number; opacity: number; width: number } | null;
+  keepStrips: boolean; // flat keeps the legacy lit/shade/spec strips
+}
+
+const FINISH_TUNE: Record<Finish, FinishTune> = {
+  flat: { stops: [], rim: null, keepStrips: true },
+  brushedSteel: {
+    // High contrast so the cylinder form is carried by light, not by a border.
+    // No rim stroke — the bright offset-0 stop IS the lit-edge highlight, inside
+    // the silhouette, so it never thickens the external border.
+    stops: [
+      { offset: 0.0, tone: "base", dl: 0.3, opacity: 0.78 }, // bright lit edge (rim light)
+      { offset: 0.08, tone: "base", dl: 0.46, opacity: 0.94 }, // tight hard specular
+      { offset: 0.18, tone: "base", dl: 0.13, opacity: 0.32 },
+      { offset: 0.44, tone: "base", dl: 0.0, opacity: 0.03 }, // base shows through
+      { offset: 0.72, tone: "base", dl: -0.15, opacity: 0.52 },
+      { offset: 1.0, tone: "dark", dl: -0.06, opacity: 0.88 }, // deep far-edge shadow
+    ],
+    rim: null,
+    keepStrips: false,
+  },
+};
+
+export interface FinishStop {
+  offset: number;
+  hex: string;
+  opacity: number;
+}
+export interface FinishSpec {
+  stops: FinishStop[];
+  rim: { hex: string; opacity: number; width: number } | null;
+  keepStrips: boolean;
+}
+
+/** Resolve a finish against a palette: deltas → concrete palette-derived hex. */
+export function finishSpec(palette: Record<PaletteRole, string>, finish: Finish): FinishSpec {
+  const t = FINISH_TUNE[finish];
+  return {
+    stops: t.stops.map((s) => ({ offset: s.offset, hex: withLightness(palette[s.tone], s.dl), opacity: s.opacity })),
+    rim: t.rim ? { hex: withLightness(palette[t.rim.tone], t.rim.dl), opacity: t.rim.opacity, width: t.rim.width } : null,
+    keepStrips: t.keepStrips,
+  };
+}

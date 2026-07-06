@@ -6,7 +6,7 @@ import { derive } from "../core/prng";
 import { detail } from "./detail";
 import { emit } from "./emit";
 import { kit } from "./kit";
-import { paint } from "./paint";
+import { paint, type Finish } from "./paint";
 import { structure } from "./structure";
 import type { ShipSpecs } from "./types";
 
@@ -33,6 +33,12 @@ export function shipSpecs(seed: number, overrides: SubSeedOverrides = {}): ShipS
   };
 }
 
-export function shipSVG(seed: number, overrides: SubSeedOverrides = {}, idPrefix?: string): string {
-  return emit(shipSpecs(seed, overrides), idPrefix);
+export function shipSVG(
+  seed: number,
+  overrides: SubSeedOverrides = {},
+  idPrefix?: string,
+  finish?: Finish,
+  brushed?: boolean,
+): string {
+  return emit(shipSpecs(seed, overrides), idPrefix, finish, brushed);
 }
