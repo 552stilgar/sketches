@@ -1,62 +1,13 @@
 # sketches — Campaign Log
 
 ## Active Thread
-_Checkpoint: 2026-07-06T19:48:00Z_
+_Checkpoint: 2026-07-06T19:58:00Z_
 
-### ⇢ heighliner: roles + inspector + metallic finish ALL SHIPPED & APPROVED (pushed b694330). Session complete.
+### ⇢ forge: freeze-fix shipped, awaiting Usul's real-browser verification
 
-**DONE 2026-07-06 (this session):** the approved A∥B Workflow ran clean (roles ∥ inspector, 2 sonnet worktree lanes → merge, 82/82, zero conflicts). Then a **session-4 role legibility pass** (operator verdict: "the 3 types aren't immediately recognizable") added per-role **girth + nose character + mid boxiness** to `ROLE_PROFILES` in `structure.ts` — corvette = thin needle dart, hauler = fat blunt cargo slab, frigate = unchanged baseline. **Usul approved ("looking great now"), pushed `f55cd10`.** Inspector + export (main.ts) also shipped (per-sub-seed re-roll, SVG + 2048px PNG export, browser-verified). Also this session: **stained-glass.html** built + approved + pushed (`b569752`); **nebula-biome.html** browser-verified PASS.
+(heighliner's session-4 thread — roles/legibility, inspector+export, metallic brushed-steel finish — is fully resolved and pushed through `5984d34`; see `## What exists` below and `memory/project_usul_heighliner.md` for detail. Nothing left open there but #4 below.)
 
-**#3 METALLIC FINISH DONE + LOCKED 2026-07-06 (pushed `b694330`):** brushed-steel is the ship look. A cross-section light gradient glazes each segment (cylinder lit from -x → form carried by light, not by outline); a thin self-coloured edge replaces the heavy black cel border on the metallic path (Usul: the thick borders were "too thick and overpowering"); a fine axial brushed grain sits on top. Craft loop ran complaint→knob→re-render: fixed border weight → strengthened the gradient sculpt → added brushed streaks → Usul locked brushedSteel + grain. **darkGunmetal dropped**; `flat` kept ONLY as the internal emit default + test baseline (the app never selects it). Tuning knobs live: `FINISH_TUNE` (paint.ts stop tables) + `METAL_*` / `BRUSH_*` (emit.ts). 82/82 + smoke green. Finish is a render option (`emit(specs, idPrefix, finish, brushed)`) — zero new PRNG draws, determinism + sub-seed isolation intact.
-
-**Nothing queued.** Only open item: #4 codex-dispatch settings entry (`"Bash(codex-dispatch:*)"` in `~/.claude/settings.json` — guard-blocked, Usul's to add). Judgment row (8 pinned seeds in `src/app/main.ts`) frozen — re-baseline only with a fresh regression pass.
-
-_(historical provenance: the approved orchestration tree + lane specs that produced the above are kept below.)_
-
-**Approved plan (Usul picked both recommended options):**
-- **Fan out A∥B** as 2 concurrent **sonnet** worktree lanes → merge → **Usul re-baseline gate** → metallic as a **follow-on interactive craft loop** (NOT in the Workflow — headless can't grade metallic feel).
-
-```
-[seq] root
-├─ leaf P0: setup (haiku) — create BOTH worktrees serially from main 73b03e2, symlink node_modules, baseline test each
-├─ [par] P1 — 2 lanes, disjoint files, both model:'sonnet', agentType:'general-purpose'
-│   ├─ A roles      → heighliner/src/gen/structure.ts + test/roles.test.ts
-│   └─ B inspector  → heighliner/src/app/main.ts + src/app/style.css
-└─ leaf P2: merge (inherit/opus, main thread) — merge lane/roles then lane/inspector into ~/sketches main,
-            full vitest + `npm run smoke` + `vite build`, remove worktrees, delete branches, DON'T push
-```
-
-**Lane A — roles (corvette + hauler), brief §4.3.** `structure.ts` is frigate-only (`role:"frigate"` hardcoded ~L478, FROZEN draw-order discipline at top). Add seeded role selection + per-role distribution tables:
-
-| Param | Corvette | Frigate | Hauler |
-|---|---|---|---|
-| Segments | 3–4 | 4–5 | 5–6 |
-| `mid` repeats | 0–1 | 1–2 | 2–3 |
-| Elongation | low | mid | high |
-| Weapon socket fill | high | mid | low |
-| Area detail density | mid | mid | high |
-
-- ⚠ **Seed-stability landmine:** adding role selection as a new leading draw shifts the frigate stream → even frigate ships change. That's EXPECTED (this is THE structural change; we re-baseline the judgment row). Keep a deterministic frozen order *within* each role. paint/kit/detail derive from the master seed independently → their determinism tests must still pass.
-- ⚠ **Corvette can have 4 segments** (0 mids → engine+drive+hull+nose). `test/determinism.test.ts` "structurally sane torch stacks" asserts `length>=5` + frigate 1–3 mids — **update it to role-aware ranges** or it false-reds.
-- ⚠ Sparse corvette may trip smoke's `shapeCount>=20` — verify `npm run smoke` and lower the threshold if a legit minimal corvette has fewer shapes.
-- Add `test/roles.test.ts`: role ∈ enum; per-role seg/mid counts within ranges over N=40; all 3 roles appear; determinism holds. Commit to `lane/roles`, don't push/merge.
-
-**Lane B — inspector + export (brief §5, layer 6).** `ship.ts` already exports `shipSVG(seed, overrides, idPrefix)` + `SubSeedOverrides{structure?,kit?,detail?,paint?}` — the re-roll hook is READY. Rewrite `src/app/main.ts` (keep judgment row + fleet grid; click ship → inspector): large view + buttons **Re-roll structure/kit/detail/paint** (each swaps ONE sub-seed via `derive(seed, layer, 'reroll', n++)`, keeps the rest), **Copy seed**, **Export SVG** (blob download), **Export PNG** (SVG→Image→2048px canvas→toBlob). No sliders (§8). Do NOT touch `src/gen/**`. Add a small pure test if feasible (filename/override-map helper); keep tsc + build green. Commit to `lane/inspector`.
-
-**Emitted-script mechanics (bake in — these are the known failure modes):**
-- Session cwd `/home/fenrir` is NOT a git repo → `isolation:'worktree'` FAILS. Lanes work in **pre-made manual worktrees** (P0 creates them via `git -C ~/sketches worktree add -b lane/<x> <path> 73b03e2`); agent() omits `isolation`. Worktree paths under the session scratchpad.
-- **Symlink `~/sketches/heighliner/node_modules`** into each worktree's `heighliner/node_modules` (gitignored, not inherited → tests false-red without it).
-- Both lanes branch from **main `73b03e2`** (P1 is first phase, no prior merges). Bootstrap verifies base SHA.
-- Merge is disjoint (structure vs app) → expect ZERO conflicts; if any, surface to Usul.
-- **DON'T push** — Usul gates first.
-
-**After the Workflow returns → Usul gate (via cloudflare tunnel):** (1) re-baseline the judgment row — roles re-rolled the 8 pinned ships, eyeball + re-approve; (2) do corvette/hauler read distinct (aggressive-small vs utilitarian-big)?; (3) inspector re-roll + export work. Tunnel recipe: `vite preview --port 5199 --host 127.0.0.1` + `cloudflared tunnel --url http://127.0.0.1:5199`, grep the trycloudflare URL, tear down after (~2 concurrent tunnels/IP cap).
-
-**Then P3 (interactive, me+Usul, own session): metallic/3D shading** — deepen `emit.ts` shading + `paint.ts shadingTones`: multi-stop light falloff across the curve, rim/edge light, reflective cylindrical bands, sharper specular. Craft loop, Usul-graded, not automatable.
-
----
-
-**In progress (prior thread — forge, parked):** forge/ v7 endgame-parity push. Slices 6-8 (composition/value, depth pass, render-to-card D2 pipeline) shipped earlier through `0c1a08b`, 110/110 tests — see git log for detail.
+**In progress:** forge/ v7 endgame-parity push. Slices 6-8 (composition/value, depth pass, render-to-card D2 pipeline) shipped earlier through `0c1a08b`, 110/110 tests — see git log for detail.
 
 **The freeze-fix arc, this whole window — full story for tomorrow:**
 1. **Headless D3D probe said "shader too complex, crashes ANGLE-d3d11 outright."** Turned out to be a headless-Chrome-only artifact — a purpose-built minimal test page (a single solid-color triangle, zero loops) crashed identically, ruling out shader complexity entirely. Root cause never fully pinned (likely something about running under SSH/non-interactive session on Windows), and it doesn't matter: **Usul confirmed ordinary WebGL2 (get.webgl.org) works fine in his real, everyday Chrome.** The headless probe methodology (`forge-compile-ab*.ps1`) was a red herring for this bug — keep it filed away for future driver-level questions, but don't trust it over Usul's own browser.
@@ -78,8 +29,8 @@ _(historical provenance: the approved orchestration tree + lane specs that produ
 **Infra:** serve-forge.mjs on 127.0.0.1:3999 (no-store) + cloudflared tunnel → https://knife-kenny-refugees-notices.trycloudflare.com (ephemeral — regenerate if dead). Showcase hash: `#ccdfc795` (ornate greataxe); confirmed sword hash: `#ffeeddcc`. Card render is opt-in (`✦ render` button, or `?auto=1` for the harness).
 **PC-probe harness (filed away, not the active debugging tool anymore):** `/tmp/.../scratchpad/forge-compile-ab*.ps1` variants (pushed to PC home) — `-Angle <d3d11|gl>` + `-VT <ms>` or `-TimeoutMs`; reads the `<title>` DOM marker. Gotcha found this session: the profile-dir name is keyed only by `-Angle`, not by script/page — running two probes with the same Angle back-to-back before the first's Chrome process fully exits collides on the lock file. `forge-probe-cleanup.ps1` (also on PC home) kills stray `*forge-ab*` chrome.exe processes + clears profile dirs by CommandLine match (surgical — never touches Usul's real browser tabs).
 **Prior context (still true):** u_register = UI view (declare BEFORE TONE); DNA idx 39-43 = v4, 44-56 = v6; `patch` is a GLSL reserved word; SVG-only pages (card.html) render fine headless with no CFG hacks; PC access is `ssh pc` (tailnet).
-**Parallel/deferred: codex dispatch path fixed but needs Usul's manual step.** `~/bin/codex-dispatch` still not executable. Needs Usul to run `chmod +x ~/bin/codex-dispatch` + add `"Bash(codex-dispatch:*)"` to `permissions.allow` in `~/.claude/settings.json` (backup at `settings.json.bak.2026-07-04`). Not blocking.
-**Files in flight:** none — main clean through `db99369`.
+**Parallel/deferred (#4): codex dispatch path — `chmod +x ~/bin/codex-dispatch` DONE 2026-07-06.** Only remaining step: add `"Bash(codex-dispatch:*)"` to `permissions.allow` in `~/.claude/settings.json` (backup at `settings.json.bak.2026-07-04`) — blocked by the auto-mode self-modification guard, Usul's to add manually. Not blocking anything.
+**Files in flight:** none — forge itself unchanged since `db99369`; main HEAD now `5984d34` (heighliner session-4 work layered on top, unrelated to forge).
 
 ## Status
 Active. Creative coding sandbox — generative art experiments in self-contained HTML/JS files.
