@@ -1,9 +1,56 @@
 # sketches — Campaign Log
 
 ## Active Thread
-_Checkpoint: 2026-07-06T01:10:00Z_
+_Checkpoint: 2026-07-06T05:15:00Z_
 
-**In progress (prior thread):** forge/ v7 endgame-parity push. Slices 6-8 (composition/value, depth pass, render-to-card D2 pipeline) shipped earlier through `0c1a08b`, 110/110 tests — see git log for detail.
+### ⇢ NEXT SESSION — heighliner: run the approved orchestration (do this FIRST)
+
+**Where we are:** heighliner layer-5 livery shipped+approved+pushed (`d918133`, main = `73b03e2` clean). `/usul-orchestrate-task` was run on "all 3 queued topics" and **Usul APPROVED the topology + spend** — but he closed for the day *before* the Workflow was emitted. **Next session: emit + run the Workflow below.** No re-deriving; the decision is made.
+
+**Approved plan (Usul picked both recommended options):**
+- **Fan out A∥B** as 2 concurrent **sonnet** worktree lanes → merge → **Usul re-baseline gate** → metallic as a **follow-on interactive craft loop** (NOT in the Workflow — headless can't grade metallic feel).
+
+```
+[seq] root
+├─ leaf P0: setup (haiku) — create BOTH worktrees serially from main 73b03e2, symlink node_modules, baseline test each
+├─ [par] P1 — 2 lanes, disjoint files, both model:'sonnet', agentType:'general-purpose'
+│   ├─ A roles      → heighliner/src/gen/structure.ts + test/roles.test.ts
+│   └─ B inspector  → heighliner/src/app/main.ts + src/app/style.css
+└─ leaf P2: merge (inherit/opus, main thread) — merge lane/roles then lane/inspector into ~/sketches main,
+            full vitest + `npm run smoke` + `vite build`, remove worktrees, delete branches, DON'T push
+```
+
+**Lane A — roles (corvette + hauler), brief §4.3.** `structure.ts` is frigate-only (`role:"frigate"` hardcoded ~L478, FROZEN draw-order discipline at top). Add seeded role selection + per-role distribution tables:
+
+| Param | Corvette | Frigate | Hauler |
+|---|---|---|---|
+| Segments | 3–4 | 4–5 | 5–6 |
+| `mid` repeats | 0–1 | 1–2 | 2–3 |
+| Elongation | low | mid | high |
+| Weapon socket fill | high | mid | low |
+| Area detail density | mid | mid | high |
+
+- ⚠ **Seed-stability landmine:** adding role selection as a new leading draw shifts the frigate stream → even frigate ships change. That's EXPECTED (this is THE structural change; we re-baseline the judgment row). Keep a deterministic frozen order *within* each role. paint/kit/detail derive from the master seed independently → their determinism tests must still pass.
+- ⚠ **Corvette can have 4 segments** (0 mids → engine+drive+hull+nose). `test/determinism.test.ts` "structurally sane torch stacks" asserts `length>=5` + frigate 1–3 mids — **update it to role-aware ranges** or it false-reds.
+- ⚠ Sparse corvette may trip smoke's `shapeCount>=20` — verify `npm run smoke` and lower the threshold if a legit minimal corvette has fewer shapes.
+- Add `test/roles.test.ts`: role ∈ enum; per-role seg/mid counts within ranges over N=40; all 3 roles appear; determinism holds. Commit to `lane/roles`, don't push/merge.
+
+**Lane B — inspector + export (brief §5, layer 6).** `ship.ts` already exports `shipSVG(seed, overrides, idPrefix)` + `SubSeedOverrides{structure?,kit?,detail?,paint?}` — the re-roll hook is READY. Rewrite `src/app/main.ts` (keep judgment row + fleet grid; click ship → inspector): large view + buttons **Re-roll structure/kit/detail/paint** (each swaps ONE sub-seed via `derive(seed, layer, 'reroll', n++)`, keeps the rest), **Copy seed**, **Export SVG** (blob download), **Export PNG** (SVG→Image→2048px canvas→toBlob). No sliders (§8). Do NOT touch `src/gen/**`. Add a small pure test if feasible (filename/override-map helper); keep tsc + build green. Commit to `lane/inspector`.
+
+**Emitted-script mechanics (bake in — these are the known failure modes):**
+- Session cwd `/home/fenrir` is NOT a git repo → `isolation:'worktree'` FAILS. Lanes work in **pre-made manual worktrees** (P0 creates them via `git -C ~/sketches worktree add -b lane/<x> <path> 73b03e2`); agent() omits `isolation`. Worktree paths under the session scratchpad.
+- **Symlink `~/sketches/heighliner/node_modules`** into each worktree's `heighliner/node_modules` (gitignored, not inherited → tests false-red without it).
+- Both lanes branch from **main `73b03e2`** (P1 is first phase, no prior merges). Bootstrap verifies base SHA.
+- Merge is disjoint (structure vs app) → expect ZERO conflicts; if any, surface to Usul.
+- **DON'T push** — Usul gates first.
+
+**After the Workflow returns → Usul gate (via cloudflare tunnel):** (1) re-baseline the judgment row — roles re-rolled the 8 pinned ships, eyeball + re-approve; (2) do corvette/hauler read distinct (aggressive-small vs utilitarian-big)?; (3) inspector re-roll + export work. Tunnel recipe: `vite preview --port 5199 --host 127.0.0.1` + `cloudflared tunnel --url http://127.0.0.1:5199`, grep the trycloudflare URL, tear down after (~2 concurrent tunnels/IP cap).
+
+**Then P3 (interactive, me+Usul, own session): metallic/3D shading** — deepen `emit.ts` shading + `paint.ts shadingTones`: multi-stop light falloff across the curve, rim/edge light, reflective cylindrical bands, sharper specular. Craft loop, Usul-graded, not automatable.
+
+---
+
+**In progress (prior thread — forge, parked):** forge/ v7 endgame-parity push. Slices 6-8 (composition/value, depth pass, render-to-card D2 pipeline) shipped earlier through `0c1a08b`, 110/110 tests — see git log for detail.
 
 **The freeze-fix arc, this whole window — full story for tomorrow:**
 1. **Headless D3D probe said "shader too complex, crashes ANGLE-d3d11 outright."** Turned out to be a headless-Chrome-only artifact — a purpose-built minimal test page (a single solid-color triangle, zero loops) crashed identically, ruling out shader complexity entirely. Root cause never fully pinned (likely something about running under SSH/non-interactive session on Windows), and it doesn't matter: **Usul confirmed ordinary WebGL2 (get.webgl.org) works fine in his real, everyday Chrome.** The headless probe methodology (`forge-compile-ab*.ps1`) was a red herring for this bug — keep it filed away for future driver-level questions, but don't trust it over Usul's own browser.
