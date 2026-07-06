@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { derive, hexToSeed, seedToHex } from "../src/core/prng";
+import { ROLE_PROFILES } from "../src/gen/structure";
 import { shipSpecs, shipSVG } from "../src/gen/ship";
 
 const SEEDS = [0x7a3f09c1 | 0, 0x1f2a0001, 0x00000001, hexToSeed("d44e2b10")];
@@ -55,9 +56,11 @@ describe("determinism", () => {
       expect(types[types.length - 2]).toBe("hull");
       expect(types[types.length - 1]).toBe("nose");
       expect(types.slice(2, -2).every((t) => t === "mid")).toBe(true);
-      // frigate: 1-3 mids (spreads widened, session 2)
-      expect(types.length).toBeGreaterThanOrEqual(5);
-      expect(types.length).toBeLessThanOrEqual(7);
+      // role-aware total segment count: fixed spine (4) + that role's
+      // midRepeats budget (session 3: three roles, brief §4.3)
+      const [midLo, midHi] = ROLE_PROFILES[structure.role].midRepeats;
+      expect(types.length).toBeGreaterThanOrEqual(4 + midLo);
+      expect(types.length).toBeLessThanOrEqual(4 + midHi);
       for (const seg of structure.segments) {
         expect(seg.length).toBeGreaterThan(0);
         expect(seg.halfWidth.aft).toBeGreaterThan(0);
