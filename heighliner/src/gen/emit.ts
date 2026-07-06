@@ -56,6 +56,9 @@ const pointsAttr = (pts: [number, number][]): string =>
   pts.map(([x, y]) => `${fmt(x)},${fmt(y)}`).join(" ");
 
 function shapeToSVG(shape: Shape, palette: Record<string, string>): string {
+  if (shape.kind === "line") {
+    return `<line x1="${fmt(shape.x1)}" y1="${fmt(shape.y1)}" x2="${fmt(shape.x2)}" y2="${fmt(shape.y2)}"${strokeAttrs(shape.stroke)}/>`;
+  }
   const fill = shape.fill ? ` fill="${palette[shape.fill]}"` : ` fill="none"`;
   const stroke = strokeAttrs(shape.stroke);
   switch (shape.kind) {

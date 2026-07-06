@@ -27,7 +27,7 @@ function turret(rng: Prng, size: number): PartInstance {
     { kind: "rect", x: -baseW * 0.25 + housingW * 0.6, y: -barrelGap / 2 - barrelW / 2, w: barrelLen, h: barrelW, fill: "dark", stroke: "minorDetail" },
     { kind: "rect", x: -baseW * 0.25 + housingW * 0.6, y: barrelGap / 2 - barrelW / 2, w: barrelLen, h: barrelW, fill: "dark", stroke: "minorDetail" },
   ];
-  return { type: "turret", shapes };
+  return { type: "turret-large", shapes };
 }
 
 function thrusterCluster(rng: Prng, size: number): PartInstance {
@@ -60,7 +60,7 @@ function thrusterCluster(rng: Prng, size: number): PartInstance {
 }
 
 const PART_BUILDERS: Record<string, (rng: Prng, size: number) => PartInstance> = {
-  "turret": turret,
+  "turret-large": turret,
   "thruster-cluster": thrusterCluster,
 };
 
@@ -92,5 +92,5 @@ export function kit(structureSpec: StructureSpec, seedK: number): KitSpec {
 
 function partSize(frame: SegmentFrame, at: number, partType: string): number {
   const hw = halfWidthAt(frame.segment, at);
-  return partType === "turret" ? hw * 0.42 : hw * 0.5;
+  return partType === "turret-large" ? hw * 0.42 : hw * 0.5;
 }

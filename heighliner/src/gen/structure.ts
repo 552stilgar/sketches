@@ -29,8 +29,9 @@ function segment(
     id,
     type,
     length: spec.length,
-    profile: "trapezoid",
+    profile: "taper",
     halfWidth: { aft: spec.aft ?? prevFore, fore: spec.fore },
+    edgeFeatures: [],
     sockets: [],
   };
 }
@@ -93,8 +94,8 @@ export function structure(seedS: number): StructureSpec {
     range(stream(derive(seedS, "socket", id)), lo, hi);
 
   const hullSockets: Socket[] = [
-    { id: "hull-lat-0", kind: "lateralPair", at: socketAt("hull-lat-0", 0.2, 0.4), accepts: ["turret"] },
-    { id: "hull-lat-1", kind: "lateralPair", at: socketAt("hull-lat-1", 0.6, 0.8), accepts: ["turret"] },
+    { id: "hull-lat-0", kind: "lateralPair", at: socketAt("hull-lat-0", 0.2, 0.4), accepts: ["turret-large"] },
+    { id: "hull-lat-1", kind: "lateralPair", at: socketAt("hull-lat-1", 0.6, 0.8), accepts: ["turret-large"] },
   ];
   hull.sockets = hullSockets;
 
