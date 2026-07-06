@@ -3,7 +3,7 @@
 //   defs (segment clip paths) + layer groups hull / detail / kit / paint.
 
 import { seedToHex } from "../core/prng";
-import { PALETTES } from "./paint";
+import { PALETTES, shadingTones } from "./paint";
 import type { Placement, SegmentDetail, Shape, ShipSpecs, StrokeWeight } from "./types";
 import { frames, halfWidthAt, segmentOutline, yAt, type SegmentFrame } from "./structure";
 
@@ -11,6 +11,20 @@ import { frames, halfWidthAt, segmentOutline, yAt, type SegmentFrame } from "./s
 export const SILHOUETTE = 1.4;
 export const MAJOR_SEAM = 0.7;
 export const MINOR_DETAIL = 0.3;
+
+// --- shading stack (brief §4.7, layer 2 / §6 lane H) ------------------------
+// Named constants only — Usul tunes the shading stack here, no magic numbers
+// inline in the builders below. Geometry is a pure function of the existing
+// structure/kit/paint specs: zero new PRNG draws.
+const LIT_INSET_FRAC = 0.22; // lit strip width, fraction of local half-width
+const SHADE_INSET_FRAC = 0.28; // shade strip width, fraction of local half-width
+const AO_SCALE = 0.7; // kit-module AO blob size, fraction of part footprint
+const AO_JOIN_RX_FRAC = 1.0; // join AO ellipse half-width, fraction of join half-width
+const AO_JOIN_RY = 1.1; // join AO ellipse vertical half-extent (world units)
+const AO_OPACITY = 0.22; // AO blob fill-opacity
+const AO_BLUR_STD_DEV = 1.1; // shared feGaussianBlur stdDeviation
+const SPEC_WIDTH = 0.9; // specular strip width, world units
+const SPEC_OFFSET_FRAC = 0.42; // specular strip offset from centerline, fraction of local half-width, toward the light (-x) side
 
 const STROKE_WIDTH: Record<StrokeWeight, number> = {
   silhouette: SILHOUETTE,
@@ -83,6 +97,51 @@ function panelGridLines(frame: SegmentFrame, d: SegmentDetail): { half: string[]
   return { half, full };
 }
 
+/**
+ * Inset band hugging one side of a segment's real outline (brief §6: "an
+ * inset polygon built by shrinking x-samples works; do not re-derive
+ * geometry ad hoc"). `half` is the starboard (+x) half of segmentOutline's
+ * points, aft->fore; `side` picks -x (light, port) or +x (far, starboard).
+ * Inner edge is a fraction of the outer edge's x, so it can never cross the
+ * centerline or exceed the real silhouette.
+ */
+function insetBand(half: [number, number][], frac: number, side: 1 | -1): [number, number][] {
+  const outer = half.map(([x, y]): [number, number] => [side * x, y]);
+  const inner = half.map(([x, y]): [number, number] => [side * x * (1 - frac), y]);
+  return [...outer, ...inner.reverse()];
+}
+
+/** Local bounding half-extent of a part's shapes, in the part's own frame
+ *  (origin at socket anchor). Used to size AO blobs proportionally to the
+ *  module rather than a single flat radius for every part type. */
+function shapeFootprint(shapes: Shape[]): { rx: number; ry: number } {
+  let minX = 0;
+  let maxX = 0;
+  let minY = 0;
+  let maxY = 0;
+  for (const s of shapes) {
+    if (s.kind === "rect") {
+      minX = Math.min(minX, s.x);
+      maxX = Math.max(maxX, s.x + s.w);
+      minY = Math.min(minY, s.y);
+      maxY = Math.max(maxY, s.y + s.h);
+    } else if (s.kind === "poly") {
+      for (const [x, y] of s.points) {
+        minX = Math.min(minX, x);
+        maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y);
+        maxY = Math.max(maxY, y);
+      }
+    } else if (s.kind === "circle") {
+      minX = Math.min(minX, s.cx - s.r);
+      maxX = Math.max(maxX, s.cx + s.r);
+      minY = Math.min(minY, s.cy - s.r);
+      maxY = Math.max(maxY, s.cy + s.r);
+    }
+  }
+  return { rx: Math.max(1, (maxX - minX) / 2), ry: Math.max(1, (maxY - minY) / 2) };
+}
+
 export function emit(specs: ShipSpecs, idPrefix?: string): string {
   const palette = PALETTES[specs.paint.paletteId];
   if (!palette) throw new Error(`unknown palette: ${specs.paint.paletteId}`);
@@ -139,12 +198,73 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     ),
   );
 
+  // shading layer (brief §4.7 / §6 lane H): base fill already lives in the
+  // hull layer above; this group carries the remaining four passes in fixed
+  // order — lit strip, shade strip, AO, axial specular. Pure function of the
+  // already-computed specs; no new PRNG draws anywhere below.
+  const tones = shadingTones(palette);
+  const aoBlurFilterId = `${ns}-ao-blur`;
+
+  // 2-3: lit (light side, -x) / shade (far side, +x) strips, built from the
+  // segment's real outline samples shrunk toward centerline — never a
+  // re-derived curve.
+  const shadingStrips = segFrames.flatMap((f, i) => {
+    const outline = outlines[i]!;
+    const starboardHalf = outline.slice(0, outline.length / 2); // aft->fore, +x
+    const lit = insetBand(starboardHalf, LIT_INSET_FRAC, -1);
+    const shade = insetBand(starboardHalf, SHADE_INSET_FRAC, 1);
+    const clip = `clip-path="url(#${ns}-clip-${f.segment.id})"`;
+    return [
+      `<g ${clip}><polygon points="${pointsAttr(lit)}" fill="${tones.lit}"/></g>`,
+      `<g ${clip}><polygon points="${pointsAttr(shade)}" fill="${tones.shade}"/></g>`,
+    ];
+  });
+
+  // 4a: AO under kit modules, both mirror sides, sized off each part's own
+  // footprint (specs.kit.placements — no new draws, reuses the same
+  // placementTransforms as the kit layer).
+  const kitAO = specs.kit.placements.flatMap((p) => {
+    const { rx, ry } = shapeFootprint(p.part.shapes);
+    const blob = `<ellipse cx="0" cy="0" rx="${fmt(rx * AO_SCALE)}" ry="${fmt(ry * AO_SCALE)}" fill="${tones.ao}" fill-opacity="${AO_OPACITY}" filter="url(#${aoBlurFilterId})"/>`;
+    return placementTransforms(p).map((transform) => `<g transform="${transform}">${blob}</g>`);
+  });
+  // 4b: AO at every internal join line — symmetric about the centerline by
+  // construction (full-width ellipse), no MIRROR needed.
+  const joinAO = segFrames.slice(1).map((f) => {
+    const hw = halfWidthAt(f.segment, 0);
+    return `<ellipse cx="0" cy="${fmt(f.yAft)}" rx="${fmt(hw * AO_JOIN_RX_FRAC)}" ry="${fmt(AO_JOIN_RY)}" fill="${tones.ao}" fill-opacity="${AO_OPACITY}" filter="url(#${aoBlurFilterId})"/>`;
+  });
+
+  // 5: one axial specular strip per major segment (drive, hull, longest
+  // mid), offset toward the light side, clipped to its own silhouette.
+  const majorSegs = segFrames.filter((f) => f.segment.type === "drive" || f.segment.type === "hull");
+  const midFrames = segFrames.filter((f) => f.segment.type === "mid");
+  if (midFrames.length > 0) {
+    majorSegs.push(midFrames.reduce((longest, f) => (f.segment.length > longest.segment.length ? f : longest)));
+  }
+  const specStrips = majorSegs.map((f) => {
+    const xAft = -SPEC_OFFSET_FRAC * f.segment.halfWidth.aft;
+    const xFore = -SPEC_OFFSET_FRAC * f.segment.halfWidth.fore;
+    const hw = SPEC_WIDTH / 2;
+    const pts: [number, number][] = [
+      [xAft - hw, f.yAft],
+      [xAft + hw, f.yAft],
+      [xFore + hw, f.yFore],
+      [xFore - hw, f.yFore],
+    ];
+    return `<g clip-path="url(#${ns}-clip-${f.segment.id})"><polygon points="${pointsAttr(pts)}" fill="${tones.spec}"/></g>`;
+  });
+
+  const shadingGroup = `<g id="${ns}-shading">${shadingStrips.join("")}${kitAO.join("")}${joinAO.join("")}${specStrips.join("")}</g>`;
+  const aoBlurFilter = `<filter id="${aoBlurFilterId}" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="${AO_BLUR_STD_DEV}"/></filter>`;
+
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">`,
-    `<defs>${defs}</defs>`,
+    `<defs>${defs}${aoBlurFilter}</defs>`,
     `<g id="${ns}-hull">${hullShapes.join("")}${joinSeams.join("")}${collars.join("")}</g>`,
     `<g id="${ns}-detail">${detailGroups.join("")}</g>`,
     `<g id="${ns}-kit">${kitGroups.join("")}</g>`,
+    shadingGroup,
     `<g id="${ns}-paint"><!-- livery/decals land here (session 5); base tones applied on hull --></g>`,
     `</svg>`,
   ].join("");
