@@ -81,3 +81,104 @@ h2 {
 }
 
 .card.copied .seed { color: var(--accent); }
+
+/* Inspector overlay ------------------------------------------------------ */
+
+.inspector-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 7, 9, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 10;
+}
+
+.inspector-overlay.hidden { display: none; }
+
+.inspector-panel {
+  background: var(--card);
+  border: 1px solid var(--card-edge);
+  border-radius: 8px;
+  padding: 18px 22px 22px;
+  width: min(560px, 92vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.inspector-seed {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--text);
+}
+
+.inspector-close {
+  background: transparent;
+  border: 1px solid var(--card-edge);
+  color: var(--text-dim);
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.inspector-close:hover { border-color: var(--accent); color: var(--accent); }
+
+.inspector-render {
+  background: var(--bg);
+  border: 1px solid var(--card-edge);
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.inspector-render svg {
+  display: block;
+  width: 100%;
+  height: 480px;
+}
+
+.inspector-controls,
+.inspector-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.inspector-controls button,
+.inspector-actions button {
+  background: var(--bg);
+  border: 1px solid var(--card-edge);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 8px 6px;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.inspector-controls button:hover,
+.inspector-actions button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.inspector-status {
+  min-height: 14px;
+  font-size: 11px;
+  color: var(--accent);
+  text-align: center;
+}
