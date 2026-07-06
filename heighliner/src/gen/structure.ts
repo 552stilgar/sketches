@@ -11,6 +11,7 @@ import type {
   EdgeFeature,
   EdgeFeatureType,
   JoinCollar,
+  PartType,
   ProfileType,
   Segment,
   SegmentType,
@@ -191,6 +192,166 @@ function drawJoinCollar(rng: Prng, foreHalfWidth: number): JoinCollar | undefine
   return present ? { length, widthFactor } : undefined;
 }
 
+// --- socket generation (K2: budgeted layout, brief §4.3/§4.4/§6) ------------
+// Sockets draw on stream namespaces separate from a segment's own frozen
+// dims/profile/feature/collar stream: counts come from
+// derive(seedS, "socket-count", segId, category), axial positions keep the
+// existing derive(seedS, "socket", id) idiom so per-socket streams stay
+// independent of everything else (including budget clamping, which only
+// ever adjusts already-drawn counts — no new randomness).
+
+const WEAPON_PARTS: PartType[] = ["turret-large", "turret-small", "pdc-mount"];
+const HULL_CENTERLINE_PARTS: PartType[] = ["sensor-dish", "comm-mast"];
+const MID_UTILITY_PARTS: PartType[] = ["radiator-fin", "cargo-hatch", "vent-strip", "docking-collar"];
+const MID_CENTERLINE_PARTS: PartType[] = ["comm-mast", "sensor-dish"];
+const DRIVE_UTILITY_PARTS: PartType[] = ["radiator-fin", "vent-strip"];
+const NOSE_CENTERLINE_PARTS: PartType[] = ["sensor-dish", "docking-collar"];
+
+/** Minimum axial separation enforced between any two sockets on one segment. */
+export const MIN_SOCKET_SPACING = 0.18;
+
+function socketAxial(seedS: number, id: string, lo: number, hi: number): number {
+  return range(stream(derive(seedS, "socket", id)), lo, hi);
+}
+
+function socketCountDraw(seedS: number, segId: string, category: string, lo: number, hi: number): number {
+  return int(stream(derive(seedS, "socket-count", segId, category)), lo, hi);
+}
+
+/**
+ * Hull is the ship's only weapon-socket segment, so its raw 1-2 draw (item
+ * variety) is floor-clamped into the frigate's "weapon fill MID" budget
+ * (brief §4.3: total weapon sockets 2-3) — a pure post-process on the
+ * already-drawn count, no extra randomness.
+ */
+function hullWeaponCount(seedS: number, segId: string): number {
+  const raw = socketCountDraw(seedS, segId, "weapon", 1, 2);
+  return Math.max(2, Math.min(3, raw));
+}
+
+/**
+ * Deterministic post-process: push sockets on a segment apart so no two sit
+ * closer than MIN_SOCKET_SPACING. Pure function of the already-drawn `at`
+ * values (re-anchors the whole run if it would drift past the safe edge) —
+ * no new randomness, so per-socket streams stay untouched.
+ */
+function enforceSpacing(sockets: Socket[]): void {
+  if (sockets.length < 2) return;
+  const SAFE_LO = 0.03;
+  const SAFE_HI = 0.97;
+  const sorted = [...sockets].sort((a, b) => a.at - b.at);
+  const needed = (sorted.length - 1) * MIN_SOCKET_SPACING;
+  let anchor = sorted[0]!.at;
+  if (anchor + needed > SAFE_HI) anchor = SAFE_HI - needed;
+  anchor = Math.max(SAFE_LO, anchor);
+  sorted[0]!.at = anchor;
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1]!;
+    const cur = sorted[i]!;
+    if (cur.at - prev.at < MIN_SOCKET_SPACING) cur.at = prev.at + MIN_SOCKET_SPACING;
+  }
+}
+
+/**
+ * Round-robin count clamp across a shared budget pool (brief §4.3 utility
+ * total 2-5): boosts under-budget slots from the front, trims over-budget
+ * slots from the back. Pure function of the already-drawn raw counts.
+ */
+function clampCounts(raw: number[], caps: number[], lo: number, hi: number): number[] {
+  const counts = [...raw];
+  let total = counts.reduce((a, b) => a + b, 0);
+  let guard = 0;
+  while (total < lo && guard < 100) {
+    let progressed = false;
+    for (let i = 0; i < counts.length && total < lo; i++) {
+      if (counts[i]! < caps[i]!) {
+        counts[i]!++;
+        total++;
+        progressed = true;
+      }
+    }
+    guard++;
+    if (!progressed) break;
+  }
+  for (let i = counts.length - 1; total > hi && i >= 0; i--) {
+    while (counts[i]! > 0 && total > hi) {
+      counts[i]!--;
+      total--;
+    }
+  }
+  return counts;
+}
+
+// Weapon-lateral axial windows keyed by hull's final (post-clamp) count —
+// spread wide first, subdivide as more sockets join the run.
+const HULL_WEAPON_WINDOWS: Record<number, readonly (readonly [number, number])[]> = {
+  1: [[0.35, 0.65]],
+  2: [[0.12, 0.42], [0.58, 0.88]],
+  3: [[0.08, 0.28], [0.36, 0.56], [0.64, 0.88]],
+};
+
+function buildHullSockets(seedS: number, segId: string): Socket[] {
+  const n = hullWeaponCount(seedS, segId);
+  const weaponWindows = HULL_WEAPON_WINDOWS[n] ?? HULL_WEAPON_WINDOWS[3]!;
+  const sockets: Socket[] = [];
+  for (let i = 0; i < n; i++) {
+    const id = `${segId}-lat-${i}`;
+    const [lo, hi] = weaponWindows[i]!;
+    sockets.push({ id, kind: "lateralPair", at: socketAxial(seedS, id, lo, hi), accepts: WEAPON_PARTS });
+  }
+  const ctrCount = socketCountDraw(seedS, segId, "centerline", 0, 1);
+  if (ctrCount === 1) {
+    const id = `${segId}-ctr-0`;
+    sockets.push({ id, kind: "centerline", at: socketAxial(seedS, id, 0.15, 0.85), accepts: HULL_CENTERLINE_PARTS });
+  }
+  enforceSpacing(sockets);
+  return sockets;
+}
+
+// Utility-lateral axial windows keyed by the mid's final utility count (brief
+// §4.3 budget clamp decides the count; this only decides where they sit).
+const MID_UTILITY_WINDOWS: Record<number, readonly (readonly [number, number])[]> = {
+  1: [[0.3, 0.7]],
+  2: [[0.08, 0.38], [0.62, 0.92]],
+};
+
+function buildMidSockets(seedS: number, segId: string, utilCount: number): Socket[] {
+  const utilWindows = MID_UTILITY_WINDOWS[utilCount] ?? MID_UTILITY_WINDOWS[2]!;
+  const sockets: Socket[] = [];
+  for (let i = 0; i < utilCount; i++) {
+    const id = `${segId}-lat-${i}`;
+    const [lo, hi] = utilWindows[i]!;
+    sockets.push({ id, kind: "lateralPair", at: socketAxial(seedS, id, lo, hi), accepts: MID_UTILITY_PARTS });
+  }
+  const ctrCount = socketCountDraw(seedS, segId, "centerline", 0, 1);
+  if (ctrCount === 1) {
+    const id = `${segId}-ctr-0`;
+    sockets.push({ id, kind: "centerline", at: socketAxial(seedS, id, 0.15, 0.85), accepts: MID_CENTERLINE_PARTS });
+  }
+  enforceSpacing(sockets);
+  return sockets;
+}
+
+function buildDriveSockets(seedS: number, segId: string, utilCount: number): Socket[] {
+  const ringId = `${segId}-ring-0`;
+  const sockets: Socket[] = [
+    { id: ringId, kind: "ringBand", at: socketAxial(seedS, ringId, 0.35, 0.65), accepts: ["thruster-cluster"] },
+  ];
+  if (utilCount >= 1) {
+    const id = `${segId}-lat-0`;
+    sockets.push({ id, kind: "lateralPair", at: socketAxial(seedS, id, 0.05, 0.2), accepts: DRIVE_UTILITY_PARTS });
+  }
+  enforceSpacing(sockets);
+  return sockets;
+}
+
+function buildNoseSockets(seedS: number, segId: string): Socket[] {
+  const ctrCount = socketCountDraw(seedS, segId, "centerline", 0, 1);
+  if (ctrCount === 0) return [];
+  const id = `${segId}-ctr-0`;
+  return [{ id, kind: "centerline", at: socketAxial(seedS, id, 0.15, 0.75), accepts: NOSE_CENTERLINE_PARTS }];
+}
+
 // --- segment assembly ---------------------------------------------------------
 
 function segment(
@@ -280,21 +441,26 @@ export function structure(seedS: number): StructureSpec {
   });
   segments.push(nose);
 
-  // Sockets (session 1): two mirrored lateral pairs on the hull, one ring
-  // band on the drive. Axial positions seeded from the socket layer of the
-  // structure seed, per socket id.
-  const socketAt = (id: string, lo: number, hi: number): number =>
-    range(stream(derive(seedS, "socket", id)), lo, hi);
+  // Sockets (K2: budgeted layout, brief §4.3/§4.4/§6). Weapon fill lives on
+  // the hull only, floor-clamped into the frigate budget. Utility fill is
+  // shared across mids + drive, drawn independently per segment then
+  // round-robin clamped into the shared 2-5 budget pool (brief §4.3).
+  hull.sockets = buildHullSockets(seedS, hull.id);
 
-  const hullSockets: Socket[] = [
-    { id: "hull-lat-0", kind: "lateralPair", at: socketAt("hull-lat-0", 0.2, 0.4), accepts: ["turret-large"] },
-    { id: "hull-lat-1", kind: "lateralPair", at: socketAt("hull-lat-1", 0.6, 0.8), accepts: ["turret-large"] },
+  const midSegs = segments.filter((s) => s.type === "mid");
+  const rawUtil = [
+    ...midSegs.map((s) => socketCountDraw(seedS, s.id, "utility", 0, 2)),
+    socketCountDraw(seedS, drive.id, "utility", 0, 1),
   ];
-  hull.sockets = hullSockets;
+  const caps = [...midSegs.map(() => 2), 1];
+  const utilCounts = clampCounts(rawUtil, caps, 2, 5);
 
-  drive.sockets = [
-    { id: "drive-ring-0", kind: "ringBand", at: socketAt("drive-ring-0", 0.35, 0.65), accepts: ["thruster-cluster"] },
-  ];
+  midSegs.forEach((seg, i) => {
+    seg.sockets = buildMidSockets(seedS, seg.id, utilCounts[i]!);
+  });
+  drive.sockets = buildDriveSockets(seedS, drive.id, utilCounts[utilCounts.length - 1]!);
+
+  nose.sockets = buildNoseSockets(seedS, nose.id);
 
   return {
     role: "frigate",
