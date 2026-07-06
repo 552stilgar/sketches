@@ -77,35 +77,73 @@ function scaleLen(len: [number, number], factor: number): [number, number] {
   return [len[0] * factor, len[1] * factor];
 }
 
+/** Per-role silhouette modifier — pure data, applied to the FRIGATE baseline.
+ *  Session 4 legibility pass (operator verdict: "the 3 types aren't immediately
+ *  recognizable"): proportion alone (length + segment count) read too subtly,
+ *  so each role now also gets a GIRTH (whole-ship width), a NOSE character
+ *  (needle vs snub bow), and a MID BOXINESS (uniform cargo stack vs aggressive
+ *  taper). These only change TABLE VALUES — no new draws, none reordered — so
+ *  per-seed determinism and sub-seed (kit/detail/paint) isolation hold; the
+ *  geometry shifts (re-baselined by the human), the stream structure does not. */
+interface RoleMod {
+  midRepeats: [number, number];
+  elongation: number; // axial length multiplier (brief §4.3 "Elongation")
+  girth: number; // whole-ship width multiplier — scales the engine base, and
+  //                every downstream width derives from it, so girth propagates
+  noseTip: [number, number]; // tipFraction: low = needle bow, high = snub bow
+  noseLen: number; // nose length multiplier (on top of elongation)
+  midBoxy: number; // 0..1: pull mid step/taper toward 1.0 → uniform boxy cargo
+}
+
+/** Blend a [lo, hi] ratio range toward 1.0 by k (0 = unchanged, 1 = flat). */
+function pullToOne(r: [number, number], k: number): [number, number] {
+  return [r[0] + (1 - r[0]) * k, r[1] + (1 - r[1]) * k];
+}
+
+function scaleW(w: [number, number], g: number): [number, number] {
+  return [w[0] * g, w[1] * g];
+}
+
 /**
- * Derive a role's full table from FRIGATE: scale every segment's length range
- * by `elongation` (brief §4.3 "Elongation" row) and swap in the role's own
- * midRepeats budget (brief §4.3 "Segments"/"mid repeats" rows). Width ratios
- * (step/taper/foreShrink/tipFraction) are shared across roles.
+ * Derive a role's full table from FRIGATE. frigate's own mod is the identity
+ * (girth 1, elongation 1, midBoxy 0, frigate nose) so it reproduces FRIGATE
+ * exactly; corvette/hauler diverge in girth + nose + mid boxiness.
  */
-function deriveRoleTable(midRepeats: [number, number], elongation: number): RoleTable {
+function deriveRoleTable(m: RoleMod): RoleTable {
+  const e = m.elongation;
   return {
-    midRepeats,
-    engine: { ...FRIGATE.engine, len: scaleLen(FRIGATE.engine.len, elongation) },
-    drive: { ...FRIGATE.drive, len: scaleLen(FRIGATE.drive.len, elongation) },
-    mid: { ...FRIGATE.mid, len: scaleLen(FRIGATE.mid.len, elongation) },
-    hull: { ...FRIGATE.hull, len: scaleLen(FRIGATE.hull.len, elongation) },
-    nose: { ...FRIGATE.nose, len: scaleLen(FRIGATE.nose.len, elongation) },
+    midRepeats: m.midRepeats,
+    engine: {
+      len: scaleLen(FRIGATE.engine.len, e),
+      foreShrink: FRIGATE.engine.foreShrink,
+      aftHalfWidth: scaleW(FRIGATE.engine.aftHalfWidth, m.girth),
+    },
+    drive: { ...FRIGATE.drive, len: scaleLen(FRIGATE.drive.len, e) },
+    mid: {
+      len: scaleLen(FRIGATE.mid.len, e),
+      step: pullToOne(FRIGATE.mid.step, m.midBoxy),
+      taper: pullToOne(FRIGATE.mid.taper, m.midBoxy),
+    },
+    hull: { ...FRIGATE.hull, len: scaleLen(FRIGATE.hull.len, e) },
+    nose: {
+      len: scaleLen(FRIGATE.nose.len, e * m.noseLen),
+      step: FRIGATE.nose.step,
+      tipFraction: m.noseTip,
+    },
   };
 }
 
-// Corvette: fewer/shorter segments, low elongation (brief §4.3: segments 3-4
-// meaning "as few as engine+drive+hull+nose with 0 mids", mid repeats 0-1).
-// Hauler: more/longer segments, high elongation (mid repeats bumped to 2-4,
-// one above frigate's approved ceiling of 3, so the ordering corvette <
-// frigate < hauler holds on both floor and ceiling even after frigate's
-// session-2 widening).
+// Corvette: a lean needle-nosed interceptor — thin girth, long sharp bow, 0-1
+// aggressively-tapering mid, short overall. Reads fast/aggressive.
+// Hauler: a broad snub-nosed freighter — fat girth, stubby blunt bow, 2-4
+// UNIFORM boxy cargo mids, long. Reads slow/utilitarian. midRepeats ceiling 4
+// stays one above frigate so corvette < frigate < hauler on segment count too.
 const ROLES: readonly Role[] = ["corvette", "frigate", "hauler"];
 
 export const ROLE_PROFILES: Record<Role, RoleTable> = {
-  corvette: deriveRoleTable([0, 1], 0.75),
-  frigate: FRIGATE,
-  hauler: deriveRoleTable([2, 4], 1.3),
+  corvette: deriveRoleTable({ midRepeats: [0, 1], elongation: 0.85, girth: 0.66, noseTip: [0.03, 0.14], noseLen: 1.3, midBoxy: 0 }),
+  frigate: deriveRoleTable({ midRepeats: [1, 3], elongation: 1.0, girth: 1.0, noseTip: [0.08, 0.32], noseLen: 1.0, midBoxy: 0 }),
+  hauler: deriveRoleTable({ midRepeats: [2, 4], elongation: 1.12, girth: 1.5, noseTip: [0.42, 0.6], noseLen: 0.62, midBoxy: 0.82 }),
 };
 
 // Weapon socket fill budget (brief §4.3 "Weapon socket fill" row): clamps the
