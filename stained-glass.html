@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Stained Glass Engine</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #070609; overflow: hidden; }
+
+    #hud {
+      position: fixed; top: 14px; left: 16px;
+      font-family: monospace; font-size: 11px; color: #4a4550;
+      pointer-events: none; line-height: 1.9;
+    }
+    #seed-box {
+      position: fixed; top: 14px; right: 16px;
+      font-family: monospace; font-size: 11px;
+      background: transparent; border: none;
+      border-bottom: 1px solid #2a2530; color: #6a6070;
+      width: 90px; outline: none; text-align: right;
+    }
+
+    /* ── CFG Panel ───────────────────────────────────────── */
+    #panel {
+      display: none;
+      position: fixed; top: 40px; right: 16px;
+      width: 274px;
+      background: rgba(9, 7, 12, 0.94);
+      border: 1px solid #241e2a;
+      font-family: monospace; font-size: 11px; color: #555;
+      padding: 10px 14px 14px;
+      line-height: 1.0;
+    }
+    #panel.visible { display: block; }
+    .pnl-title {
+      color: #8a7d92; font-size: 12px;
+      display: flex; justify-content: space-between;
+      margin-bottom: 8px; padding-bottom: 6px;
+      border-bottom: 1px solid #201a26;
+    }
+    .pnl-section {
+      color: #3a3340; font-size: 9px; letter-spacing: 0.10em;
+      margin: 10px 0 4px; text-transform: uppercase;
+    }
+    .pnl-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+    .pnl-row label { width: 138px; color: #5a5262; font-size: 10px; white-space: nowrap; }
+    .pnl-row input[type=range] { flex: 1; height: 2px; cursor: pointer; accent-color: #6a4a55; }
+    .pnl-val { width: 46px; text-align: right; color: #766a80; font-size: 10px; }
+    .pnl-regen {
+      margin-top: 12px; width: 100%;
+      background: #120d16; border: 1px solid #2a2230;
+      color: #766a80; font-family: monospace; font-size: 11px;
+      padding: 5px; cursor: pointer; letter-spacing: 0.04em;
+    }
+    .pnl-regen:hover { background: #180f1e; color: #a898b0; }
+
+    /* ── Info overlay ────────────────────────────────────── */
+    #info {
+      display: none;
+      position: fixed; bottom: 30px; left: 16px;
+      width: 380px;
+      background: rgba(8, 6, 11, 0.94);
+      border: 1px solid #241e2a;
+      font-family: monospace; font-size: 10px; color: #4a4550;
+      padding: 12px 16px 14px;
+      line-height: 1.9;
+      pointer-events: none;
+    }
+    #info.visible { display: block; }
+    .info-title { color: #8a7d92; font-size: 11px; margin-bottom: 8px; padding-bottom: 5px; border-bottom: 1px solid #201a26; }
+    .info-section { color: #3a3340; font-size: 9px; letter-spacing: 0.10em; margin: 8px 0 3px; }
+    .info-row { display: flex; align-items: baseline; gap: 8px; }
+    .info-dot { font-size: 13px; line-height: 1; flex-shrink: 0; }
+    .info-name { color: #6a6070; width: 128px; flex-shrink: 0; }
+    .info-desc { color: #3a3540; font-size: 9px; }
+    .info-key { color: #6a6070; width: 128px; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+<div id="hud">
+  <span id="hud-seed"></span><br>
+  <span id="hud-stats"></span><br>
+  <span id="hud-keys"></span>
+</div>
+<input id="seed-box" type="text" value="FENRIR">
+<div id="panel"></div>
+<div id="info"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-delaunay@6"></script>
+<script>
+
+// ── Config ──────────────────────────────────────────────────────────────────
+// The COMPOSITION KNOBS sit up top: a pointed-arch window whose focal jewel is
+// the rose oculus above a colonnade of cool lancets, all bound by heavy dark
+// stone + lead (drawn last — the void that makes the glass read).
+const CFG = {
+  lancetCount:  3,       // colonnade width (odd reads best) ↺
+  roseFrac:     0.62,    // rose radius / (half arch-head width) ↺
+  rosePetals:   8,       // radial foils in the oculus ↺
+  glassDensity: 1.0,     // leaded-pane count multiplier ↺
+  leadWeight:   1.7,     // lead came line thickness
+  stoneWeight:  1.0,     // stone bar / tracery thickness multiplier
+  veinStrength: 0.55,    // antique "reamy" streak visibility
+  saturation:   1.0,     // zone saturation multiplier
+  cloudSpeed:   0.00030, // drift rate of the fBm cloud-shadow field
+  cloudDepth:   0.34,    // luminance swing from passing clouds
+  sunRadius:    280,     // raking-light falloff radius (px)
+  sunStrength:  1.05,    // brightening at the sun's core
+  ambientTop:   1.16,    // sky is brighter up high…
+  ambientBot:   0.80,    // …and dimmer toward the sill
+};
+
+// ── Glass zones ───────────────────────────────────────────────────────────────
+// Staged color: the rose is the warm jewel, the lancets a cool colonnade, the
+// spandrel/clerestory backdrop a pale cold field so the jewel reads as the focus.
+const ZONES = {
+  rose: { name: 'Rose oculus', cell: 26,
+    desc: 'the warm jewel — crimson, vermilion, gold',
+    sw: [[352,80,88],[8,84,90],[40,90,94],[26,76,84],[338,64,74],[52,68,96],[14,88,80]] },
+  lancet: { name: 'Lancets', cell: 40,
+    desc: 'cool colonnade — cobalt, teal, viridian',
+    sw: [[212,74,74],[196,68,82],[168,60,70],[150,54,66],[226,62,60],[184,72,80],[204,58,54]] },
+  clerestory: { name: 'Clerestory / spandrel', cell: 56,
+    desc: 'pale cold backdrop — frost white, wan violet',
+    sw: [[54,16,94],[268,26,80],[218,20,88],[300,14,86],[190,12,92],[236,22,72]] },
+};
+
+const STONE = [222, 14, 8];   // near-black cool stone (HSB)
+const STONE_HI = [220, 10, 18];
+const LEAD  = [228, 18, 12];  // cool near-black lead came
+
+const PANEL_ROWS = [
+  { section: 'ARCHITECTURE  (↺ rebuilds)' },
+  { key: 'lancetCount',  label: 'lancets ↺',      min: 1,    max: 6,    step: 1,    fmt: v => Math.round(v), regen: true },
+  { key: 'roseFrac',     label: 'rose size ↺',    min: 0.30, max: 0.92, step: 0.02, fmt: v => v.toFixed(2), regen: true },
+  { key: 'rosePetals',   label: 'rose petals ↺',  min: 4,    max: 16,   step: 1,    fmt: v => Math.round(v), regen: true },
+  { key: 'glassDensity', label: 'glass density ↺',min: 0.5,  max: 1.8,  step: 0.05, fmt: v => v.toFixed(2), regen: true },
+  { section: 'GLASS' },
+  { key: 'saturation',   label: 'saturation',     min: 0.4,  max: 1.4,  step: 0.02, fmt: v => v.toFixed(2) },
+  { key: 'veinStrength', label: 'glass veining',  min: 0,    max: 1.0,  step: 0.02, fmt: v => v.toFixed(2) },
+  { key: 'leadWeight',   label: 'lead weight',    min: 0.6,  max: 3.4,  step: 0.1,  fmt: v => v.toFixed(1) },
+  { key: 'stoneWeight',  label: 'stone weight',   min: 0.5,  max: 2.0,  step: 0.05, fmt: v => v.toFixed(2) },
+  { section: 'LIGHT' },
+  { key: 'sunRadius',    label: 'sun radius',     min: 90,   max: 620,  step: 10,   fmt: v => Math.round(v) },
+  { key: 'sunStrength',  label: 'sun strength',   min: 0.2,  max: 2.2,  step: 0.05, fmt: v => v.toFixed(2) },
+  { key: 'cloudDepth',   label: 'cloud shadow',   min: 0,    max: 0.7,  step: 0.02, fmt: v => v.toFixed(2) },
+  { key: 'cloudSpeed',   label: 'cloud drift',    min: 0,    max: 0.0009,step: 0.00002, fmt: v => v.toFixed(5) },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+new p5(s => {
+
+  let regions = [];               // ordered draw list (backdrop → lancets → rose)
+  let seedStr = 'FENRIR';
+  let _frame = 0;
+  let panelVisible = false, infoVisible = false;
+  let hasMouse = false, sunPinned = false, pinX = 0, pinY = 0;
+
+  // ── Hash ────────────────────────────────────────────────────────────────────
+  function hashStr(str) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < str.length; i++)
+      h = Math.imul(h ^ str.charCodeAt(i), 0x01000193) >>> 0;
+    return h;
+  }
+
+  // ── Geometry helpers ──────────────────────────────────────────────────────────
+  function pointInPoly(poly, x, y) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+  function bbox(poly) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of poly) { if (x<x0)x0=x; if (y<y0)y0=y; if (x>x1)x1=x; if (y>y1)y1=y; }
+    return { x0, y0, x1, y1 };
+  }
+  function centroid(poly) {
+    let x = 0, y = 0; for (const p of poly) { x += p[0]; y += p[1]; }
+    return [x / poly.length, y / poly.length];
+  }
+  // Equilateral pointed arch: left/right springing at springY, apex above centre.
+  // Returns the two arc polylines (left then right, apex shared) sampled.
+  function archHead(left, right, springY, seg) {
+    const b = right - left, cx = (left + right) / 2;
+    const apexY = springY - b * Math.sqrt(3) / 2;
+    const pts = [];
+    // left arc: centre (right,springY), radius b, angle PI → 4PI/3
+    for (let i = 0; i <= seg; i++) {
+      const a = s.lerp(Math.PI, 4 * Math.PI / 3, i / seg);
+      pts.push([right + b * Math.cos(a), springY + b * Math.sin(a)]);
+    }
+    // right arc: centre (left,springY), radius b, angle -PI/3 → 0
+    for (let i = 1; i <= seg; i++) {
+      const a = s.lerp(-Math.PI / 3, 0, i / seg);
+      pts.push([left + b * Math.cos(a), springY + b * Math.sin(a)]);
+    }
+    return { pts, apexY, cx };
+  }
+
+  // ── Jittered-grid glazing: even leaded panes clipped to a region ───────────────
+  function seedRegion(poly, cell) {
+    const bb = bbox(poly);
+    const step = cell / Math.max(0.5, CFG.glassDensity);
+    const seeds = [];
+    for (let gy = bb.y0 - step; gy < bb.y1 + step; gy += step)
+      for (let gx = bb.x0 - step; gx < bb.x1 + step; gx += step) {
+        const px = gx + step * (0.5 + s.random(-0.34, 0.34));
+        const py = gy + step * (0.5 + s.random(-0.34, 0.34));
+        if (pointInPoly(poly, px, py)) seeds.push([px, py]);
+      }
+    return seeds;
+  }
+
+  // Build a renderable region: clip-polygon + its leaded-glass cells.
+  function makeRegion(poly, zoneKey) {
+    const z = ZONES[zoneKey];
+    const seeds = seedRegion(poly, z.cell);
+    const region = { poly, zoneKey, cells: [], solid: null };
+
+    if (seeds.length < 3) {
+      // too small to tessellate — one plate of glass
+      region.solid = tintFor(z, centroid(poly));
+      return region;
+    }
+    const bb = bbox(poly);
+    const del = d3.Delaunay.from(seeds);
+    const vor = del.voronoi([bb.x0 - 4, bb.y0 - 4, bb.x1 + 4, bb.y1 + 4]);
+    for (let i = 0; i < seeds.length; i++) {
+      const cp = vor.cellPolygon(i);
+      if (!cp || cp.length < 3) continue;
+      const c = centroid(cp);
+      region.cells.push({
+        poly: cp,
+        cx: c[0], cy: c[1],
+        tint: tintFor(z, c),
+        veins: makeVeins(cp, c),
+      });
+    }
+    return region;
+  }
+
+  function tintFor(z, c) {
+    // seeded swatch pick + gentle per-pane hue/value jitter (no two panes alike)
+    const idx = Math.floor(s.random(z.sw.length)) % z.sw.length;
+    const base = z.sw[idx];
+    return [
+      base[0] + s.random(-7, 7),
+      base[1] + s.random(-8, 6),
+      base[2] + s.random(-10, 6),
+    ];
+  }
+
+  // Antique "reamy" glass — a few noise-angled streaks per pane.
+  function makeVeins(poly, c) {
+    const bb = bbox(poly);
+    const w = bb.x1 - bb.x0, h = bb.y1 - bb.y0;
+    const r = Math.max(w, h) * 0.5;
+    const n = 2 + Math.floor(s.random(2));
+    const veins = [];
+    for (let i = 0; i < n; i++) {
+      const a = s.noise(c[0] * 0.02, c[1] * 0.02, i * 3.1) * Math.PI * 2;
+      const off = s.random(-0.4, 0.4) * Math.min(w, h);
+      const nx = Math.cos(a + Math.PI / 2), ny = Math.sin(a + Math.PI / 2);
+      const mx = c[0] + nx * off, my = c[1] + ny * off;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      veins.push([mx - dx * r, my - dy * r, mx + dx * r, my + dy * r]);
+    }
+    return veins;
+  }
+
+  // ── Window construction — a production-rule tracery layout ─────────────────────
+  // (grammar in spirit: window → arch ∘ [mullions→lancets] ∘ rose[hub ∘ petals*];
+  //  a rule-based decomposition rather than a literal string-rewrite L-system.)
+  function buildWindow() {
+    regions = [];
+    const W = s.width, H = s.height;
+    const margin = Math.min(W, H) * 0.085;
+    const left = margin, right = W - margin;
+    const top = margin, bottom = H - margin;
+    const b = right - left, cx = (left + right) / 2;
+    // outer arch springs where the head height fits above the body
+    const springY = top + b * Math.sqrt(3) / 2;
+    const outerSpring = Math.min(springY, top + (bottom - top) * 0.5);
+
+    // outer arch polygon (whole window silhouette)
+    const head = archHead(left, right, outerSpring, 40);
+    const outer = [[left, bottom], [left, outerSpring], ...head.pts, [right, outerSpring], [right, bottom]];
+
+    // ── backdrop clerestory glass fills the whole window ──
+    regions.push(makeRegion(outer, 'clerestory'));
+
+    // ── rose oculus in the arch head ──
+    const headTop = head.apexY;
+    const roseCy = s.lerp(outerSpring, headTop, 0.46);
+    const maxRoseR = Math.min((outerSpring - headTop) * 0.5, b * 0.5) * 0.96;
+    const roseR = maxRoseR * CFG.roseFrac + Math.min(b, bottom - top) * 0.06;
+    const hubR = roseR * 0.32;
+
+    // ── lancet colonnade in the lower body ──
+    const n = Math.max(1, Math.round(CFG.lancetCount));
+    const fieldTop = Math.min(roseCy + roseR + b * 0.05, outerSpring - 6);
+    const gap = b * 0.055;                       // stone mullion width
+    const sideInset = b * 0.06;
+    const usable = b - sideInset * 2 - gap * (n - 1);
+    const lw = usable / n;
+    const lancetSill = bottom - b * 0.04;
+    const lancets = [];
+    for (let i = 0; i < n; i++) {
+      const lx0 = left + sideInset + i * (lw + gap);
+      const lx1 = lx0 + lw;
+      const lSpring = fieldTop + lw * 0.85;       // pointed head springs low
+      const bodyTopY = Math.min(lSpring, lancetSill - 20);
+      const lh = archHead(lx0, lx1, bodyTopY, 18);         // lancet's own pointed head
+      const lp = [[lx0, lancetSill], [lx0, bodyTopY], ...lh.pts, [lx1, bodyTopY], [lx1, lancetSill]];
+      lancets.push({ lx0, lx1, bodyTopY, sill: lancetSill });
+      regions.push(makeRegion(lp, 'lancet'));
+    }
+    // stash architecture for the stone pass
+    regions._arch = { outer, outerSpring, left, right, top, bottom, b, cx,
+                      roseCy, roseR, hubR, lancets, gap, sideInset, lw, fieldTop, lancetSill,
+                      headApexY: headTop };
+
+    // ── rose hub + petals (drawn last = warm jewel on top) ──
+    const hub = ring(cx, roseCy, 0, hubR, 0, Math.PI * 2, 28);
+    regions.push(makeRegion(hub, 'rose'));
+    const pc = Math.max(4, Math.round(CFG.rosePetals));
+    for (let i = 0; i < pc; i++) {
+      const a0 = (i / pc) * Math.PI * 2, a1 = ((i + 1) / pc) * Math.PI * 2;
+      const pad = (a1 - a0) * 0.06;
+      const petal = ring(cx, roseCy, hubR, roseR, a0 + pad, a1 - pad, 10);
+      regions.push(makeRegion(petal, 'rose'));
+    }
+  }
+
+  // annular sector polygon (inner arc back → outer arc)
+  function ring(cx, cy, rIn, rOut, a0, a1, seg) {
+    const pts = [];
+    for (let i = 0; i <= seg; i++) {
+      const a = s.lerp(a0, a1, i / seg);
+      pts.push([cx + Math.cos(a) * rOut, cy + Math.sin(a) * rOut]);
+    }
+    if (rIn <= 0.5) { pts.push([cx, cy]); return pts; }
+    for (let i = seg; i >= 0; i--) {
+      const a = s.lerp(a0, a1, i / seg);
+      pts.push([cx + Math.cos(a) * rIn, cy + Math.sin(a) * rIn]);
+    }
+    return pts;
+  }
+
+  // ── Light — ambient sky gradient × drifting cloud shadow × raking sun ──────────
+  function sunPos() {
+    if (sunPinned) return [pinX, pinY];
+    if (hasMouse && s.mouseX >= 0 && s.mouseY >= 0 && s.mouseX <= s.width && s.mouseY <= s.height)
+      return [s.mouseX, s.mouseY];
+    // alive-on-load: a slow drift across the upper window
+    const t = _frame * 0.006;
+    return [s.width * (0.5 + 0.26 * Math.sin(t)),
+            s.height * (0.34 + 0.14 * Math.sin(t * 0.7 + 1))];
+  }
+
+  function luminance(x, y, sun) {
+    const amb = s.map(y, 0, s.height, CFG.ambientTop, CFG.ambientBot);
+    const cv = s.noise(x * 0.0016 + _frame * CFG.cloudSpeed, y * 0.0016, 4.2);
+    const cloud = 1 - CFG.cloudDepth * (1 - s.constrain((cv - 0.32) / 0.5, 0, 1));
+    const d = Math.hypot(x - sun[0], y - sun[1]) / CFG.sunRadius;
+    const sunF = 1 + CFG.sunStrength * Math.exp(-d * d);
+    return { lum: amb * cloud * sunF, sunF };
+  }
+
+  // ── Render one glass region (clipped to its tracery outline) ──────────────────
+  function drawRegion(region, sun) {
+    const ctx = s.drawingContext;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(region.poly[0][0], region.poly[0][1]);
+    for (let i = 1; i < region.poly.length; i++) ctx.lineTo(region.poly[i][0], region.poly[i][1]);
+    ctx.closePath();
+    ctx.clip();
+
+    const sat = CFG.saturation;
+    if (region.solid) {
+      const c = centroid(region.poly);
+      const { lum } = luminance(c[0], c[1], sun);
+      const [h, sB, bB] = region.solid;
+      s.noStroke();
+      s.fill(h, s.constrain(sB * sat, 0, 100), s.constrain(bB * lum, 0, 100), 100);
+      poly(region.poly);
+    } else {
+      // glass fills
+      for (const cell of region.cells) {
+        const { lum, sunF } = luminance(cell.cx, cell.cy, sun);
+        const [h, sB, bB] = cell.tint;
+        const satN = sat * (0.9 + 0.16 * s.constrain(sunF - 1, 0, 1)); // jewel pop under the sun
+        s.noStroke();
+        s.fill(h, s.constrain(sB * satN, 0, 100), s.constrain(bB * lum, 0, 100), 100);
+        poly(cell.poly);
+        // reamy veining
+        if (CFG.veinStrength > 0.01) {
+          s.strokeWeight(1);
+          s.stroke(h, s.constrain(sB * 0.6, 0, 100), s.constrain(bB * lum * 0.68, 0, 100),
+                   CFG.veinStrength * 40);
+          for (const v of cell.veins) s.line(v[0], v[1], v[2], v[3]);
+        }
+      }
+      // lead came (every pane edge)
+      s.noFill();
+      s.stroke(LEAD[0], LEAD[1], LEAD[2], 96);
+      s.strokeWeight(CFG.leadWeight);
+      for (const cell of region.cells) poly(cell.poly);
+    }
+    ctx.restore();
+  }
+
+  function poly(p) {
+    s.beginShape();
+    for (const v of p) s.vertex(v[0], v[1]);
+    s.endShape(s.CLOSE);
+  }
+
+  // ── Stone tracery + frame (the void that frames the glass) ────────────────────
+  function drawStone() {
+    const A = regions._arch;
+    if (!A) return;
+    const sw = CFG.stoneWeight;
+
+    // mullions between/around lancets, sill + transom bars
+    s.noStroke();
+    s.fill(STONE[0], STONE[1], STONE[2], 100);
+    for (let i = 0; i < A.lancets.length; i++) {
+      const L = A.lancets[i];
+      // left/right mullion strips
+      if (i === 0) s.rect(A.left, L.sill, (L.lx0 - A.left), -(L.sill - L.bodyTopY));
+      const nextX = (i < A.lancets.length - 1) ? A.lancets[i + 1].lx0 : A.right;
+      s.rect(L.lx1, L.sill, (nextX - L.lx1), -(L.sill - L.bodyTopY));
+    }
+    // sill bar
+    s.rect(A.left, A.bottom, A.right - A.left, -(A.bottom - A.lancetSill));
+
+    // lancet outlines (stone heads)
+    strokeStone(2.2 * sw);
+    for (const L of A.lancets) {
+      s.noFill();
+      // redraw each lancet outline by rebuilding its polygon quickly
+      const lh = archHead(L.lx0, L.lx1, L.bodyTopY, 18);
+      s.beginShape();
+      s.vertex(L.lx0, L.sill); s.vertex(L.lx0, L.bodyTopY);
+      for (const p of lh.pts) s.vertex(p[0], p[1]);
+      s.vertex(L.lx1, L.bodyTopY); s.vertex(L.lx1, L.sill);
+      s.endShape(s.CLOSE);
+    }
+
+    // rose tracery: radial bars, outer ring, hub ring
+    const pc = Math.max(4, Math.round(CFG.rosePetals));
+    strokeStone(2.0 * sw);
+    for (let i = 0; i < pc; i++) {
+      const a = (i / pc) * Math.PI * 2;
+      s.line(A.cx + Math.cos(a) * A.hubR, A.roseCy + Math.sin(a) * A.hubR,
+             A.cx + Math.cos(a) * A.roseR, A.roseCy + Math.sin(a) * A.roseR);
+    }
+    s.noFill();
+    strokeStone(3.0 * sw); s.circle(A.cx, A.roseCy, A.roseR * 2);
+    strokeStone(2.2 * sw); s.circle(A.cx, A.roseCy, A.hubR * 2);
+
+    // outer arch frame — heavy, with an inner bevel highlight
+    s.noFill();
+    strokeStone(7.5 * sw);
+    outlineArch(A);
+    s.stroke(STONE_HI[0], STONE_HI[1], STONE_HI[2], 60);
+    s.strokeWeight(2.0 * sw);
+    outlineArch(A);
+  }
+
+  function outlineArch(A) {
+    s.beginShape();
+    for (const v of A.outer) s.vertex(v[0], v[1]);
+    s.endShape(s.CLOSE);
+  }
+  function strokeStone(w) { s.stroke(STONE[0], STONE[1], STONE[2], 100); s.strokeWeight(w); }
+
+  // ── Panel + info ──────────────────────────────────────────────────────────────
+  function buildPanel() {
+    const panel = document.getElementById('panel');
+    panel.textContent = '';
+    const title = document.createElement('div');
+    title.className = 'pnl-title';
+    const tl = document.createElement('span'); tl.textContent = 'CFG — TRACERY';
+    const tr = document.createElement('span'); tr.textContent = '[P to close]';
+    title.appendChild(tl); title.appendChild(tr); panel.appendChild(title);
+
+    for (const row of PANEL_ROWS) {
+      if (row.section) {
+        const sec = document.createElement('div');
+        sec.className = 'pnl-section'; sec.textContent = row.section;
+        panel.appendChild(sec); continue;
+      }
+      const rowDiv = document.createElement('div'); rowDiv.className = 'pnl-row';
+      const lbl = document.createElement('label'); lbl.textContent = row.label;
+      const input = document.createElement('input');
+      input.type = 'range';
+      input.min = String(row.min); input.max = String(row.max);
+      input.step = String(row.step); input.value = String(CFG[row.key]);
+      const val = document.createElement('span');
+      val.className = 'pnl-val'; val.textContent = row.fmt(CFG[row.key]);
+      input.addEventListener('input', () => {
+        const v = parseFloat(input.value);
+        CFG[row.key] = v; val.textContent = row.fmt(v);
+        if (row.regen) { s.randomSeed(hashStr(seedStr)); s.noiseSeed(hashStr(seedStr)); buildWindow(); }
+      });
+      rowDiv.appendChild(lbl); rowDiv.appendChild(input); rowDiv.appendChild(val);
+      panel.appendChild(rowDiv);
+    }
+    const regen = document.createElement('button');
+    regen.className = 'pnl-regen'; regen.textContent = '↺  regenerate';
+    regen.addEventListener('click', init);
+    panel.appendChild(regen);
+  }
+
+  function buildInfo() {
+    const el = document.getElementById('info');
+    el.textContent = '';
+    const title = document.createElement('div');
+    title.className = 'info-title'; title.textContent = 'STAINED GLASS ENGINE — reference';
+    el.appendChild(title);
+
+    const zsec = document.createElement('div');
+    zsec.className = 'info-section'; zsec.textContent = 'GLASS ZONES';
+    el.appendChild(zsec);
+    for (const key of ['rose', 'lancet', 'clerestory']) {
+      const z = ZONES[key];
+      const row = document.createElement('div'); row.className = 'info-row';
+      const dot = document.createElement('span'); dot.className = 'info-dot';
+      dot.textContent = '◆';
+      dot.style.color = 'hsl(' + z.sw[0][0] + ',' + z.sw[0][1] + '%,' + Math.round(z.sw[0][2] * 0.6) + '%)';
+      const name = document.createElement('span'); name.className = 'info-name'; name.textContent = z.name;
+      const desc = document.createElement('span'); desc.className = 'info-desc'; desc.textContent = z.desc;
+      row.appendChild(dot); row.appendChild(name); row.appendChild(desc);
+      el.appendChild(row);
+    }
+    const ksec = document.createElement('div');
+    ksec.className = 'info-section'; ksec.textContent = 'CONTROLS';
+    el.appendChild(ksec);
+    const keys = [
+      ['move mouse', 'the sun — cells near the cursor blaze, far cells fall dark (raking light)'],
+      ['click', 'pin / unpin the sun where you click'],
+      ['R', 'randomize seed'],
+      ['P', 'open / close CFG panel'],
+      ['I', 'this reference overlay'],
+      ['Enter', 'apply seed typed top-right'],
+    ];
+    for (const [k, d] of keys) {
+      const row = document.createElement('div'); row.className = 'info-row';
+      const key = document.createElement('span'); key.className = 'info-key'; key.textContent = k;
+      const desc = document.createElement('span'); desc.className = 'info-desc'; desc.textContent = d;
+      row.appendChild(key); row.appendChild(desc); el.appendChild(row);
+    }
+  }
+
+  // ── Init / setup / draw ───────────────────────────────────────────────────────
+  function init() {
+    s.randomSeed(hashStr(seedStr));
+    s.noiseSeed(hashStr(seedStr));
+    _frame = 0;
+    buildWindow();
+  }
+
+  s.setup = function() {
+    s.createCanvas(s.windowWidth, s.windowHeight);
+    s.colorMode(s.HSB, 360, 100, 100, 100);
+    s.pixelDensity(1);
+    init();
+    buildPanel();
+    buildInfo();
+    document.getElementById('seed-box').addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') {
+        seedStr = ev.target.value.trim().toUpperCase() || 'FENRIR';
+        init();
+      }
+    });
+  };
+
+  s.draw = function() {
+    _frame++;
+    // stone-dark ground with a faint cool vignette
+    s.noStroke();
+    s.fill(230, 22, 5, 100); s.rect(0, 0, s.width, s.height);
+
+    const sun = sunPos();
+    let paneCount = 0;
+    for (const region of regions) {
+      drawRegion(region, sun);
+      paneCount += region.cells ? region.cells.length : 1;
+    }
+    drawStone();
+
+    document.getElementById('hud-seed').textContent = 'seed: ' + seedStr;
+    document.getElementById('hud-stats').textContent =
+      'panes: ' + paneCount + '   lancets: ' + Math.round(CFG.lancetCount) +
+      '   petals: ' + Math.round(CFG.rosePetals) + (sunPinned ? '   [sun pinned]' : '');
+    document.getElementById('hud-keys').textContent =
+      'mouse = sun   click = pin   R = regen   P = panel   I = info';
+  };
+
+  s.keyPressed = function() {
+    const k = s.key.toUpperCase();
+    if (k === 'P') { panelVisible = !panelVisible; document.getElementById('panel').classList.toggle('visible', panelVisible); }
+    if (k === 'I') { infoVisible = !infoVisible; document.getElementById('info').classList.toggle('visible', infoVisible); }
+    if (k === 'R') {
+      const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      seedStr = Array.from({ length: 6 }, () => c[Math.floor(Math.random() * c.length)]).join('');
+      document.getElementById('seed-box').value = seedStr;
+      init();
+    }
+  };
+
+  s.mouseMoved = function() { hasMouse = true; };
+  s.mousePressed = function() {
+    if (s.mouseX < 0 || s.mouseY < 0 || s.mouseX > s.width || s.mouseY > s.height) return;
+    if (sunPinned) { sunPinned = false; }
+    else { sunPinned = true; pinX = s.mouseX; pinY = s.mouseY; }
+  };
+
+  s.windowResized = function() {
+    s.resizeCanvas(s.windowWidth, s.windowHeight);
+    init();
+  };
+
+});
+</script>
+</body>
+</html>
