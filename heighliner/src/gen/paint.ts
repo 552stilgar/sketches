@@ -1,36 +1,139 @@
-// paint(structure, seedP) -> PaintSpec. Session 1: one hardcoded palette
-// (dark base, orange accent, neutral trim), base tones only — no shading
-// stack, no livery. The seed picks per-segment base/baseAlt tones so the
-// paint layer is genuinely seed-sensitive (exercised by the stability test).
+// paint(structure, seedP) -> PaintSpec. Layer 5 (livery, brief §6): a curated
+// palette bank (Expanse / Rocinante muted-industrial register) + seeded HSL
+// jitter, an enumerated livery scheme (accent placement), decals (hull number
+// + hazard stripe), and a per-palette-gated grime flag. Silhouette/structure
+// are untouched — this layer only paints, so the pinned judgment row stays
+// shape-stable (a pure color/livery diff). Colours are authored data, graded by
+// eye; the machinery below is deterministic off seedP.
 
-import { derive, stream } from "../core/prng";
-import type { PaintSpec, PaletteRole, StructureSpec } from "./types";
+import { derive, int, pick, range, stream, type Prng } from "../core/prng";
+import type { LiveryScheme, PaintSpec, PaletteRole, Role, StructureSpec } from "./types";
 
-export const PALETTES: Record<string, Record<PaletteRole, string>> = {
+/** A curated palette + its capabilities. */
+export interface Palette {
+  roles: Record<PaletteRole, string>;
+  /** Whether this palette is allowed to carry the grime overlay. */
+  allowGrime: boolean;
+}
+
+// The bank. One universe: cold greys / gunmetal / olive hulls, low-saturation
+// neutrals, a single restrained accent hue per palette. First draft — Usul
+// grades and redirects; tune hex here, never in emit.
+export const PALETTE_BANK: Record<string, Palette> = {
   "ember-default": {
-    base: "#33373f",
-    baseAlt: "#3c414b",
-    accent: "#e07a1f",
-    trim: "#8d939e",
-    dark: "#22252b",
+    roles: { base: "#33373f", baseAlt: "#3c414b", accent: "#e07a1f", trim: "#8d939e", dark: "#22252b" },
+    allowGrime: true,
+  },
+  "gunmetal-ice": {
+    roles: { base: "#383e46", baseAlt: "#424a54", accent: "#6fb4c9", trim: "#97a0ab", dark: "#23272d" },
+    allowGrime: false,
+  },
+  "void-charcoal": {
+    roles: { base: "#2b2d33", baseAlt: "#34373f", accent: "#d69a3c", trim: "#7d818b", dark: "#1a1b20" },
+    allowGrime: true,
+  },
+  "ash-olive": {
+    roles: { base: "#3a3c33", baseAlt: "#45473c", accent: "#c8a24b", trim: "#8f9080", dark: "#24251f" },
+    allowGrime: true,
+  },
+  "steel-crimson": {
+    roles: { base: "#3d3f45", baseAlt: "#474a52", accent: "#b8483f", trim: "#949aa4", dark: "#26282d" },
+    allowGrime: false,
+  },
+  "slate-teal": {
+    roles: { base: "#333a41", baseAlt: "#3d454e", accent: "#4fa39a", trim: "#869099", dark: "#20262b" },
+    allowGrime: false,
+  },
+  "bone-rust": {
+    roles: { base: "#4a4741", baseAlt: "#55524b", accent: "#a8603a", trim: "#9b968c", dark: "#302e29" },
+    allowGrime: true,
+  },
+  "graphite-sulfur": {
+    roles: { base: "#2f3136", baseAlt: "#383b41", accent: "#cdbf4a", trim: "#82868e", dark: "#1c1d21" },
+    allowGrime: true,
   },
 };
 
+// --- seeded selection tuning (edit here, not in emit) ------------------------
+const HUE_JITTER = 0.02; // ± fraction of the hue wheel (~7°)
+const SAT_JITTER = 0.05; // ± absolute saturation delta
+const HAZARD_P = 0.35; // probability a ship carries the hazard-stripe decal
+const GRIME_P = 0.5; // probability grime shows, given a grime-capable palette
+
+// Livery weighting is role-dependent (brief §4.3: corvette aggressive /
+// frigate balanced / hauler utilitarian). All three roles are defined so the
+// forthcoming role layer slots in with zero paint changes; only frigate is
+// reachable today.
+const LIVERY_WEIGHTS: Record<Role, Record<LiveryScheme, number>> = {
+  corvette: { driveStripes: 3, noseChevron: 4, shroudBlock: 2, hullBand: 1, spineRun: 2, bareMetal: 1 },
+  frigate: { driveStripes: 2, noseChevron: 2, shroudBlock: 2, hullBand: 2, spineRun: 2, bareMetal: 2 },
+  hauler: { driveStripes: 1, noseChevron: 1, shroudBlock: 2, hullBand: 3, spineRun: 1, bareMetal: 4 },
+};
+
+const ROLE_PREFIX: Record<Role, string> = { corvette: "C", frigate: "F", hauler: "H" };
+
+/** Weighted pick over an enumerated weight table. */
+function pickWeighted<K extends string>(rng: Prng, weights: Record<K, number>): K {
+  const entries = Object.entries(weights) as [K, number][];
+  const total = entries.reduce((s, [, w]) => s + w, 0);
+  let r = rng() * total;
+  for (const [k, w] of entries) {
+    r -= w;
+    if (r < 0) return k;
+  }
+  return entries[entries.length - 1]![0];
+}
+
+/** Registry-style hull number, e.g. "F-47". No names (brief §8). */
+function hullNumber(rng: Prng, role: Role): string {
+  const n = int(rng, 2, 399);
+  return `${ROLE_PREFIX[role]}-${String(n).padStart(2, "0")}`;
+}
+
 export function paint(structureSpec: StructureSpec, seedP: number): PaintSpec {
+  const paletteId = pick(stream(derive(seedP, "palette")), Object.keys(PALETTE_BANK));
+  const palette = PALETTE_BANK[paletteId]!;
+
+  const jrng = stream(derive(seedP, "jitter"));
+  const jitter = { h: range(jrng, -HUE_JITTER, HUE_JITTER), s: range(jrng, -SAT_JITTER, SAT_JITTER) };
+
   const toneBySegment: PaintSpec["toneBySegment"] = {};
   for (const seg of structureSpec.segments) {
     const rng = stream(derive(seedP, "tone", seg.id));
     // engine block always reads dark-mass via baseAlt; others coin-flip
     toneBySegment[seg.id] = seg.type === "engine" ? "baseAlt" : rng() < 0.5 ? "base" : "baseAlt";
   }
-  return { paletteId: "ember-default", toneBySegment };
+
+  const livery = pickWeighted(stream(derive(seedP, "livery")), LIVERY_WEIGHTS[structureSpec.role]);
+  const number = hullNumber(stream(derive(seedP, "hull")), structureSpec.role);
+  const hazard = stream(derive(seedP, "hazard"))() < HAZARD_P;
+  const grime = palette.allowGrime && stream(derive(seedP, "grime"))() < GRIME_P;
+
+  return { paletteId, jitter, toneBySegment, livery, hullNumber: number, hazard, grime };
+}
+
+// --- palette resolution (jitter) --------------------------------------------
+// The palette bank holds authored hex; emit paints with the *resolved* palette
+// (bank + jitter). Jitter shifts hue/saturation uniformly across every role so
+// the palette stays internally coherent — never an independent per-role choice.
+
+export type ResolvedPalette = Record<PaletteRole, string>;
+
+export function resolvePalette(paletteId: string, jitter: { h: number; s: number }): ResolvedPalette {
+  const palette = PALETTE_BANK[paletteId];
+  if (!palette) throw new Error(`unknown palette: ${paletteId}`);
+  const out = {} as ResolvedPalette;
+  for (const role of Object.keys(palette.roles) as PaletteRole[]) {
+    out[role] = withHueSat(palette.roles[role], jitter.h, jitter.s);
+  }
+  return out;
 }
 
 // --- shading tones (brief §3 row 11 / §4.7: "tones derived from palette,
 // never independent"). Pure HSL lighten/darken off the palette's own tones —
 // no seed involved, no independent hex literals. Same palette -> same
 // shading tones, forever; emit.ts must never introduce a hex outside this
-// derivation (or the raw palette) for the shading layer.
+// derivation (or the resolved palette) for the shading layer.
 
 // Lightness deltas — Usul tunes shading contrast by editing these, not by
 // hand-picking new hex values.
@@ -93,6 +196,16 @@ function withLightness(hex: string, delta: number): string {
   return hslToHex({ ...hsl, l });
 }
 
+/** Shift hue (wrap) and saturation (clamp) while holding lightness — the
+ *  jitter operation. Lightness is preserved so shading contrast is stable. */
+function withHueSat(hex: string, dh: number, ds: number): string {
+  if (dh === 0 && ds === 0) return hex; // exact round-trip, no HSL rounding drift
+  const hsl = hexToHsl(hex);
+  const h = ((hsl.h + dh) % 1 + 1) % 1;
+  const s = Math.min(1, Math.max(0, hsl.s + ds));
+  return hslToHex({ h, s, l: hsl.l });
+}
+
 export interface ShadingTones {
   lit: string;
   shade: string;
@@ -102,8 +215,8 @@ export interface ShadingTones {
 
 /**
  * Pure derivation off the palette's own base/dark tones. No seed draws — the
- * shading layer is a function of the existing paint spec's palette, never an
- * independent color choice.
+ * shading layer is a function of the (resolved) palette, never an independent
+ * color choice.
  */
 export function shadingTones(palette: Record<PaletteRole, string>): ShadingTones {
   return {

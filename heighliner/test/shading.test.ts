@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { derive } from "../src/core/prng";
-import { PALETTES, shadingTones } from "../src/gen/paint";
+import { PALETTE_BANK, resolvePalette, shadingTones } from "../src/gen/paint";
 import { shipSpecs, shipSVG } from "../src/gen/ship";
 
 const SEEDS = Array.from({ length: 12 }, (_, i) => derive(0x5eed, "shading-suite", i));
@@ -81,7 +81,7 @@ describe("shading tones derive from the palette", () => {
   it("every fill in the shading group is a shadingTones() value or a raw palette value", () => {
     for (const seed of SEEDS) {
       const specs = shipSpecs(seed);
-      const palette = PALETTES[specs.paint.paletteId]!;
+      const palette = resolvePalette(specs.paint.paletteId, specs.paint.jitter);
       const tones = shadingTones(palette);
       const allowed = new Set([...Object.values(tones), ...Object.values(palette)]);
       const svg = shipSVG(seed);
@@ -93,7 +93,7 @@ describe("shading tones derive from the palette", () => {
   });
 
   it("shadingTones is a pure function of the palette (no seed sensitivity)", () => {
-    const palette = PALETTES["ember-default"]!;
+    const palette = PALETTE_BANK["ember-default"]!.roles;
     const a = shadingTones(palette);
     const b = shadingTones(palette);
     expect(a).toEqual(b);

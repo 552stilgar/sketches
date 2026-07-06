@@ -3,8 +3,8 @@
 //   defs (segment clip paths) + layer groups hull / detail / kit / paint.
 
 import { seedToHex } from "../core/prng";
-import { PALETTES, shadingTones } from "./paint";
-import type { Placement, Shape, ShipSpecs, StrokeWeight } from "./types";
+import { resolvePalette, shadingTones } from "./paint";
+import type { LiveryScheme, Placement, Shape, ShipSpecs, StrokeWeight } from "./types";
 import { frames, halfWidthAt, segmentOutline, yAt, type SegmentFrame } from "./structure";
 
 // Global three-weight stroke system (brief §4.6). No other widths anywhere.
@@ -25,6 +25,27 @@ const AO_OPACITY = 0.22; // AO blob fill-opacity
 const AO_BLUR_STD_DEV = 1.1; // shared feGaussianBlur stdDeviation
 const SPEC_WIDTH = 0.9; // specular strip width, world units
 const SPEC_OFFSET_FRAC = 0.42; // specular strip offset from centerline, fraction of local half-width, toward the light (-x) side
+
+// --- livery + decals + grime (brief §6 layer 5) -----------------------------
+// All accent placement is symmetric about the centerline, so the livery layer
+// needs no MIRROR — it paints centered/full-width shapes clipped to segments.
+const STRIPE_H = 1.6; // drive-stripe thickness, world units
+const DRIVE_STRIPE_TS = [0.3, 0.55, 0.8]; // axial positions of drive stripes
+const HULL_BAND_H = 2.2; // hull-band thickness
+const HULL_BAND_T = 0.5; // hull-band axial position
+const CHEVRON_FRAC = 0.6; // chevron apex position along the nose (aft->fore)
+const CHEVRON_BASE_T = 0.12; // chevron base position along the nose
+const CHEVRON_H = 1.6; // chevron band thickness (world units, aft offset)
+const SHROUD_FRAC = 0.45; // shroud block covers this fraction of the drive, from aft
+const SPINE_W = 1.2; // centerline spine strip width
+const HULLNUM_SIZE_FRAC = 0.8; // hull-number font size, fraction of local half-width
+const HULLNUM_SIZE_MIN = 3;
+const HULLNUM_SIZE_MAX = 8;
+const HAZARD_STRIPE_W = 1.4; // hazard diagonal stripe width
+const HAZARD_BAND_FRAC = 0.5; // hazard band spans this fraction of the engine, from aft
+const GRIME_OPACITY = 0.13; // weathering overlay opacity
+const GRIME_SOOT_FRAC = 0.45; // aft fraction of engine/drive carrying exhaust soot
+const GRIME_STREAK_FRAC = 0.06; // far-edge grime streak inset
 
 const STROKE_WIDTH: Record<StrokeWeight, number> = {
   silhouette: SILHOUETTE,
@@ -203,8 +224,9 @@ function shapeFootprint(shapes: Shape[]): { rx: number; ry: number } {
 }
 
 export function emit(specs: ShipSpecs, idPrefix?: string): string {
-  const palette = PALETTES[specs.paint.paletteId];
-  if (!palette) throw new Error(`unknown palette: ${specs.paint.paletteId}`);
+  // Resolved palette = authored bank + seeded jitter (resolvePalette throws on
+  // an unknown id). Shading and every fill below derive from this record.
+  const palette = resolvePalette(specs.paint.paletteId, specs.paint.jitter);
   const ns = idPrefix ?? `s${seedToHex(specs.seed)}`;
   const segFrames = frames(specs.structure);
   const outlines = segFrames.map((f) => segmentOutline(f));
@@ -319,6 +341,151 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
   const shadingGroup = `<g id="${ns}-shading">${shadingStrips.join("")}${kitAO.join("")}${joinAO.join("")}${specStrips.join("")}</g>`;
   const aoBlurFilter = `<filter id="${aoBlurFilterId}" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="${AO_BLUR_STD_DEV}"/></filter>`;
 
+  // paint layer (brief §6 layer 5): accent livery scheme + decals + grime.
+  // Pure function of the paint spec; painted over the kit so accents read on
+  // the finished hull. No PRNG here — every choice is baked into paint().
+  const byType = (t: string): SegmentFrame | undefined => segFrames.find((f) => f.segment.type === t);
+  const clip = (id: string, inner: string): string => `<g clip-path="url(#${ns}-clip-${id})">${inner}</g>`;
+
+  /** Full-width accent band across a segment at axial position t, clipped to
+   *  the real silhouette. Symmetric — no mirror needed. */
+  function lateralBand(f: SegmentFrame, t: number, h: number, fill: string): string {
+    const y = yAt(f, t);
+    const hw = halfWidthAt(f.segment, t);
+    return clip(f.segment.id, `<rect x="${fmt(-hw)}" y="${fmt(y - h / 2)}" width="${fmt(2 * hw)}" height="${fmt(h)}" fill="${fill}"/>`);
+  }
+
+  function liveryShapes(scheme: LiveryScheme): string {
+    const accent = palette.accent;
+    switch (scheme) {
+      case "bareMetal":
+        return "";
+      case "driveStripes": {
+        const drive = byType("drive");
+        if (!drive) return "";
+        return DRIVE_STRIPE_TS.map((t) => lateralBand(drive, t, STRIPE_H, accent)).join("");
+      }
+      case "hullBand": {
+        const hull = byType("hull");
+        return hull ? lateralBand(hull, HULL_BAND_T, HULL_BAND_H, accent) : "";
+      }
+      case "shroudBlock": {
+        const drive = byType("drive");
+        if (!drive) return "";
+        const yA = yAt(drive, 0);
+        const yB = yAt(drive, SHROUD_FRAC);
+        const y = Math.min(yA, yB);
+        const w = maxHalfWidth;
+        return clip(
+          drive.segment.id,
+          `<rect x="${fmt(-w)}" y="${fmt(y)}" width="${fmt(2 * w)}" height="${fmt(Math.abs(yA - yB))}" fill="${accent}"/>`,
+        );
+      }
+      case "noseChevron": {
+        const nose = byType("nose");
+        if (!nose) return "";
+        const yBase = yAt(nose, CHEVRON_BASE_T);
+        const yApex = yAt(nose, CHEVRON_FRAC);
+        const hwB = halfWidthAt(nose.segment, CHEVRON_BASE_T);
+        // aft is +y; the chevron points fore (toward smaller y). Thick band via
+        // an outer V and an inner V offset aftward by CHEVRON_H.
+        const pts: [number, number][] = [
+          [-hwB, yBase],
+          [0, yApex],
+          [hwB, yBase],
+          [hwB - CHEVRON_H, yBase + CHEVRON_H],
+          [0, yApex + CHEVRON_H],
+          [-hwB + CHEVRON_H, yBase + CHEVRON_H],
+        ];
+        return clip(nose.segment.id, `<polygon points="${pointsAttr(pts)}" fill="${accent}"/>`);
+      }
+      case "spineRun": {
+        const nose = byType("nose");
+        const drive = byType("drive");
+        if (!nose || !drive) return "";
+        const yTop = yAt(nose, 1);
+        const yBot = drive.yFore;
+        const y = Math.min(yTop, yBot);
+        return `<rect x="${fmt(-SPINE_W / 2)}" y="${fmt(y)}" width="${fmt(SPINE_W)}" height="${fmt(Math.abs(yTop - yBot))}" fill="${accent}"/>`;
+      }
+    }
+  }
+
+  // hazard decal: diagonal accent/dark caution stripes in an aft band on the
+  // engine, clipped to its silhouette.
+  function hazardShapes(): string {
+    const eng = byType("engine");
+    if (!eng) return "";
+    const yA = yAt(eng, 0);
+    const yB = yAt(eng, HAZARD_BAND_FRAC);
+    const yLo = Math.min(yA, yB);
+    const yHi = Math.max(yA, yB);
+    const bandH = yHi - yLo;
+    const w = maxHalfWidth;
+    const sw = HAZARD_STRIPE_W;
+    const stripes: string[] = [];
+    let i = 0;
+    for (let x0 = -w - bandH; x0 < w; x0 += sw) {
+      const fill = i % 2 === 0 ? palette.accent : palette.dark;
+      const pts: [number, number][] = [
+        [x0, yHi],
+        [x0 + sw, yHi],
+        [x0 + sw + bandH, yLo],
+        [x0 + bandH, yLo],
+      ];
+      stripes.push(`<polygon points="${pointsAttr(pts)}" fill="${fill}"/>`);
+      i++;
+    }
+    return clip(eng.segment.id, stripes.join(""));
+  }
+
+  // grime overlay: low-opacity exhaust soot over the aft engine/drive + a faint
+  // dark streak down the far (+x, unlit) edge of the hull.
+  function grimeShapes(): string {
+    const out: string[] = [];
+    for (const t of ["engine", "drive"] as const) {
+      const f = byType(t);
+      if (!f) continue;
+      const yA = yAt(f, 0);
+      const yB = yAt(f, GRIME_SOOT_FRAC);
+      const y = Math.min(yA, yB);
+      out.push(
+        clip(
+          f.segment.id,
+          `<rect x="${fmt(-maxHalfWidth)}" y="${fmt(y)}" width="${fmt(2 * maxHalfWidth)}" height="${fmt(Math.abs(yA - yB))}" fill="${palette.dark}" fill-opacity="${GRIME_OPACITY}"/>`,
+        ),
+      );
+    }
+    const hull = byType("hull");
+    if (hull) {
+      const i = segFrames.indexOf(hull);
+      const outline = outlines[i]!;
+      const starboardHalf = outline.slice(0, outline.length / 2);
+      const streak = insetBand(starboardHalf, GRIME_STREAK_FRAC, 1);
+      out.push(
+        clip(hull.segment.id, `<polygon points="${pointsAttr(streak)}" fill="${palette.dark}" fill-opacity="${GRIME_OPACITY}"/>`),
+      );
+    }
+    return out.join("");
+  }
+
+  // hull-number decal: registry code centered on the hull, in trim ink.
+  function hullNumberDecal(): string {
+    const hull = byType("hull");
+    if (!hull) return "";
+    const y = yAt(hull, HULL_BAND_T);
+    const size = Math.min(HULLNUM_SIZE_MAX, Math.max(HULLNUM_SIZE_MIN, halfWidthAt(hull.segment, HULL_BAND_T) * HULLNUM_SIZE_FRAC));
+    const text = specs.paint.hullNumber.replace(/[<>&]/g, "");
+    return `<text x="0" y="${fmt(y + size * 0.35)}" text-anchor="middle" font-family="'DejaVu Sans Mono',monospace" font-size="${fmt(size)}" font-weight="600" fill="${palette.trim}">${text}</text>`;
+  }
+
+  const paintGroup = [
+    liveryShapes(specs.paint.livery),
+    specs.paint.hazard ? hazardShapes() : "",
+    specs.paint.grime ? grimeShapes() : "",
+    hullNumberDecal(),
+  ].join("");
+
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">`,
     `<defs>${defs}${aoBlurFilter}</defs>`,
@@ -329,7 +496,7 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     // This overrides §4.8's literal group order, which put shading after kit.
     shadingGroup,
     `<g id="${ns}-kit">${kitGroups.join("")}</g>`,
-    `<g id="${ns}-paint"><!-- livery/decals land here (session 5); base tones applied on hull --></g>`,
+    `<g id="${ns}-paint">${paintGroup}</g>`,
     `</svg>`,
   ].join("");
 }

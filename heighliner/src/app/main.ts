@@ -54,7 +54,7 @@ if (!app) throw new Error("#app missing");
 
 const header = document.createElement("div");
 header.innerHTML = `<h1>heighliner <span class="accent">//</span> seeded torch-ship generator</h1>
-<div class="subtitle">session-1 ugly slice — frigates, trapezoids, base tones. click a ship to copy its seed.</div>`;
+<div class="subtitle">frigates — silhouette · shading · detail · kit · livery. click a ship to copy its seed.</div>`;
 app.appendChild(header);
 
 app.appendChild(section("Judgment row — pinned seeds", "row-judgment", [...JUDGMENT_SEEDS], "j"));

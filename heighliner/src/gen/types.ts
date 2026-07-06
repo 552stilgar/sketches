@@ -152,10 +152,33 @@ export interface DetailSpec {
 
 // --- paint -------------------------------------------------------------------
 
+// Enumerated livery schemes (brief §3 row 12 / §4.2). Each dictates where the
+// accent color lands; all are symmetric about the centerline so they need no
+// mirror helper. "bareMetal" is the restraint option — decals only, no accent.
+export type LiveryScheme =
+  | "driveStripes"
+  | "noseChevron"
+  | "shroudBlock"
+  | "hullBand"
+  | "spineRun"
+  | "bareMetal";
+
 export interface PaintSpec {
   paletteId: string;
-  /** Base tone per segment id (base tones only in session 1). */
+  /** Small seeded HSL jitter applied to the whole palette at emit time
+   *  (brief §3 row 12: "curated palette bank + seeded jitter"). h/s are
+   *  signed deltas; l is left untouched so shading contrast stays stable. */
+  jitter: { h: number; s: number };
+  /** Base tone per segment id. */
   toneBySegment: Record<string, "base" | "baseAlt">;
+  /** Accent-placement scheme. */
+  livery: LiveryScheme;
+  /** Hull-number decal, e.g. "F-47". Registry code, never a name (§8). */
+  hullNumber: string;
+  /** Hazard-stripe decal near the aft engine warning zone. */
+  hazard: boolean;
+  /** Weathering overlay — only ever true for grime-capable palettes. */
+  grime: boolean;
 }
 
 export interface ShipSpecs {
