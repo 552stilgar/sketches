@@ -5,7 +5,7 @@
 import { seedToHex } from "../core/prng";
 import { PALETTES } from "./paint";
 import type { Placement, SegmentDetail, Shape, ShipSpecs, StrokeWeight } from "./types";
-import { frames, halfWidthAt, yAt, type SegmentFrame } from "./structure";
+import { frames, halfWidthAt, segmentOutline, yAt, type SegmentFrame } from "./structure";
 
 // Global three-weight stroke system (brief §4.6). No other widths anywhere.
 export const SILHOUETTE = 1.4;
@@ -40,16 +40,6 @@ function placementTransforms(p: Placement): string[] {
   const t = [`translate(${fmt(p.anchor.x)} ${fmt(p.anchor.y)})`];
   if (p.mirrored) t.push(`translate(${fmt(-p.anchor.x)} ${fmt(p.anchor.y)}) ${MIRROR}`);
   return t;
-}
-
-function segmentPoints(frame: SegmentFrame): [number, number][] {
-  const { segment: seg, yAft, yFore } = frame;
-  return [
-    [-seg.halfWidth.aft, yAft],
-    [seg.halfWidth.aft, yAft],
-    [seg.halfWidth.fore, yFore],
-    [-seg.halfWidth.fore, yFore],
-  ];
 }
 
 const pointsAttr = (pts: [number, number][]): string =>
@@ -98,28 +88,40 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
   if (!palette) throw new Error(`unknown palette: ${specs.paint.paletteId}`);
   const ns = idPrefix ?? `s${seedToHex(specs.seed)}`;
   const segFrames = frames(specs.structure);
+  const outlines = segFrames.map((f) => segmentOutline(f));
 
-  // canvas: ship is drawn nose-up, centerline at x=0, nose tip at y=0
-  const maxHalfWidth = Math.max(...specs.structure.segments.map((s) => Math.max(s.halfWidth.aft, s.halfWidth.fore)));
+  // canvas: ship is drawn nose-up, centerline at x=0, nose tip at y=0.
+  // Width from the real outlines — bulges and sponsons push past aft/fore.
+  const maxHalfWidth = Math.max(...outlines.flatMap((pts) => pts.map(([x]) => Math.abs(x))));
   const pad = maxHalfWidth * 0.9 + 6; // room for outboard kit parts
   const viewBox = `${fmt(-(maxHalfWidth + pad))} ${fmt(-4)} ${fmt(2 * (maxHalfWidth + pad))} ${fmt(specs.structure.axisLength + 8)}`;
 
   // defs: clip path per segment silhouette
   const defs = segFrames
-    .map((f) => `<clipPath id="${ns}-clip-${f.segment.id}"><polygon points="${pointsAttr(segmentPoints(f))}"/></clipPath>`)
+    .map((f, i) => `<clipPath id="${ns}-clip-${f.segment.id}"><polygon points="${pointsAttr(outlines[i]!)}"/></clipPath>`)
     .join("");
 
-  // hull layer: segment trapezoids (base tone from paint) + join seams
-  const hullShapes = segFrames.map((f) => {
+  // hull layer: segment silhouettes (base tone from paint) + join seams + collars
+  const hullShapes = segFrames.map((f, i) => {
     const tone = specs.paint.toneBySegment[f.segment.id] ?? "base";
-    return `<polygon points="${pointsAttr(segmentPoints(f))}" fill="${palette[tone]}"${strokeAttrs("silhouette")}/>`;
+    return `<polygon points="${pointsAttr(outlines[i]!)}" fill="${palette[tone]}"${strokeAttrs("silhouette")}/>`;
   });
-  const joinSeams = segFrames
-    .slice(1)
-    .map(
-      (f) =>
-        `<line x1="${fmt(-f.segment.halfWidth.aft)}" y1="${fmt(f.yAft)}" x2="${fmt(f.segment.halfWidth.aft)}" y2="${fmt(f.yAft)}"${strokeAttrs("majorSeam")}/>`,
-    );
+  const joinSeams = segFrames.slice(1).map((f) => {
+    const hw = fmt(halfWidthAt(f.segment, 0));
+    return `<line x1="-${hw}" y1="${fmt(f.yAft)}" x2="${hw}" y2="${fmt(f.yAft)}"${strokeAttrs("majorSeam")}/>`;
+  });
+  // join collars: proud lip band straddling the fore boundary of the segment
+  // that owns the join; rendered after the segment polygons so the lip reads
+  // as sitting on top of both hulls.
+  const collars = segFrames.slice(0, -1).flatMap((f, i) => {
+    const j = f.segment.join;
+    if (!j) return [];
+    const next = segFrames[i + 1]!.segment;
+    const hw = j.widthFactor * Math.max(halfWidthAt(f.segment, 1), halfWidthAt(next, 0));
+    return [
+      `<rect x="${fmt(-hw)}" y="${fmt(f.yFore - j.length / 2)}" width="${fmt(2 * hw)}" height="${fmt(j.length)}" fill="${palette.trim}"${strokeAttrs("majorSeam")}/>`,
+    ];
+  });
 
   // detail layer: panel grid per segment, clipped to the segment silhouette,
   // columns mirrored through the shared helper
@@ -140,7 +142,7 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">`,
     `<defs>${defs}</defs>`,
-    `<g id="${ns}-hull">${hullShapes.join("")}${joinSeams.join("")}</g>`,
+    `<g id="${ns}-hull">${hullShapes.join("")}${joinSeams.join("")}${collars.join("")}</g>`,
     `<g id="${ns}-detail">${detailGroups.join("")}</g>`,
     `<g id="${ns}-kit">${kitGroups.join("")}</g>`,
     `<g id="${ns}-paint"><!-- livery/decals land here (session 5); base tones applied on hull --></g>`,

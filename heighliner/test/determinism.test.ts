@@ -55,9 +55,9 @@ describe("determinism", () => {
       expect(types[types.length - 2]).toBe("hull");
       expect(types[types.length - 1]).toBe("nose");
       expect(types.slice(2, -2).every((t) => t === "mid")).toBe(true);
-      // frigate: 1-2 mids
+      // frigate: 1-3 mids (spreads widened, session 2)
       expect(types.length).toBeGreaterThanOrEqual(5);
-      expect(types.length).toBeLessThanOrEqual(6);
+      expect(types.length).toBeLessThanOrEqual(7);
       for (const seg of structure.segments) {
         expect(seg.length).toBeGreaterThan(0);
         expect(seg.halfWidth.aft).toBeGreaterThan(0);
