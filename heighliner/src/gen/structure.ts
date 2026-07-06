@@ -1,10 +1,20 @@
-// structure(seedS) -> StructureSpec. Frigate role only (session 2).
-// Fixed spine: engine -> drive -> mid* -> hull -> nose, now with silhouette
-// layer 1 (brief §6): profile curves, edge features, join collars.
+// structure(seedS) -> StructureSpec. Three roles (brief §4.3): corvette,
+// frigate, hauler — role is a NEW LEADING draw off the top-level structure
+// stream (session 3), read before anything else. Fixed spine: engine ->
+// drive -> mid* -> hull -> nose, with silhouette layer 1 (brief §6): profile
+// curves, edge features, join collars.
 // Per-segment draws come from derive(seedS, segmentId) streams so adding
 // draws to one segment never disturbs another. Draw order inside a segment
 // stream is FROZEN: dims first, then profile, then edge features, then collar
 // — new draws must only ever be appended after the collar draws.
+//
+// Role-draw landmine (documented, not a bug): the role pick consumes the
+// FIRST draw of the top-level `stream(seedS)` rng, so midCount (the only
+// other thing that stream feeds) shifts to the second draw. This means even
+// frigate ships now render differently for the same master seed than before
+// role selection existed — expected and intentional (this IS the structural
+// change); the pinned judgment row gets re-baselined by a human after this
+// lands, not preserved byte-for-byte.
 
 import { derive, int, pick, range, stream, type Prng } from "../core/prng";
 import type {
@@ -13,22 +23,102 @@ import type {
   JoinCollar,
   PartType,
   ProfileType,
+  Role,
   Segment,
   SegmentType,
   Socket,
   StructureSpec,
 } from "./types";
 
-// Frigate profile as data (brief §4.3); more roles = more rows, later.
+interface EngineTable {
+  len: [number, number];
+  foreShrink: [number, number];
+  aftHalfWidth: [number, number];
+}
+interface TaperTable {
+  len: [number, number];
+  step: [number, number];
+  taper: [number, number];
+}
+interface NoseTable {
+  len: [number, number];
+  step: [number, number];
+  tipFraction: [number, number];
+}
+
+/** Per-role distribution table (brief §4.3): everything a role controls is
+ *  data here, not a code branch. Adding a role later = adding one row. */
+interface RoleTable {
+  midRepeats: [number, number];
+  engine: EngineTable;
+  drive: TaperTable;
+  mid: TaperTable;
+  hull: TaperTable;
+  nose: NoseTable;
+}
+
+// Frigate profile as data — the tuned baseline (brief §4.3 "frigate"row).
 // Spreads widened ~50-60% from session 1 (operator verdict: fleet read too
-// similar); midRepeats up to 3 for longer stacks.
-const FRIGATE = {
-  midRepeats: [1, 3] as const,
+// similar); midRepeats up to 3 for longer stacks. Corvette/hauler are derived
+// FROM this table (below), not re-tuned from scratch, so the approved frigate
+// widening survives role selection unchanged.
+const FRIGATE: RoleTable = {
+  midRepeats: [1, 3],
   engine: { len: [7, 13], foreShrink: [0.67, 0.95], aftHalfWidth: [5.8, 9.8] },
   drive: { len: [8.5, 17.5], step: [0.81, 1.04], taper: [0.86, 1.09] },
   mid: { len: [8.5, 17.5], step: [0.91, 1.17], taper: [0.88, 1.12] },
   hull: { len: [14, 26], step: [1.08, 1.47], taper: [0.81, 1.04] },
   nose: { len: [8.5, 17.5], step: [0.85, 1.03], tipFraction: [0.08, 0.32] },
+};
+
+/** Scale a [lo, hi] length range by an elongation factor; other dims (width
+ *  step/taper ratios) stay role-invariant — elongation is an axial effect. */
+function scaleLen(len: [number, number], factor: number): [number, number] {
+  return [len[0] * factor, len[1] * factor];
+}
+
+/**
+ * Derive a role's full table from FRIGATE: scale every segment's length range
+ * by `elongation` (brief §4.3 "Elongation" row) and swap in the role's own
+ * midRepeats budget (brief §4.3 "Segments"/"mid repeats" rows). Width ratios
+ * (step/taper/foreShrink/tipFraction) are shared across roles.
+ */
+function deriveRoleTable(midRepeats: [number, number], elongation: number): RoleTable {
+  return {
+    midRepeats,
+    engine: { ...FRIGATE.engine, len: scaleLen(FRIGATE.engine.len, elongation) },
+    drive: { ...FRIGATE.drive, len: scaleLen(FRIGATE.drive.len, elongation) },
+    mid: { ...FRIGATE.mid, len: scaleLen(FRIGATE.mid.len, elongation) },
+    hull: { ...FRIGATE.hull, len: scaleLen(FRIGATE.hull.len, elongation) },
+    nose: { ...FRIGATE.nose, len: scaleLen(FRIGATE.nose.len, elongation) },
+  };
+}
+
+// Corvette: fewer/shorter segments, low elongation (brief §4.3: segments 3-4
+// meaning "as few as engine+drive+hull+nose with 0 mids", mid repeats 0-1).
+// Hauler: more/longer segments, high elongation (mid repeats bumped to 2-4,
+// one above frigate's approved ceiling of 3, so the ordering corvette <
+// frigate < hauler holds on both floor and ceiling even after frigate's
+// session-2 widening).
+const ROLES: readonly Role[] = ["corvette", "frigate", "hauler"];
+
+export const ROLE_PROFILES: Record<Role, RoleTable> = {
+  corvette: deriveRoleTable([0, 1], 0.75),
+  frigate: FRIGATE,
+  hauler: deriveRoleTable([2, 4], 1.3),
+};
+
+// Weapon socket fill budget (brief §4.3 "Weapon socket fill" row): clamps the
+// hull's raw weapon-count draw (unchanged 1-2 draw shape, see
+// hullWeaponCount) into a role-scaled floor/ceiling. Every role stays inside
+// [2, 3] (HULL_WEAPON_WINDOWS below only has layouts for 1-3 sockets, and the
+// pre-existing sockets.test.ts — out of this lane's scope — pins a global
+// 2-3 weapon-socket-count invariant): corvette pins to the ceiling, hauler
+// pins to the floor, frigate keeps its existing variable 2-3.
+export const WEAPON_FILL_CLAMP: Record<Role, [number, number]> = {
+  corvette: [3, 3], // high: always maxed out
+  frigate: [2, 3], // mid: unchanged frigate behavior
+  hauler: [2, 2], // low: always the floor, never a bonus turret
 };
 
 // --- profile curves -----------------------------------------------------------
@@ -220,13 +310,15 @@ function socketCountDraw(seedS: number, segId: string, category: string, lo: num
 
 /**
  * Hull is the ship's only weapon-socket segment, so its raw 1-2 draw (item
- * variety) is floor-clamped into the frigate's "weapon fill MID" budget
- * (brief §4.3: total weapon sockets 2-3) — a pure post-process on the
- * already-drawn count, no extra randomness.
+ * variety) is floor/ceiling-clamped into the role's weapon-fill budget
+ * (WEAPON_FILL_CLAMP, brief §4.3 "Weapon socket fill") — a pure post-process
+ * on the already-drawn count, no extra randomness, so the raw draw's shape
+ * (and stream position) never changes across roles.
  */
-function hullWeaponCount(seedS: number, segId: string): number {
+function hullWeaponCount(seedS: number, segId: string, role: Role): number {
   const raw = socketCountDraw(seedS, segId, "weapon", 1, 2);
-  return Math.max(2, Math.min(3, raw));
+  const [lo, hi] = WEAPON_FILL_CLAMP[role];
+  return Math.max(lo, Math.min(hi, raw));
 }
 
 /**
@@ -302,8 +394,8 @@ const HULL_WEAPON_WINDOWS: Record<number, readonly (readonly [number, number])[]
   3: [[0.08, 0.28], [0.36, 0.56], [0.64, 0.88]],
 };
 
-function buildHullSockets(seedS: number, segId: string): Socket[] {
-  const n = hullWeaponCount(seedS, segId);
+function buildHullSockets(seedS: number, segId: string, role: Role): Socket[] {
+  const n = hullWeaponCount(seedS, segId, role);
   const weaponWindows = HULL_WEAPON_WINDOWS[n] ?? HULL_WEAPON_WINDOWS[3]!;
   const sockets: Socket[] = [];
   for (let i = 0; i < n; i++) {
@@ -344,14 +436,27 @@ function buildMidSockets(seedS: number, segId: string, utilCount: number): Socke
   return sockets;
 }
 
+// Drive utility-lateral axial windows, keyed by slot index. Slot 0 is the
+// original session-2 window (byte-identical id/window to before role
+// selection existed); slot 1 is new — only reachable when a corvette's 0-mid
+// stack makes drive the sole utility-carrying segment (see the cap bump in
+// structure() below) and the shared 2-5 budget needs a second drive socket
+// to hit its floor.
+const DRIVE_UTILITY_WINDOWS: readonly (readonly [number, number])[] = [
+  [0.05, 0.2],
+  [0.8, 0.95],
+];
+
 function buildDriveSockets(seedS: number, segId: string, utilCount: number): Socket[] {
   const ringId = `${segId}-ring-0`;
   const sockets: Socket[] = [
     { id: ringId, kind: "ringBand", at: socketAxial(seedS, ringId, 0.35, 0.65), accepts: ["thruster-cluster"] },
   ];
-  if (utilCount >= 1) {
-    const id = `${segId}-lat-0`;
-    sockets.push({ id, kind: "lateralPair", at: socketAxial(seedS, id, 0.05, 0.2), accepts: DRIVE_UTILITY_PARTS });
+  const n = Math.min(utilCount, DRIVE_UTILITY_WINDOWS.length);
+  for (let i = 0; i < n; i++) {
+    const id = `${segId}-lat-${i}`;
+    const [lo, hi] = DRIVE_UTILITY_WINDOWS[i]!;
+    sockets.push({ id, kind: "lateralPair", at: socketAxial(seedS, id, lo, hi), accepts: DRIVE_UTILITY_PARTS });
   }
   enforceSpacing(sockets);
   return sockets;
@@ -404,10 +509,13 @@ function segment(
 
 export function structure(seedS: number): StructureSpec {
   const rng = stream(seedS);
-  const midCount = int(rng, FRIGATE.midRepeats[0], FRIGATE.midRepeats[1]);
+  // FROZEN draw order: role first (new leading draw), then midCount — see
+  // the role-draw landmine note at the top of this file.
+  const role = pick(rng, ROLES);
+  const p = ROLE_PROFILES[role];
+  const midCount = int(rng, p.midRepeats[0], p.midRepeats[1]);
 
   const segments: Segment[] = [];
-  const p = FRIGATE;
 
   const engine = segment(seedS, "engine", "engine", 0, (r) => {
     const aft = range(r, p.engine.aftHalfWidth[0]!, p.engine.aftHalfWidth[1]!);
@@ -457,14 +565,20 @@ export function structure(seedS: number): StructureSpec {
   // the hull only, floor-clamped into the frigate budget. Utility fill is
   // shared across mids + drive, drawn independently per segment then
   // round-robin clamped into the shared 2-5 budget pool (brief §4.3).
-  hull.sockets = buildHullSockets(seedS, hull.id);
+  hull.sockets = buildHullSockets(seedS, hull.id, role);
 
   const midSegs = segments.filter((s) => s.type === "mid");
   const rawUtil = [
     ...midSegs.map((s) => socketCountDraw(seedS, s.id, "utility", 0, 2)),
     socketCountDraw(seedS, drive.id, "utility", 0, 1),
   ];
-  const caps = [...midSegs.map(() => 2), 1];
+  // Drive's own utility cap is 1 whenever a mid exists (unchanged frigate/
+  // hauler behavior — always true for them, midRepeats floor >= 1). A
+  // corvette's midRepeats floor of 0 means drive can be the ONLY
+  // utility-carrying segment on the ship; without this bump the shared 2-5
+  // budget's floor of 2 would be structurally unreachable (single slot
+  // capped at 1) and the round-robin clamp would silently under-deliver.
+  const caps = [...midSegs.map(() => 2), midSegs.length === 0 ? 2 : 1];
   const utilCounts = clampCounts(rawUtil, caps, 2, 5);
 
   midSegs.forEach((seg, i) => {
@@ -475,7 +589,7 @@ export function structure(seedS: number): StructureSpec {
   nose.sockets = buildNoseSockets(seedS, nose.id);
 
   return {
-    role: "frigate",
+    role,
     axisLength: segments.reduce((sum, s) => sum + s.length, 0),
     segments,
   };
