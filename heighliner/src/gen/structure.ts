@@ -232,23 +232,35 @@ function hullWeaponCount(seedS: number, segId: string): number {
 /**
  * Deterministic post-process: push sockets on a segment apart so no two sit
  * closer than MIN_SOCKET_SPACING. Pure function of the already-drawn `at`
- * values (re-anchors the whole run if it would drift past the safe edge) —
- * no new randomness, so per-socket streams stay untouched.
+ * values — no new randomness, so per-socket streams stay untouched.
+ *
+ * Pass 1 cascades later sockets forward just enough to satisfy the minimum
+ * gap (this alone can walk the run past the segment's fore edge if an early
+ * gap was already wide). Pass 2 then shifts the *whole* run by a constant
+ * offset if it overshot either safe edge — a uniform shift preserves every
+ * pairwise gap exactly, so spacing stays correct after the correction too.
  */
 function enforceSpacing(sockets: Socket[]): void {
   if (sockets.length < 2) return;
   const SAFE_LO = 0.03;
   const SAFE_HI = 0.97;
   const sorted = [...sockets].sort((a, b) => a.at - b.at);
-  const needed = (sorted.length - 1) * MIN_SOCKET_SPACING;
-  let anchor = sorted[0]!.at;
-  if (anchor + needed > SAFE_HI) anchor = SAFE_HI - needed;
-  anchor = Math.max(SAFE_LO, anchor);
-  sorted[0]!.at = anchor;
+
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1]!;
     const cur = sorted[i]!;
     if (cur.at - prev.at < MIN_SOCKET_SPACING) cur.at = prev.at + MIN_SOCKET_SPACING;
+  }
+
+  const last = sorted[sorted.length - 1]!;
+  if (last.at > SAFE_HI) {
+    const shift = last.at - SAFE_HI;
+    for (const s of sorted) s.at -= shift;
+  }
+  const first = sorted[0]!;
+  if (first.at < SAFE_LO) {
+    const shift = SAFE_LO - first.at;
+    for (const s of sorted) s.at += shift;
   }
 }
 
