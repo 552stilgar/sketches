@@ -4,7 +4,7 @@
 // Shapes are part-local plain data: origin at socket anchor, +x outboard,
 // +y aftward. Mirroring happens once, in emit, via the shared helper.
 
-import { derive, int, range, stream, type Prng } from "../core/prng";
+import { derive, int, pick, range, stream, type Prng } from "../core/prng";
 import { frames, halfWidthAt, yAt, type SegmentFrame } from "./structure";
 import type { KitSpec, PartInstance, PartType, Placement, Shape, StructureSpec } from "./types";
 
@@ -284,33 +284,72 @@ export const PART_BUILDERS: Record<PartType, (rng: Prng, size: number) => PartIn
   "engine-bell": engineBell,
 };
 
+// Relative size factors per PartType (brief §4.4): masts/dishes read smaller
+// than turrets, radiator fins run long, engine-bell is the single largest
+// part. Data, not branches — new roles/profiles add rows here, not ifs.
+const PART_SIZE_FACTOR: Record<PartType, number> = {
+  "turret-large": 0.42,
+  "turret-small": 0.3,
+  "pdc-mount": 0.22,
+  "sensor-dish": 0.34,
+  "comm-mast": 0.3,
+  "thruster-cluster": 0.5,
+  "radiator-fin": 0.55,
+  "cargo-hatch": 0.4,
+  "docking-collar": 0.36,
+  "vent-strip": 0.32,
+  "engine-bell": 0.7,
+};
+
 export function kit(structureSpec: StructureSpec, seedK: number): KitSpec {
   const placements: Placement[] = [];
+  const allFrames = frames(structureSpec);
 
-  for (const frame of frames(structureSpec)) {
+  for (const frame of allFrames) {
     for (const socket of frame.segment.sockets) {
-      const partType = socket.accepts[0];
-      if (partType === undefined) continue;
+      const rng = stream(derive(seedK, socket.id));
+      // First draw of the socket's own stream: which accepted part type
+      // gets built here — keeps the rest of the stream downstream of it.
+      const partType = pick(rng, socket.accepts);
       const build = PART_BUILDERS[partType];
       if (!build) throw new Error(`no builder for part type: ${partType}`);
 
-      const rng = stream(derive(seedK, socket.id));
       const size = partSize(frame, socket.at, partType);
+      // lateralPair and ringBand both render as a mirrored pair in the 2D
+      // top-down elevation; centerline/area sit on the axis unmirrored,
+      // anchored at x=0 (their builders are symmetric about x=0 by design).
+      const mirrored = socket.kind === "lateralPair" || socket.kind === "ringBand";
+      const anchor = mirrored
+        ? { x: halfWidthAt(frame.segment, socket.at), y: yAt(frame, socket.at) }
+        : { x: 0, y: yAt(frame, socket.at) };
+
       placements.push({
         socketId: socket.id,
         part: build(rng, size),
-        anchor: { x: halfWidthAt(frame.segment, socket.at), y: yAt(frame, socket.at) },
-        // lateralPair and ringBand both render as a mirrored pair in the
-        // 2D top-down elevation
-        mirrored: socket.kind === "lateralPair" || socket.kind === "ringBand",
+        anchor,
+        mirrored,
       });
     }
+  }
+
+  // engine-bell (brief §4.4): special-cased at the engine's aft centerline,
+  // never socket-placed — always present, exactly once per ship.
+  const engineFrame = allFrames.find((f) => f.segment.type === "engine");
+  if (engineFrame) {
+    const rng = stream(derive(seedK, "engine-bell"));
+    const size = engineFrame.segment.halfWidth.aft * PART_SIZE_FACTOR["engine-bell"];
+    placements.push({
+      socketId: "engine-bell",
+      part: PART_BUILDERS["engine-bell"](rng, size),
+      anchor: { x: 0, y: engineFrame.yAft },
+      mirrored: false,
+    });
   }
 
   return { placements };
 }
 
-function partSize(frame: SegmentFrame, at: number, partType: string): number {
+function partSize(frame: SegmentFrame, at: number, partType: PartType): number {
   const hw = halfWidthAt(frame.segment, at);
-  return partType === "turret-large" ? hw * 0.42 : hw * 0.5;
+  return hw * PART_SIZE_FACTOR[partType];
 }
