@@ -17,15 +17,17 @@ function extractGroup(svg: string, id: string): string {
 }
 
 describe("shading group presence + document order", () => {
-  it("shading group exists and is ordered after kit, before paint", () => {
+  it("shading group is ordered after detail, before kit (AO under modules; §4.7 intent)", () => {
     for (const seed of SEEDS) {
       const svg = shipSVG(seed);
-      const kitIdx = svg.indexOf('-kit">');
+      const detailIdx = svg.indexOf('-detail">');
       const shadingIdx = svg.indexOf('-shading">');
+      const kitIdx = svg.indexOf('-kit">');
       const paintIdx = svg.indexOf('-paint">');
-      expect(kitIdx).toBeGreaterThan(-1);
-      expect(shadingIdx).toBeGreaterThan(kitIdx);
-      expect(paintIdx).toBeGreaterThan(shadingIdx);
+      expect(detailIdx).toBeGreaterThan(-1);
+      expect(shadingIdx).toBeGreaterThan(detailIdx);
+      expect(kitIdx).toBeGreaterThan(shadingIdx);
+      expect(paintIdx).toBeGreaterThan(kitIdx);
     }
   });
 

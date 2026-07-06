@@ -263,8 +263,11 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     `<defs>${defs}${aoBlurFilter}</defs>`,
     `<g id="${ns}-hull">${hullShapes.join("")}${joinSeams.join("")}${collars.join("")}</g>`,
     `<g id="${ns}-detail">${detailGroups.join("")}</g>`,
-    `<g id="${ns}-kit">${kitGroups.join("")}</g>`,
+    // Shading paints BEFORE kit (brief §4.7 intent: AO sits *under* modules,
+    // and the opaque lit/shade strips must not cut across edge-mounted parts).
+    // This overrides §4.8's literal group order, which put shading after kit.
     shadingGroup,
+    `<g id="${ns}-kit">${kitGroups.join("")}</g>`,
     `<g id="${ns}-paint"><!-- livery/decals land here (session 5); base tones applied on hull --></g>`,
     `</svg>`,
   ].join("");
