@@ -1,0 +1,83 @@
+:root {
+  --bg: #101216;
+  --card: #181b21;
+  --card-edge: #262b34;
+  --text: #aab1bc;
+  --text-dim: #5d646f;
+  --accent: #e07a1f;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, monospace;
+  padding: 28px 32px 64px;
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+h1 .accent { color: var(--accent); }
+
+.subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 24px;
+}
+
+h2 {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 26px 0 10px;
+}
+
+.row-judgment {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 10px;
+}
+
+.grid-fleet {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-edge);
+  border-radius: 6px;
+  padding: 10px 8px 6px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.card:hover { border-color: var(--accent); }
+
+.card svg {
+  display: block;
+  width: 100%;
+  height: 320px;
+}
+
+.row-judgment .card svg { height: 170px; }
+
+.card .seed {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 6px 0 2px;
+  letter-spacing: 0.08em;
+}
+
+.card.copied .seed { color: var(--accent); }

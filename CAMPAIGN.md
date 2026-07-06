@@ -1,9 +1,11 @@
 # sketches — Campaign Log
 
 ## Active Thread
-_Checkpoint: 2026-07-05T20:45:00Z_
+_Checkpoint: 2026-07-06T01:10:00Z_
 
-**In progress:** forge/ v7 endgame-parity push. Slices 6-8 (composition/value, depth pass, render-to-card D2 pipeline) shipped earlier through `0c1a08b`, 110/110 tests — see git log for detail.
+**NEW (2026-07-06): `heighliner/` session-1 slice SHIPPED.** Seeded procedural 2D torch-ship generator (SVG vector-flat, Expanse/Rocinante target), sibling to forge — spec is `heighliner/HEIGHLINER-CONCEPT-BRIEF.md` (authoritative, honor its anti-goals + build order). TS+Vite+vitest, zero frameworks. Pipeline: seed → derive(seed, layer) sub-seeds → structure/kit/detail/paint plain-data specs → emit (only SVG-touching module). Frigate-only, plain trapezoids, 2 parts (turret, thruster-cluster) on mirrored sockets, uniform panel-grid, 1 palette base-tones-only. Gallery: 8 pinned judgment seeds + 12-ship fleet grid, click-to-copy. 6/6 vitest (byte-identical determinism + per-layer sub-seed isolation), typecheck+build clean, browser-verified (20 SVGs, torch-ship read confirmed, 0 app console errors). Run: `npm --prefix ~/sketches/heighliner run dev`. **Next session per brief §6: silhouette layer (profile curves, edge features, join collars) — then shading. Do NOT touch detail density before shading exists.**
+
+**In progress (prior thread):** forge/ v7 endgame-parity push. Slices 6-8 (composition/value, depth pass, render-to-card D2 pipeline) shipped earlier through `0c1a08b`, 110/110 tests — see git log for detail.
 
 **The freeze-fix arc, this whole window — full story for tomorrow:**
 1. **Headless D3D probe said "shader too complex, crashes ANGLE-d3d11 outright."** Turned out to be a headless-Chrome-only artifact — a purpose-built minimal test page (a single solid-color triangle, zero loops) crashed identically, ruling out shader complexity entirely. Root cause never fully pinned (likely something about running under SSH/non-interactive session on Windows), and it doesn't matter: **Usul confirmed ordinary WebGL2 (get.webgl.org) works fine in his real, everyday Chrome.** The headless probe methodology (`forge-compile-ab*.ps1`) was a red herring for this bug — keep it filed away for future driver-level questions, but don't trust it over Usul's own browser.
@@ -36,6 +38,7 @@ Active. Creative coding sandbox — generative art experiments in self-contained
 - `chromatic-order.html` — generative art sketch
 - `void-filament.html` — generative art sketch
 - `voronoi-dominion.html` — live Voronoi tessellation; noise-field seed drift, soft wall, 4 mouse modes (passive/attractor/repulsor/vortex), identity hue + area-based saturation pressure, configurable slider panel (P), +/- seeds, h/e toggles
+- `heighliner/` — seeded procedural 2D spaceship generator (vertical-stack torch ships, vector-flat SVG, gallery grid + pinned judgment row). TS+Vite+vitest — the only sketch with a build step. Session-1 ugly slice complete 2026-07-06; brief at `heighliner/HEIGHLINER-CONCEPT-BRIEF.md`; tests `npm --prefix heighliner test`
 - `forge/` — procedural sword & axe generator (prism-style: hex hash = the weapon). Seeded DNA table (36 params, sword: blade/guard/grip/pommel · axe: haft/head/poll) → GLSL SDF raymarcher, brushed-metal shading, 12-specimen grid w/ hash captions, All/Swords/Axes filter, orbit stage, share token in URL hash (supports param overrides, no editor UI yet), PNG export. Only sketch with tests: `node --test forge/test.mjs` (5 behaviors: determinism, validity, archetype coverage, assembly invariants, token round-trip) — pure core in `params.mjs`, view in `index.html`. Serve over http (ES module import); headless-verified 2026-07-03, visual craft pass pending Usul
 
 ## Conventions
