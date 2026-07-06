@@ -70,8 +70,6 @@ const LIVERY_WEIGHTS: Record<Role, Record<LiveryScheme, number>> = {
   hauler: { driveStripes: 1, noseChevron: 1, shroudBlock: 2, hullBand: 3, spineRun: 1, bareMetal: 4 },
 };
 
-const ROLE_PREFIX: Record<Role, string> = { corvette: "C", frigate: "F", hauler: "H" };
-
 /** Weighted pick over an enumerated weight table. */
 function pickWeighted<K extends string>(rng: Prng, weights: Record<K, number>): K {
   const entries = Object.entries(weights) as [K, number][];
@@ -84,10 +82,11 @@ function pickWeighted<K extends string>(rng: Prng, weights: Record<K, number>): 
   return entries[entries.length - 1]![0];
 }
 
-/** Registry-style hull number, e.g. "F-47". No names (brief §8). */
-function hullNumber(rng: Prng, role: Role): string {
-  const n = int(rng, 2, 399);
-  return `${ROLE_PREFIX[role]}-${String(n).padStart(2, "0")}`;
+/** Short bold hull number, e.g. "47" — a painted pennant, not a name (§8).
+ *  Kept to two digits so the stencil paints at a consistent large size across
+ *  the fleet rather than shrinking to fit narrow hulls. */
+function hullNumber(rng: Prng): string {
+  return String(int(rng, 0, 99)).padStart(2, "0");
 }
 
 export function paint(structureSpec: StructureSpec, seedP: number): PaintSpec {
@@ -105,7 +104,7 @@ export function paint(structureSpec: StructureSpec, seedP: number): PaintSpec {
   }
 
   const livery = pickWeighted(stream(derive(seedP, "livery")), LIVERY_WEIGHTS[structureSpec.role]);
-  const number = hullNumber(stream(derive(seedP, "hull")), structureSpec.role);
+  const number = hullNumber(stream(derive(seedP, "hull")));
   const hazard = stream(derive(seedP, "hazard"))() < HAZARD_P;
   const grime = palette.allowGrime && stream(derive(seedP, "grime"))() < GRIME_P;
 

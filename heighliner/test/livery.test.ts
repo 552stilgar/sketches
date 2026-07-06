@@ -70,10 +70,10 @@ describe("paint spec — palette bank + selection", () => {
     expect(anyNonZero).toBe(true);
   });
 
-  it("hull number is a registry code, never a name (brief §8)", () => {
+  it("hull number is a short painted pennant, never a name (brief §8)", () => {
     for (const seed of SEEDS) {
       const spec = paint(structure(derive(seed, "structure")), derive(seed, "paint"));
-      expect(spec.hullNumber).toMatch(/^[CFH]-\d{2,3}$/);
+      expect(spec.hullNumber).toMatch(/^\d{2}$/);
     }
   });
 
@@ -117,11 +117,11 @@ describe("emit — paint group", () => {
     }
   });
 
-  it("carries the hull-number decal text for every ship", () => {
+  it("carries the hull-number decal for every ship", () => {
     for (const seed of SEEDS.slice(0, 12)) {
       const specs = shipSpecs(seed);
       const paintG = extractGroup(shipSVG(seed), "paint");
-      expect(paintG).toContain(`>${specs.paint.hullNumber}<`);
+      expect(paintG).toContain(`data-hull-number="${specs.paint.hullNumber}"`);
     }
   });
 

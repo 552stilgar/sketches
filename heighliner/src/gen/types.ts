@@ -173,7 +173,7 @@ export interface PaintSpec {
   toneBySegment: Record<string, "base" | "baseAlt">;
   /** Accent-placement scheme. */
   livery: LiveryScheme;
-  /** Hull-number decal, e.g. "F-47". Registry code, never a name (§8). */
+  /** Hull-number decal — a short painted pennant, e.g. "47". Never a name (§8). */
   hullNumber: string;
   /** Hazard-stripe decal near the aft engine warning zone. */
   hazard: boolean;

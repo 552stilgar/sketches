@@ -37,10 +37,17 @@ const CHEVRON_FRAC = 0.6; // chevron apex position along the nose (aft->fore)
 const CHEVRON_BASE_T = 0.12; // chevron base position along the nose
 const CHEVRON_H = 1.6; // chevron band thickness (world units, aft offset)
 const SHROUD_FRAC = 0.45; // shroud block covers this fraction of the drive, from aft
-const SPINE_W = 1.2; // centerline spine strip width
-const HULLNUM_SIZE_FRAC = 0.8; // hull-number font size, fraction of local half-width
-const HULLNUM_SIZE_MIN = 3;
-const HULLNUM_SIZE_MAX = 8;
+const SPINE_W = 1.1; // centerline spine strip width
+const SPINE_INSET_FRAC = 0.06; // spine stops short of the body ends — a stripe, not a bisecting seam
+// hull-number stencil (painted-on decal, brief §6). Blocky 3×5 vector glyphs,
+// no external font (export-safe), filled at reduced opacity so they read as
+// sprayed stencil paint rather than crisp UI text. One consistent target
+// height across the fleet, only shrunk to fit narrow hulls.
+const NUMBER_TARGET_H = 6.5; // target glyph height, world units
+const NUMBER_MAX_WFRAC = 0.78; // cap: number width <= this fraction of local ship width
+const NUMBER_OPACITY = 0.72;
+const NUMBER_GAP_FRAC = 0.55; // inter-glyph gap, fraction of one stencil pixel
+const NUMBER_BLEED = 0.04; // per-cell overlap so adjacent pixels merge (no seams)
 const HAZARD_STRIPE_W = 1.4; // hazard diagonal stripe width
 const HAZARD_BAND_FRAC = 0.5; // hazard band spans this fraction of the engine, from aft
 const GRIME_OPACITY = 0.13; // weathering overlay opacity
@@ -55,6 +62,27 @@ const STROKE_WIDTH: Record<StrokeWeight, number> = {
 
 /** One ink for all line work in session 1. */
 const INK = "#14161b";
+
+// 3×5 stencil glyph matrix for hull-number decals. Only the characters a
+// registry code uses (role letters C/F/H, digits, dash). "1" = painted cell.
+const STENCIL: Record<string, string[]> = {
+  "0": ["111", "101", "101", "101", "111"],
+  "1": ["010", "110", "010", "010", "111"],
+  "2": ["111", "001", "111", "100", "111"],
+  "3": ["111", "001", "111", "001", "111"],
+  "4": ["101", "101", "111", "001", "001"],
+  "5": ["111", "100", "111", "001", "111"],
+  "6": ["111", "100", "111", "101", "111"],
+  "7": ["111", "001", "010", "010", "010"],
+  "8": ["111", "101", "111", "101", "111"],
+  "9": ["111", "101", "111", "001", "111"],
+  C: ["111", "100", "100", "100", "111"],
+  F: ["111", "100", "111", "100", "100"],
+  H: ["101", "101", "111", "101", "101"],
+  "-": ["000", "000", "111", "000", "000"],
+};
+const STENCIL_COLS = 3;
+const STENCIL_ROWS = 5;
 
 const fmt = (n: number): string => {
   const r = Math.round(n * 1000) / 1000;
@@ -400,13 +428,18 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
         return clip(nose.segment.id, `<polygon points="${pointsAttr(pts)}" fill="${accent}"/>`);
       }
       case "spineRun": {
-        const nose = byType("nose");
+        // A body stripe, not a full-length seam: span the hull+mid body only
+        // (skip the nose cone and the drive/engine), inset from both ends so it
+        // never touches a segment boundary and reads as painted-on rather than
+        // a slot bisecting the ship.
+        const hull = byType("hull");
         const drive = byType("drive");
-        if (!nose || !drive) return "";
-        const yTop = yAt(nose, 1);
-        const yBot = drive.yFore;
-        const y = Math.min(yTop, yBot);
-        return `<rect x="${fmt(-SPINE_W / 2)}" y="${fmt(y)}" width="${fmt(SPINE_W)}" height="${fmt(Math.abs(yTop - yBot))}" fill="${accent}"/>`;
+        if (!hull || !drive) return "";
+        const yTop = yAt(hull, 1); // hull/nose boundary
+        const yBot = drive.yFore; // drive/body boundary (aft end of the body)
+        const span = Math.abs(yBot - yTop);
+        const inset = span * SPINE_INSET_FRAC;
+        return `<rect x="${fmt(-SPINE_W / 2)}" y="${fmt(Math.min(yTop, yBot) + inset)}" width="${fmt(SPINE_W)}" height="${fmt(span - 2 * inset)}" fill="${accent}"/>`;
       }
     }
   }
@@ -469,14 +502,40 @@ export function emit(specs: ShipSpecs, idPrefix?: string): string {
     return out.join("");
   }
 
-  // hull-number decal: registry code centered on the hull, in trim ink.
+  // hull-number decal: registry code painted on the hull as blocky stencil
+  // glyphs (no font dependency). Consistent target height across the fleet,
+  // shrunk only to fit narrow hulls; reduced opacity reads as sprayed paint.
   function hullNumberDecal(): string {
     const hull = byType("hull");
     if (!hull) return "";
-    const y = yAt(hull, HULL_BAND_T);
-    const size = Math.min(HULLNUM_SIZE_MAX, Math.max(HULLNUM_SIZE_MIN, halfWidthAt(hull.segment, HULL_BAND_T) * HULLNUM_SIZE_FRAC));
-    const text = specs.paint.hullNumber.replace(/[<>&]/g, "");
-    return `<text x="0" y="${fmt(y + size * 0.35)}" text-anchor="middle" font-family="'DejaVu Sans Mono',monospace" font-size="${fmt(size)}" font-weight="600" fill="${palette.trim}">${text}</text>`;
+    const chars = [...specs.paint.hullNumber].filter((ch) => STENCIL[ch]);
+    if (chars.length === 0) return "";
+
+    // fit: pixel from target height, capped so the whole number stays within
+    // NUMBER_MAX_WFRAC of the local hull width.
+    const advance = STENCIL_COLS + NUMBER_GAP_FRAC; // per-glyph pixel advance incl. gap
+    const unitsWide = chars.length * advance - NUMBER_GAP_FRAC;
+    const maxW = 2 * halfWidthAt(hull.segment, HULL_BAND_T) * NUMBER_MAX_WFRAC;
+    const px = Math.min(NUMBER_TARGET_H / STENCIL_ROWS, maxW / unitsWide);
+
+    const totalW = unitsWide * px;
+    const x0 = -totalW / 2;
+    const y0 = yAt(hull, HULL_BAND_T) - (STENCIL_ROWS * px) / 2;
+    const cell = px * (1 + NUMBER_BLEED);
+
+    const rects: string[] = [];
+    chars.forEach((ch, ci) => {
+      const rows = STENCIL[ch]!;
+      const gx = x0 + ci * advance * px;
+      for (let r = 0; r < STENCIL_ROWS; r++) {
+        for (let c = 0; c < STENCIL_COLS; c++) {
+          if (rows[r]![c] === "1") {
+            rects.push(`<rect x="${fmt(gx + c * px)}" y="${fmt(y0 + r * px)}" width="${fmt(cell)}" height="${fmt(cell)}"/>`);
+          }
+        }
+      }
+    });
+    return `<g data-hull-number="${specs.paint.hullNumber}" fill="${palette.trim}" fill-opacity="${NUMBER_OPACITY}">${rects.join("")}</g>`;
   }
 
   const paintGroup = [
