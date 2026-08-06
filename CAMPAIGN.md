@@ -1,5 +1,7 @@
 # sketches — Campaign Log
 
+> **History-only (M2, 2026-08-06).** Current state lives in `STATE.md` at the project root (authored at this project's next session close if absent). Append dated history entries here — no current-status / next-actions maintenance. Spec: ~/docs/specs/fenrir-landing-page-2026-08-05.md §8.
+
 ## Active Thread
 _Checkpoint: 2026-07-06T19:58:00Z_
 
