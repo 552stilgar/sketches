@@ -15,5 +15,5 @@
     "resolveJsonModule": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "bin", "fixtures"]
+  "include": ["src", "bin", "fixtures", "tests", "scripts"]
 }

@@ -1,2 +1,41 @@
-console.error("not implemented");
-process.exit(1);
+#!/usr/bin/env node
+// usage: node --experimental-strip-types bin/compile.ts <repo.json> <city.json>
+import { readFileSync, writeFileSync } from "node:fs";
+import { compileCity } from "../src/compiler/index.ts";
+import { validateRepoGraph, validateCity } from "../src/types.ts";
+import type { RepoGraph } from "../src/types.ts";
+
+function main(): void {
+  const [, , inPath, outPath] = process.argv;
+  if (!inPath || !outPath) {
+    console.error("usage: node bin/compile.ts <repo.json> <city.json>");
+    process.exit(1);
+  }
+
+  const graph = JSON.parse(readFileSync(inPath, "utf-8")) as RepoGraph;
+  const graphCheck = validateRepoGraph(graph);
+  if (!graphCheck.ok) {
+    console.error("input repo.json is invalid:");
+    for (const e of graphCheck.errors) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+
+  const city = compileCity(graph);
+
+  const cityCheck = validateCity(city);
+  if (!cityCheck.ok) {
+    console.error("compileCity produced an invalid CityModel:");
+    for (const e of cityCheck.errors) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+
+  writeFileSync(outPath, JSON.stringify(city, null, 2));
+  console.log(`wrote ${outPath} (${city.buildings.length} buildings, ${city.districts.length} districts)`);
+}
+
+try {
+  main();
+} catch (err: unknown) {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+}
