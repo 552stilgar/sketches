@@ -1,0 +1,26 @@
+{
+  "name": "code-city",
+  "type": "module",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "analyze": "node --experimental-strip-types bin/analyze.ts",
+    "compile": "node --experimental-strip-types bin/compile.ts",
+    "render:2d": "node --experimental-strip-types bin/render2d.ts"
+  },
+  "devDependencies": {
+    "@types/three": "^0.169.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "three": "^0.169.0",
+    "tree-sitter-wasms": "^0.1.13",
+    "web-tree-sitter": "^0.24.7"
+  }
+}

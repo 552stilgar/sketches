@@ -1,0 +1,5 @@
+node_modules/
+dist/
+public/repo.json
+public/city.json
+public/city.svg
