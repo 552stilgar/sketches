@@ -88,3 +88,14 @@ A forest that reveals its own anatomy at every scale. L-system rewriting rules g
 2. #3 heighliner metallic / 3D-finish shading craft loop (see Active Thread) — interactive, next up
 3. Add `generative-art` to newsletters topics-registry.json
 4. Fix reddit-session.mjs OAuth (552stilgar app — check Preferences→Apps) to resume sourcing ideas
+
+## 2026-08-21 — code-city V1 kickoff: contract shipped, orchestrated build started + cleanly stopped at P2
+Picked up PROJECT_IDEA.md from the PC (Code City: repo→repo.json→city.json→renderer compiler).
+/usul-idea-to-design contract ratified: Phases 0-3, three-stage CLI pipeline (analyze/compile/render:2d/dev),
+5-behavior spec with byte-determinism as the load-bearing gate; home = sketches/code-city (Usul: lighter
+ceremony, no registry entry). /usul-orchestrate-task emitted a 9-leaf Workflow (2 codex gpt-5.6-sol lanes,
+sampler-seated). P1 landed: scaffold 0dfbc73, contract+RED gates 5b2d0d5 (RED colors verified NotImplemented).
+Usul stopped the run mid-P2 (dropping for the night): cc/cc-compiler @ 6dcfa75 (full first-pass compiler+SVG,
+gates NOT run), cc/cc-analyzer @ e11e9f1 (WIP checkpoint), worktrees preserved under .worktrees/; renderer
+lane never started. Resume plan in memory/project_code_city.md — continuation script from BASE 5b2d0d5,
+fix master→main wording, launch from tmux for drop-tolerance.
