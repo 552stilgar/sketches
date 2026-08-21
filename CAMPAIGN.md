@@ -99,3 +99,23 @@ Usul stopped the run mid-P2 (dropping for the night): cc/cc-compiler @ 6dcfa75 (
 gates NOT run), cc/cc-analyzer @ e11e9f1 (WIP checkpoint), worktrees preserved under .worktrees/; renderer
 lane never started. Resume plan in memory/project_code_city.md — continuation script from BASE 5b2d0d5,
 fix master→main wording, launch from tmux for drop-tolerance.
+
+## 2026-08-21 (s2) — code-city V1 SHIPPED: continuation workflow, merge, verify, review
+Resumed same day from the memory resume card. Both preserved codex worktrees (cc-analyzer,
+cc-compiler) turned out already gate-green (14/14, 19/19, no tests/ edits) — no re-dispatch
+needed; wrote their codex dispatch-ledger entries post-hoc. Ran a continuation Workflow
+(wf_338fd2d8-606) from BASE 5b2d0d5: renderer lane (fresh cc-renderer worktree, Three.js
+explorer + window.__test bridge, 9426f77) -> merged all three lanes into main conflict-free
+(0b16228/4c758a1/3ffc2ca + 6de9a5e cruft removal) -> integration (4fac7e2, finalized smoke.mjs
+into a real gate) -> verify. Final: 26/26 tests green, build clean, smoke exit 0, browser-verify
+PASS all 7 checks (15 buildings, no MOCK badge, overlay works -- screenshots sent to Usul),
+spec-checker 6/6. Worktrees removed, branches deleted, main ~8 ahead of origin, unpushed.
+/code-review high on 5b2d0d5..HEAD found 10 verified defects the fixture's own gates never
+catch: churn silently 0 when the analyzed path is a subdir of its own repo (bites the project's
+own dogfood target), NodeNext ./x.js import specifiers drop every edge, a churn heuristic
+fabricates data from commit-message prefixes (papering over the fixture's --allow-empty
+commits), thin districts place buildings off the 1000x1000 canvas, bare localeCompare breaks
+byte-determinism across locales, unbounded git fan-out with swallowed catches zeroes out
+metrics under load, the footprint-vs-loc invariant is destroyed by a clamp, and the >500-file
+LOD band is broken two separate ways. Full list + repro notes in memory/project_code_city.md.
+Next: Usul disposes the findings (fix wave), then push.
