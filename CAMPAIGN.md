@@ -119,3 +119,23 @@ byte-determinism across locales, unbounded git fan-out with swallowed catches ze
 metrics under load, the footprint-vs-loc invariant is destroyed by a clamp, and the >500-file
 LOD band is broken two separate ways. Full list + repro notes in memory/project_code_city.md.
 Next: Usul disposes the findings (fix wave), then push.
+
+## 2026-08-28 — code-city: all 13 review findings fixed + merged via orchestrated fix wave
+Ran /usul-orchestrate-task on the queued findings: 7-leaf tree (P1 shared codepoint comparator ->
+par{A analyzer/git correctness, B compiler/layout/grammar correctness, D renderer dead-code
+cleanup, E package.json engines field, F vite dev 404 fix} -> merge+verify) via native Workflow
+(wf_7d53f0a0-fb2). Seat sampler showed codex filtered out of Band-1 right now (executor-reach) --
+routed to Sonnet 5 @ high/low + Haiku 4.5 per the live seat table instead of the doctrine default.
+All 5 lanes shipped tested fixes; one lane (B) was auto-flagged as a false failure by the merge
+step's non-report heuristic (tripped on the harmless word "waiting" in its own prose) but its
+tests were verified green in isolation and merged by hand once confirmed legitimate. Final: 57/57
+tests green (was 26), build clean, smoke green with real (non---allow-empty) fixture diffs. All
+worktrees/branches cleaned up. ROI: 20.5min wall vs ~195min estimated serial, ~$14.30 lane cost.
+Then browser-verified before pushing (Usul picked that gate off a /usul-next-steps board): dogfooded
+the fixed pipeline on code-city itself -- which, being a subdir of the sketches repo, IS finding #1's
+scenario -- 49 buildings/6 districts, 49/49 non-zero churn (was 0/49 pre-fix), 46 distinct footprint
+sides (sqrt(loc) invariant alive), 0 off-canvas, /nope.json now 404 where it was 200. browser-verify
+PASS on all 7 checks (no MOCK badge, real WebGL geometry, 0 overlaps, click overlay correct, zero
+uncaught exceptions; only console error was a benign /favicon.ico 404). Pushed to origin after that.
+Also fixed the orchestrate-task skill's assertLaneReport heuristic that nearly discarded lane B --
+structural report evidence (commit SHAs, test counts) now outranks keyword matching; lesson logged.
