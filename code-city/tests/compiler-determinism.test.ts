@@ -46,4 +46,26 @@ describe("compiler determinism (RED — compileCity not implemented yet)", () =>
       expect(after.y).toBe(before.y);
     }
   });
+
+  it("uses codepoint ordering at every compiler sort site without consulting the locale", () => {
+    const g = makeFixedRepoGraph();
+    g.nodes[0].id = "é/é.ts";
+    g.nodes[0].path = "é/é.ts";
+    g.nodes[1].id = "Z/Z.ts";
+    g.nodes[1].path = "Z/Z.ts";
+    g.nodes[2].imports = ["é/é.ts", "Z/Z.ts"];
+
+    const original = String.prototype.localeCompare;
+    String.prototype.localeCompare = function (): never {
+      throw new Error("compileCity must not use localeCompare");
+    };
+    try {
+      const city = compileCity(g);
+      expect(city.districts.map((district) => district.name)).toEqual(["Z", "alpha", "beta", "gamma", "é"]);
+      const roadPairs = city.roads.map((road) => `${road.from}->${road.to}`);
+      expect(roadPairs).toEqual([...roadPairs].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    } finally {
+      String.prototype.localeCompare = original;
+    }
+  });
 });
