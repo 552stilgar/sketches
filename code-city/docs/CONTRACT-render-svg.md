@@ -37,6 +37,21 @@ attribute — SVG has no `depth` axis; this is the top-down projection of the ci
   </line>
   <!-- roads: optional to render visibly, but use this shape if rendered -->
 
+  <circle class="landmark" data-id="{landmark.id}" data-kind="{landmark.kind}"
+          data-label="{landmark.label ?? landmark.id}" data-weight="{landmark.weight}"
+          cx="{landmark.x}" cy="{landmark.y}" r="{r}" />
+  <!-- V4: one per CityModel.landmarks entry whose kind is "datastore" (the only kind V4 emits);
+       an unlisted kind is skipped, not guessed at. data-weight is present only when
+       landmark.weight is itself present -- never a fabricated fallback value. -->
+
+  <line class="tether" data-hash="{link.hash}" data-from="{fromId}" data-to="{toId}"
+        x1="…" y1="…" x2="…" y2="…" stroke-width="{w}" stroke-opacity="{o}" />
+  <circle class="tether-node" data-hash="{link.hash}" data-id="{memberId}"
+          cx="…" cy="…" r="{r}" />
+  <!-- V4: one <line class="tether"> per resolvable ADJACENT pair in an IdentityLink's `members`
+       (chain topology), plus one <circle class="tether-node"> per distinct resolvable member.
+       NEVER stroke-dasharray, NEVER a child <animate> -- see "Clone identity" below. -->
+
 </svg>
 ```
 
@@ -105,3 +120,59 @@ imports/calls-derived structural signal, not measured runtime traffic.
 Building and district `id`s **must** appear as `data-id` — this is the only reliable way a click
 handler (Phase 3, out of scope here) or a test can join an SVG element back to its `CityModel`
 entry.
+
+## Landmarks (added 2026-08-28, V4)
+
+Every `Landmark` whose `kind` is `"datastore"` — the only kind V4's pipeline emits — renders as
+one `<circle class="landmark">`. An unlisted `kind` (legal shape-wise per `docs/CONTRACT-city-json.md`,
+"Landmarks (V4)", but with no defined renderer treatment yet) is **skipped**, never guessed at as
+a generic shape — same "don't fabricate a visual for a signal this renderer doesn't understand"
+rule the 3D side follows (`src/renderer/landmarks.ts`).
+
+`<circle>`, never `<rect>`: a datastore must be structurally distinguishable from a
+`<rect class="building">` by tag name alone, so "this is not a building" survives even a raw view
+with no CSS or JS applied — the SVG equivalent of the 3D renderer's tank silhouette being
+impossible to mistake for any of `buildings.ts`'s four box-derived style profiles.
+
+- `cx`/`cy` are `landmark.x`/`landmark.y` directly (no scaling — same "city.json coordinates ARE
+  the SVG coordinate space" rule as everything else on this page).
+- `r` is derived from `landmark.weight` (schema-derived TABLE COUNT, V4 contract D1) via the same
+  sqrt-of-signal scaling as buildings' `sqrt(loc)` footprint rule (`docs/CONTRACT-city-json.md`,
+  "Urban grammar") — a missing `weight` sizes as if it were `1` (unmeasured, not zero, mirroring
+  `Road.weight`'s `UNWEIGHTED_DEFAULT` idiom), but that fallback is a **rendering-only** decision.
+- `data-weight` is emitted **only when `landmark.weight` is itself present** — the fallback used
+  for `r` is never printed as if it were real data. This is the same discipline `render2d`
+  already applies to roads: derived visual properties (`data-tier`, `stroke-width`) are always
+  emitted, raw data attributes are emitted only when the source actually has them.
+- `data-label` is `landmark.label ?? landmark.id` — always a real string (never a fabricated
+  name), falling back to the landmark's own id when no display label was produced yet.
+
+## Clone identity (added 2026-08-28, V4)
+
+`identityLinks` is **legal-absent** on a pre-V4 `city.json` (`docs/CONTRACT-city-json.md`,
+"Validation") — `render2d` treats a missing key as "no clone groups", never throws.
+
+For each `IdentityLink` present, `render2d` walks `members` (already sorted by codepoint) and
+emits one `<line class="tether">` per **adjacent, resolvable** pair — a chain, not a synthetic
+hub-and-spoke — plus one `<circle class="tether-node">` per distinct member whose center resolved.
+A pair with either endpoint unresolvable is skipped, mirroring the road-rendering loop's own
+dangling-reference defensiveness above.
+
+**D2 — a tether is structurally, not just cosmetically, distinct from a road.** Every
+`<line class="road">` this renderer emits carries a `stroke-dasharray` and a child `<animate>`
+element (see "Structural road flow" above); a `<line class="tether">` carries **neither, ever**.
+That absence — not a color or class name — is the signal that survives even a bare, unstyled view
+of the SVG: motion-capable markup vs. none. This mirrors `src/renderer/tethers.ts`'s rule on the
+3D side (a tether's `BufferGeometry` never declares the `aOffset`/`aDashPeriod` attributes
+`roads.ts`'s shader reads for animation) — same constraint, translated to this renderer's own
+markup vocabulary.
+
+- `class="tether"`, never `class="road"` — a tether must never be discoverable by any selector
+  that also matches a road.
+- `data-hash` (on both the `<line>` and its `<circle class="tether-node">` siblings) is the
+  `IdentityLink.hash` — the real grouping key, joinable back to `CityModel.identityLinks`.
+- `data-from`/`data-to` on each `<line>` are the two member ids that specific segment connects
+  (not the whole group's member list) — same per-edge idiom as a road's `data-from`/`data-to`.
+- `stroke-width`/`stroke-opacity` are fixed constants (not tier-derived like a road's), because a
+  tether does not carry a weight signal to tier by — it is either byte-identical or it doesn't
+  exist (V4 contract D3).

@@ -9,6 +9,17 @@ import { render2d } from "../src/renderer/svg.ts";
 import { validateCity } from "../src/types.ts";
 import type { CityModel } from "../src/types.ts";
 
+const MOCK_CITY_V4_PATH = fileURLToPath(new URL("../fixtures/mock-city-v4.json", import.meta.url));
+
+function loadMockCityV4(): CityModel {
+  const city = JSON.parse(readFileSync(MOCK_CITY_V4_PATH, "utf-8")) as CityModel;
+  const check = validateCity(city);
+  if (!check.ok) {
+    throw new Error(`fixtures/mock-city-v4.json is not a valid CityModel: ${check.errors.join("; ")}`);
+  }
+  return city;
+}
+
 function buildingAt(id: string, x: number, y: number): CityModel["buildings"][number] {
   return { id, x, y, width: 20, depth: 20, height: 4, style: "typescript", metrics: { loc: 10, complexity: 1, churn: 0 } };
 }
@@ -242,5 +253,102 @@ describe("render2d structural road flow", () => {
 
   it("labels the flow as structurally derived", () => {
     expect(render2d(weightedRoadsCity())).toContain(FLOW_PROVENANCE_LABEL.structural);
+  });
+});
+
+describe("render2d V4 — landmarks + clone identity (CONTRACTS.md § V4)", () => {
+  function parseTags(svg: string, pattern: RegExp): Record<string, string>[] {
+    const tags = svg.match(pattern) ?? [];
+    return tags.map((tag) => {
+      const attrs: Record<string, string> = {};
+      const attrRe = /([\w-]+)="([^"]*)"/g;
+      let m: RegExpExecArray | null;
+      while ((m = attrRe.exec(tag)) !== null) attrs[m[1]] = m[2];
+      return attrs;
+    });
+  }
+
+  it('renders one <circle class="landmark"> per datastore landmark, carrying id/kind/label', () => {
+    const city = loadMockCityV4();
+    const svg = render2d(city);
+    const circles = parseTags(svg, /<circle class="landmark"[^>]*\/?>/g);
+    expect(circles.length).toBe(city.landmarks.length);
+    for (const landmark of city.landmarks) {
+      const rendered = circles.find((c) => c["data-id"] === landmark.id);
+      expect(rendered, `no <circle class="landmark"> for ${landmark.id}`).toBeDefined();
+      expect(rendered!["data-kind"]).toBe("datastore");
+      expect(rendered!["data-label"]).toBe(landmark.label);
+      expect(Number(rendered!.cx)).toBe(landmark.x);
+      expect(Number(rendered!.cy)).toBe(landmark.y);
+      expect(Number.isFinite(Number(rendered!.r))).toBe(true);
+    }
+  });
+
+  it("a <circle class=\"landmark\"> is never a <rect class=\"building\"> — distinct tag, not just a distinct class", () => {
+    const svg = render2d(loadMockCityV4());
+    expect(svg).toMatch(/<circle class="landmark"/);
+    // No building rect ever carries a landmark's id.
+    const buildingIds = new Set(loadMockCityV4().buildings.map((b) => b.id));
+    const landmarkIds = loadMockCityV4().landmarks.map((l) => l.id);
+    for (const id of landmarkIds) expect(buildingIds.has(id)).toBe(false);
+  });
+
+  it("gives a bigger datastore (higher weight) a bigger radius than a smaller one", () => {
+    const svg = render2d(loadMockCityV4());
+    const circles = parseTags(svg, /<circle class="landmark"[^>]*\/?>/g);
+    const small = circles.find((c) => c["data-id"] === "landmark:auth-db")!; // weight 4
+    const big = circles.find((c) => c["data-id"] === "landmark:payments-db")!; // weight 9
+    expect(Number(big.r)).toBeGreaterThan(Number(small.r));
+  });
+
+  it('renders one <line class="tether"> per resolvable adjacent pair in an identityLink\'s members', () => {
+    const city = loadMockCityV4();
+    const svg = render2d(city);
+    const tethers = parseTags(svg, /<line class="tether"[^>]*\/?>/g);
+    // fixture: one 3-member group (2 adjacent pairs) + one 2-member group (1 pair) = 3 tethers.
+    expect(tethers.length).toBe(3);
+    for (const link of city.identityLinks) {
+      const forLink = tethers.filter((t) => t["data-hash"] === link.hash);
+      expect(forLink.length).toBe(link.members.length - 1);
+    }
+  });
+
+  it("a tether carries NEITHER stroke-dasharray NOR a child <animate> — the structural not-a-road signal", () => {
+    const svg = render2d(loadMockCityV4());
+    const tetherElements = svg.match(/<line class="tether"[^>]*\/>/g) ?? [];
+    expect(tetherElements.length).toBeGreaterThan(0);
+    for (const el of tetherElements) {
+      expect(el).not.toMatch(/stroke-dasharray/);
+      expect(el).not.toMatch(/<animate/);
+    }
+    // And no <animate> immediately follows a tether line the way it does for every road.
+    expect(svg).not.toMatch(/<line class="tether"[^>]*>\s*<animate/);
+  });
+
+  it('renders one <circle class="tether-node"> per distinct resolvable member, tagged with the link hash', () => {
+    const city = loadMockCityV4();
+    const svg = render2d(city);
+    const nodes = parseTags(svg, /<circle class="tether-node"[^>]*\/?>/g);
+    for (const link of city.identityLinks) {
+      const forLink = nodes.filter((n) => n["data-hash"] === link.hash);
+      expect(forLink.length).toBe(link.members.length);
+      const ids = new Set(forLink.map((n) => n["data-id"]));
+      expect(ids).toEqual(new Set(link.members));
+    }
+  });
+
+  it("omits identityLinks entirely on a pre-V4 city.json without throwing (legal-absent key)", () => {
+    const preV4 = loadMockCityV4();
+    // @ts-expect-error -- simulating a pre-V4 city.json that lacks the key entirely.
+    delete preV4.identityLinks;
+    expect(() => render2d(preV4)).not.toThrow();
+    expect(render2d(preV4)).not.toMatch(/<line class="tether"/);
+  });
+
+  it("produces byte-identical SVG output across repeat renders of a V4 city (determinism)", () => {
+    const city = loadMockCityV4();
+    const first = render2d(city);
+    const second = render2d(city);
+    expect(first).toBe(second);
   });
 });
