@@ -191,21 +191,46 @@ function pyramidGeometry(hw: number, hd: number, baseY: number, apexY: number): 
   return geo;
 }
 
-/** Concatenates position-only geometries into one non-indexed BufferGeometry and recomputes
- *  normals, so a profile with a roof cap still renders as a single merged mesh (one InstancedMesh
- *  per profile group -- never per-language). */
+/** Concatenates position-only (optionally color-tagged) geometries into one non-indexed
+ *  BufferGeometry and recomputes normals, so a profile with a roof cap still renders as a single
+ *  merged mesh (one InstancedMesh per profile group -- never per-language). Non-indexed geometry
+ *  never shares vertices between triangles, so this is inherently facet-flat -- a box built this
+ *  way already reads as a sharp-edged cube, no separate flat-shading flag required. When every
+ *  input part carries a "color" attribute (see tagColor()), that attribute is merged too, so a
+ *  body+crown split survives into one InstancedMesh material via `vertexColors: true`. */
 function mergeGeometries(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
   const positions: number[] = [];
+  const colors: number[] = [];
+  const hasColor = parts.every((g) => g.getAttribute("color") !== undefined);
   for (const g of parts) {
     const flat = g.index ? g.toNonIndexed() : g;
     const pos = flat.getAttribute("position");
     for (let i = 0; i < pos.count; i++) positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
+    if (hasColor) {
+      const col = flat.getAttribute("color");
+      for (let i = 0; i < col.count; i++) colors.push(col.getX(i), col.getY(i), col.getZ(i));
+    }
   }
   const merged = new THREE.BufferGeometry();
   merged.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  if (hasColor) merged.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
   merged.computeVertexNormals();
   return merged;
 }
+
+/** Tags every vertex of `geo` with a uniform grayscale "color" attribute of `factor` -- multiplies
+ *  (via `vertexColors: true`) against the building's own hue/liveness/occupancy color, same as a
+ *  real roof material reading darker than the walls beneath it. Never overrides the encoded color,
+ *  only shades it -- so this adds massing detail without implying a signal the data doesn't carry. */
+function tagColor(geo: THREE.BufferGeometry, factor: number): THREE.BufferGeometry {
+  const count = geo.getAttribute("position").count;
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(count * 3).fill(factor), 3));
+  return geo;
+}
+
+/** Multiplier applied to a building's own color on its roof/crown tier -- reads as a distinct cap
+ *  material, breaking the "one flat tone" silhouette without touching the color encoding itself. */
+const CROWN_FACTOR = 0.8;
 
 /**
  * Builds a profile's unit-space geometry (roof mass baked in). Exported so
@@ -219,20 +244,30 @@ export function buildProfileGeometry(profile: StyleProfile): THREE.BufferGeometr
   const hd = HALF - inset;
 
   if (profile.roof === "flat") {
-    return boxGeometry(hw, -HALF, HALF, hd);
+    // "large flat-topped cube reading as inert" -- give flat-roof profiles (tower, storefront) a
+    // setback crown tier instead of one uninterrupted extrusion. The crown never widens beyond
+    // hw/hd (it only insets further), so the profile's own bounding box is unchanged.
+    const setback = profile.name === "tower" ? 0.05 : 0.025;
+    const fullHeight = HALF - -HALF; // = 1, spelled out so the 0.78 split reads against it
+    const crownY = -HALF + fullHeight * 0.78;
+    const body = tagColor(boxGeometry(hw, -HALF, crownY, hd), 1);
+    const crownHw = Math.max(0.04, hw - setback);
+    const crownHd = Math.max(0.04, hd - setback);
+    const crown = tagColor(boxGeometry(crownHw, crownY, HALF, crownHd), CROWN_FACTOR);
+    return mergeGeometries([body, crown]);
   }
   if (profile.roof === "stepped") {
     const bodyTop = 0.2;
-    const body = boxGeometry(hw, -HALF, bodyTop, hd);
+    const body = tagColor(boxGeometry(hw, -HALF, bodyTop, hd), 1);
     const capHw = Math.min(hw, Math.max(0.08, hw * 0.55));
     const capHd = Math.min(hd, Math.max(0.08, hd * 0.55));
-    const cap = boxGeometry(capHw, bodyTop, HALF, capHd);
+    const cap = tagColor(boxGeometry(capHw, bodyTop, HALF, capHd), CROWN_FACTOR);
     return mergeGeometries([body, cap]);
   }
   // pitched
   const bodyTop = 0.05;
-  const body = boxGeometry(hw, -HALF, bodyTop, hd);
-  const roof = pyramidGeometry(hw, hd, bodyTop, HALF);
+  const body = tagColor(boxGeometry(hw, -HALF, bodyTop, hd), 1);
+  const roof = tagColor(pyramidGeometry(hw, hd, bodyTop, HALF), CROWN_FACTOR);
   return mergeGeometries([body, roof]);
 }
 
@@ -277,9 +312,93 @@ function buildingColor(b: Building, lightnessBias: number): THREE.Color {
   return new THREE.Color().setHSL(hue, sat, light);
 }
 
-function districtColor(style: string): THREE.Color {
-  const hue = styleHue(style);
-  return new THREE.Color().setHSL(hue, 0.35, 0.16);
+// -------------------------------------------------------------------------------------------
+// District territory identity (pure, tested)
+// -------------------------------------------------------------------------------------------
+//
+// A real dogfood run (usul-mgmt + usul-mgmt-itba + usul-mgmt-frd-ops merged into one city, three
+// districts) found every district colored IDENTICALLY: the old districtColor(style) keyed purely
+// off dominant language, and all three districts share dominant language "typescript". Ground
+// tint alone also disappears under building density in a dense city, so a second, physically
+// standing cue (a boundary wall) is added below -- it still reads even when the ground fill
+// underneath is fully occluded.
+//
+// Every value here is a pure function of the district's OWN id (never array position, an
+// insertion-order counter, or the clock) -- so two renders of the same CityModel always agree,
+// and re-deriving city.json with the same district set always reproduces the same territory.
+
+const DISTRICT_HUE_STEPS = 16;
+
+export interface DistrictVisual {
+  /** Ground-plane tint. */
+  fill: THREE.Color;
+  /** Boundary-wall tint -- brighter/more saturated than `fill` so the perimeter reads even when
+   *  the ground itself is occluded by building density. */
+  edge: THREE.Color;
+  /** World-space Y the ground plane and its boundary wall sit at. Always a few units at most --
+   *  roads run at building-TOP height (see buildingCenter()), never down here, so this can never
+   *  collide with road geometry regardless of the district's own footprint. */
+  elevation: number;
+}
+
+/** Buckets `id` into one of DISTRICT_HUE_STEPS evenly-spread hues, then jitters within that
+ *  bucket's own wedge. A raw hash clusters (birthday-paradox collisions read as "same color");
+ *  bucketing first spreads the wheel wide while staying a pure function of this one id -- no
+ *  reference to any sibling district, no rank, no position. */
+function districtHue(id: string): number {
+  const bucketWidth = 1 / DISTRICT_HUE_STEPS;
+  const bucket = Math.floor(hashUnit(`${id}:district-hue-bucket`) * DISTRICT_HUE_STEPS) % DISTRICT_HUE_STEPS;
+  const jitter = (hashUnit(`${id}:district-hue-jitter`) - 0.5) * bucketWidth * 0.6;
+  return (((bucket * bucketWidth + jitter) % 1) + 1) % 1;
+}
+
+/** Ground fill / boundary-wall tint / elevation for one district -- purely a function of `d.id`.
+ *  Two districts that happen to share `style` (the real defect above) still land on different
+ *  hue buckets and different saturation/lightness, because none of it is keyed on style alone. */
+export function districtVisual(d: District): DistrictVisual {
+  const hue = districtHue(d.id);
+  const sat = 0.38 + hashUnit(`${d.id}:district-sat`) * 0.3;
+  const fillLight = 0.12 + hashUnit(`${d.id}:district-light`) * 0.1;
+  const fill = new THREE.Color().setHSL(hue, sat, fillLight);
+  const edge = new THREE.Color().setHSL(hue, Math.min(1, sat + 0.3), Math.min(0.62, fillLight + 0.36));
+  const elevation = 0.15 + hashUnit(`${d.id}:district-elevation`) * 2.6;
+  return { fill, edge, elevation };
+}
+
+/** A low perimeter wall standing at the district's own boundary -- the fix for "ground buried
+ *  under building density": a flat tint disappears once enough buildings sit on top of it, but a
+ *  wall raised above street level still peeks between them from any oblique camera angle. Sized
+ *  proportionally to the district's own footprint (never a fixed size, so a small district doesn't
+ *  get a wall taller than its own buildings) and colored/placed from districtVisual() -- nothing
+ *  here depends on how many districts there are or what order they were built in. */
+function buildDistrictBoundary(d: District, visual: DistrictVisual): THREE.Mesh {
+  const halfW = d.width / 2;
+  const halfD = d.depth / 2;
+  const minSpan = Math.min(d.width, d.depth);
+  const wallHeight = THREE.MathUtils.clamp(minSpan * 0.035, 1.5, 5);
+  const halfThick = Math.max(0.05, Math.min(minSpan * 0.0125, halfW * 0.4, halfD * 0.4));
+
+  const north = tagColor(boxGeometry(halfW, 0, wallHeight, halfThick), 1);
+  north.translate(0, 0, -(halfD - halfThick));
+  const south = tagColor(boxGeometry(halfW, 0, wallHeight, halfThick), 1);
+  south.translate(0, 0, halfD - halfThick);
+  const east = tagColor(boxGeometry(halfThick, 0, wallHeight, halfD), 1);
+  east.translate(halfW - halfThick, 0, 0);
+  const west = tagColor(boxGeometry(halfThick, 0, wallHeight, halfD), 1);
+  west.translate(-(halfW - halfThick), 0, 0);
+
+  const geometry = mergeGeometries([north, south, east, west]);
+  const material = new THREE.MeshStandardMaterial({
+    color: visual.edge,
+    roughness: 0.55,
+    metalness: 0.05,
+    emissive: visual.edge,
+    emissiveIntensity: 0.22,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(d.x + d.width / 2, visual.elevation, d.y + d.depth / 2);
+  mesh.name = `district-boundary:${d.id}`;
+  return mesh;
 }
 
 // Warm-white "lit window" target that occupancy brightening mixes toward. Per-instance color is
@@ -334,19 +453,23 @@ export function buildDistricts(city: CityModel): THREE.Group {
   group.name = "districts";
 
   for (const d of city.districts as District[]) {
+    const visual = districtVisual(d);
+
     const geo = new THREE.PlaneGeometry(d.width, d.depth);
     const mat = new THREE.MeshStandardMaterial({
-      color: districtColor(d.style),
+      color: visual.fill,
       roughness: 1,
       transparent: true,
-      opacity: 0.9,
+      opacity: 0.92,
     });
     const rect = new THREE.Mesh(geo, mat);
     rect.rotation.x = -Math.PI / 2;
-    rect.position.set(d.x + d.width / 2, 0.15, d.y + d.depth / 2);
+    rect.position.set(d.x + d.width / 2, visual.elevation, d.y + d.depth / 2);
     rect.receiveShadow = true;
     rect.name = `district:${d.id}`;
     group.add(rect);
+
+    group.add(buildDistrictBoundary(d, visual));
 
     const label = makeLabelSprite(d.name);
     label.position.set(d.x + d.width / 2, 40, d.y + d.depth / 2);
@@ -393,7 +516,14 @@ export function buildBuildings(city: CityModel): BuildingsHandle {
   for (const [profileName, list] of byProfile) {
     const profile = PROFILE_DEFS[profileName];
     const geometry = buildProfileGeometry(profile);
-    const material = new THREE.MeshStandardMaterial({ roughness: profile.roughness, metalness: profile.metalness });
+    const material = new THREE.MeshStandardMaterial({
+      roughness: profile.roughness,
+      metalness: profile.metalness,
+      // buildProfileGeometry() tags body vs. crown/roof vertices with a "color" attribute
+      // (tagColor/CROWN_FACTOR) -- this makes InstancedMesh multiply it against instanceColor,
+      // so the crown reads as a visibly distinct material tier on every instance for free.
+      vertexColors: true,
+    });
     const mesh = new THREE.InstancedMesh(geometry, material, list.length);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
