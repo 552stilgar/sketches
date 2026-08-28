@@ -16,6 +16,13 @@ interface TestBridge {
   buildingCount(): number;
   clickBuilding(id: string): void;
   overlayText(): string | null;
+  /** Roads currently receiving animated flow (resolvable-endpoint roads; V3 §5.5). */
+  animatedRoadCount(): number;
+  /** FLOW_PROVENANCE_LABEL text for this wave's traffic -- always "structural" today. */
+  flowProvenanceLabel(): string;
+  /** Current dash offset of the road at flat index `index` (see RoadsHandle.dashOffsetOf), or
+   * null if out of range. Lets a headless check assert the offset actually advances over time. */
+  roadDashOffset(index: number): number | null;
 }
 
 declare global {
@@ -53,6 +60,31 @@ function showFatalError(container: HTMLElement, message: string): void {
   container.appendChild(el);
 }
 
+// Persistent legend disclosing flow provenance (PROJECT_IDEA.md 5.5, "never fabricate flow"): a
+// viewer must never be able to read the animated roads as measured runtime traffic. Styled
+// inline rather than via index.html's stylesheet -- roads.ts/main.ts/ui.ts are this lane's only
+// owned paths, and index.html is not among them.
+function showFlowLegend(container: HTMLElement, label: string): void {
+  const el = document.createElement("div");
+  el.textContent = `Flow: ${label}`;
+  el.style.cssText = [
+    "position:absolute",
+    "left:12px",
+    "bottom:12px",
+    "z-index:10",
+    "padding:5px 10px",
+    "background:rgba(12,16,32,0.78)",
+    "border:1px solid rgba(140,170,255,0.3)",
+    "border-radius:4px",
+    "color:#9fb0e0",
+    "font-family:ui-monospace,'SFMono-Regular',monospace",
+    "font-size:11px",
+    "letter-spacing:0.02em",
+    "pointer-events:none",
+  ].join(";");
+  container.appendChild(el);
+}
+
 async function main(): Promise<void> {
   const app = document.getElementById("app");
   if (!app) throw new Error("missing #app container");
@@ -83,8 +115,9 @@ async function main(): Promise<void> {
   for (const mesh of buildingsHandle.meshes) scene.add(mesh);
   scene.add(buildingsHandle.districtGroup);
 
-  const roads = buildRoads(city, buildingsHandle.buildingCenter);
-  scene.add(roads);
+  const roadsHandle = buildRoads(city, buildingsHandle.buildingCenter);
+  scene.add(roadsHandle.group);
+  showFlowLegend(app, roadsHandle.provenanceLabel);
 
   const ui = setupUI({
     container: app,
@@ -97,9 +130,15 @@ async function main(): Promise<void> {
 
   window.addEventListener("resize", () => sceneHandle.handleResize());
 
+  // The renderer's own clock (PROJECT_IDEA.md 3.2/5.5): elapsed seconds since first frame, never
+  // read by anything upstream of this file. roadsHandle.updateFlow() is the only consumer.
+  const clockStart = performance.now();
+
   function tick(): void {
+    const elapsedSeconds = (performance.now() - clockStart) / 1000;
     controls.update();
     updateDistrictLabelFade(buildingsHandle.districtGroup, camera);
+    roadsHandle.updateFlow(elapsedSeconds);
     sceneHandle.render();
     requestAnimationFrame(tick);
   }
@@ -115,6 +154,15 @@ async function main(): Promise<void> {
     },
     overlayText(): string | null {
       return ui.overlayText();
+    },
+    animatedRoadCount(): number {
+      return roadsHandle.animatedRoadCount;
+    },
+    flowProvenanceLabel(): string {
+      return roadsHandle.provenanceLabel;
+    },
+    roadDashOffset(index: number): number | null {
+      return roadsHandle.dashOffsetOf(index);
     },
   };
 }
