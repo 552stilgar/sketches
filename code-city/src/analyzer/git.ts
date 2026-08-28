@@ -63,7 +63,13 @@ export async function readFileGitMetrics(
   try {
     const [datesText, commitsText, authorsText] = await Promise.all([
       git(repoPath, ["log", "--follow", "--reverse", "--format=%cI", "--", filePath]),
-      git(repoPath, ["log", "--format=%x1e%H%x09%cI%x09%s", "--name-only", "HEAD"]),
+      // --relative: `--name-only` normally prints paths relative to the git ROOT, never to
+      // cwd. When repoPath is a subdirectory of a larger repo (code-city analyzing itself from
+      // inside the `sketches` monorepo, for instance), those root-relative paths never match
+      // `filePath` below (repoPath-relative, from scanSourceFiles) and churn silently reads 0
+      // for every file. `--relative` (no argument) rewrites shown paths relative to cwd, which
+      // is already repoPath here — see fixtures/build-nested-fixture.mjs / tests/git-nested-repo.test.ts.
+      git(repoPath, ["log", "--relative", "--format=%x1e%H%x09%cI%x09%s", "--name-only", "HEAD"]),
       git(repoPath, ["log", "--follow", "--format=%an <%ae>", "--", filePath]),
     ]);
     const firstDate = datesText.split("\n").find(Boolean);
