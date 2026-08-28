@@ -139,3 +139,5 @@ PASS on all 7 checks (no MOCK badge, real WebGL geometry, 0 overlaps, click over
 uncaught exceptions; only console error was a benign /favicon.ico 404). Pushed to origin after that.
 Also fixed the orchestrate-task skill's assertLaneReport heuristic that nearly discarded lane B --
 structural report evidence (commit SHAs, test counts) now outranks keyword matching; lesson logged.
+
+## 2026-08-28 — (save stub; full narrative at close) code-city dogfood run on usul-qol surfaced footprint-saturation + unscaled-height bugs at real scale; vite.config.ts allowedHosts fix for tailnet dev access

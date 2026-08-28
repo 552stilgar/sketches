@@ -8,6 +8,13 @@ export default defineConfig({
   // 200 instead of a 404, silently disabling src/main.ts's mock-fallback branch in dev. 'mpa'
   // serves index.html/app assets normally but returns a real 404 for missing static files.
   appType: "mpa",
+  server: {
+    // This dev server runs on the fenrir VPS but is viewed from Usul's machines over the tailnet,
+    // so Vite's host check (DNS-rebinding protection, on by default since 5.4.12) rejects the
+    // tailnet hostname. Allowlist that one host by name — never `true`, which would disable the
+    // protection entirely and let any hostname resolving here reach the dev server.
+    allowedHosts: ["fenrir-vps.komodo-deneb.ts.net"],
+  },
   build: {
     outDir: "dist",
   },
