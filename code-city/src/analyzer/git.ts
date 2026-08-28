@@ -20,13 +20,11 @@ function countRecentTouches(logText: string, filePath: string, sinceMs: number, 
   for (const record of logText.split("\x1e")) {
     const lines = record.trim().split("\n");
     if (!lines[0]) continue;
-    const [hash, date, subject = ""] = lines[0].split("\t");
+    const [hash, date] = lines[0].split("\t");
     const commitMs = Date.parse(date);
     if (commitMs < sinceMs || commitMs > headMs) continue;
     const changedPaths = lines.slice(1).filter(Boolean);
-    const scope = subject.match(/^([^:\s]+):/)?.[1];
-    const inferredEmptyTouch = changedPaths.length === 0 && scope === filePath.split("/")[0];
-    if (changedPaths.includes(filePath) || inferredEmptyTouch) hashes.add(hash);
+    if (changedPaths.includes(filePath)) hashes.add(hash);
   }
   return hashes.size;
 }
@@ -69,7 +67,7 @@ export async function readFileGitMetrics(
       // `filePath` below (repoPath-relative, from scanSourceFiles) and churn silently reads 0
       // for every file. `--relative` (no argument) rewrites shown paths relative to cwd, which
       // is already repoPath here — see fixtures/build-nested-fixture.mjs / tests/git-nested-repo.test.ts.
-      git(repoPath, ["log", "--relative", "--format=%x1e%H%x09%cI%x09%s", "--name-only", "HEAD"]),
+      git(repoPath, ["log", "--relative", "--format=%x1e%H%x09%cI", "--name-only", "HEAD"]),
       git(repoPath, ["log", "--follow", "--format=%an <%ae>", "--", filePath]),
     ]);
     const firstDate = datesText.split("\n").find(Boolean);
