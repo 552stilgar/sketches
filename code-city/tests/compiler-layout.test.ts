@@ -3,8 +3,10 @@
 
 import { describe, it, expect } from "vitest";
 import { compileCity } from "../src/compiler/index.ts";
+import { shelfSlots } from "../src/compiler/layout.ts";
+import { footprintSide } from "../src/compiler/grammar.ts";
 import { makeFixedRepoGraph, synthesizeGraph } from "./fixtures/repo-graph-fixture.ts";
-import type { Building, District } from "../src/types.ts";
+import type { Building, District, RepoGraph, RepoNode } from "../src/types.ts";
 
 function fullyInside(b: Building, d: District): boolean {
   return b.x >= d.x && b.y >= d.y && b.x + b.width <= d.x + d.width && b.y + b.depth <= d.y + d.depth;
@@ -48,6 +50,27 @@ describe("compiler layout on G (RED — compileCity not implemented yet)", () =>
     for (const r of city.roads) {
       expect(ids.has(r.from)).toBe(true);
       expect(ids.has(r.to)).toBe(true);
+    }
+  });
+});
+
+describe("shelfSlots on thin/narrow districts (bug: fixed padding pushes buildings off-canvas)", () => {
+  it("keeps every slot coordinate within the district and within the 1000x1000 canvas for a thin district near the canvas edge", () => {
+    // District is only 5 units wide (thinner than the default padding=8) and
+    // sits flush against the right edge of a 1000x1000 canvas: any padding
+    // that isn't clamped to the district's own extent pushes slot.x past
+    // both the district boundary AND the canvas edge (995 + 8 = 1003 > 1000).
+    const district = { x: 995, y: 0, width: 5, depth: 1000 };
+    const paths = ["a.ts", "b.ts", "c.ts"];
+    const slots = shelfSlots(paths, district);
+    expect(slots.size).toBe(paths.length);
+    for (const [, slot] of slots) {
+      expect(slot.x).toBeGreaterThanOrEqual(district.x);
+      expect(slot.x).toBeGreaterThanOrEqual(0);
+      expect(slot.x + slot.width).toBeLessThanOrEqual(district.x + district.width);
+      expect(slot.x + slot.width).toBeLessThanOrEqual(1000);
+      expect(slot.y).toBeGreaterThanOrEqual(district.y);
+      expect(slot.y + slot.depth).toBeLessThanOrEqual(district.y + district.depth);
     }
   });
 });

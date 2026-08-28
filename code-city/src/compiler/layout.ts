@@ -71,22 +71,35 @@ export interface Slot extends Rect {
 
 export function shelfSlots(paths: readonly string[], district: Rect, padding = 8, gap = 4): Map<string, Slot> {
   const sorted = [...paths].sort((a, b) => a.localeCompare(b));
-  const innerWidth = Math.max(1, district.width - padding * 2);
-  const innerDepth = Math.max(1, district.depth - padding * 2);
+  // Clamp padding to a fraction of the district's own extent instead of
+  // applying it unconditionally: a fixed padding can exceed a thin/narrow
+  // district's width or depth outright, pushing every slot coordinate past
+  // the district boundary (and, near the canvas edge, past the canvas too).
+  const paddingX = Math.max(0, Math.min(padding, district.width / 4));
+  const paddingY = Math.max(0, Math.min(padding, district.depth / 4));
+  const innerWidth = Math.max(1e-6, district.width - paddingX * 2);
+  const innerDepth = Math.max(1e-6, district.depth - paddingY * 2);
   const columns = Math.max(1, Math.ceil(Math.sqrt(sorted.length * innerWidth / innerDepth)));
   const rows = Math.max(1, Math.ceil(sorted.length / columns));
   const cellWidth = innerWidth / columns;
   const cellDepth = innerDepth / rows;
   const maxSide = Math.max(0.25, Math.min(cellWidth, cellDepth) - gap);
+  // Slot width/depth are the gap-trimmed interior of the grid cell, not the
+  // raw cell — that keeps `x + width` (and `y + depth`) bounded by the
+  // district's own edge regardless of how small padding/gap end up being
+  // relative to the district, instead of relying on padding being large
+  // enough to silently absorb the gap/2 offset on the far side.
+  const cellInnerWidth = Math.max(0, cellWidth - gap);
+  const cellInnerDepth = Math.max(0, cellDepth - gap);
   const slots = new Map<string, Slot>();
   sorted.forEach((path, index) => {
     const column = index % columns;
     const row = Math.floor(index / columns);
     slots.set(path, {
-      x: district.x + padding + column * cellWidth + gap / 2,
-      y: district.y + padding + row * cellDepth + gap / 2,
-      width: cellWidth,
-      depth: cellDepth,
+      x: district.x + paddingX + column * cellWidth + gap / 2,
+      y: district.y + paddingY + row * cellDepth + gap / 2,
+      width: cellInnerWidth,
+      depth: cellInnerDepth,
       maxSide,
     });
   });
