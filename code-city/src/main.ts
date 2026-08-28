@@ -6,7 +6,7 @@
 
 import type { CityModel } from "./types.ts";
 import { validateCity } from "./types.ts";
-import { createScene } from "./renderer/scene.ts";
+import { createScene, type CameraFraming, type CityBounds } from "./renderer/scene.ts";
 import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts";
 import { buildRoads } from "./renderer/roads.ts";
 import { buildLandmarks } from "./renderer/landmarks.ts";
@@ -34,6 +34,13 @@ interface TestBridge {
    * (src/types.ts doc comment on CityModel), so this defaults a missing array to 0 rather than
    * throwing. */
   identityLinkCount(): number;
+  /** The camera framing computed for this city on load (src/renderer/scene.ts) -- bounds, orbit
+   * target, and camera world position -- so a headless check can assert the first frame is
+   * actually looking at the city's content instead of a fixed offset (measured defect,
+   * 2026-08-28: a fixed camera spawned either near-overhead-and-too-close or inside a block,
+   * depending on the city's own building-height distribution). Not recomputed on resize -- this
+   * is the load-time framing, matching SceneHandle.framing's own doc. */
+  cameraFraming(): { bounds: CityBounds; target: CameraFraming["target"]; position: CameraFraming["position"] };
 }
 
 declare global {
@@ -119,7 +126,7 @@ async function main(): Promise<void> {
 
   if (usedMock) showMockBadge(app);
 
-  const sceneHandle = createScene(app);
+  const sceneHandle = createScene(app, city);
   const { scene, camera, renderer, controls } = sceneHandle;
 
   const buildingsHandle = buildBuildings(city);
@@ -202,6 +209,13 @@ async function main(): Promise<void> {
     },
     identityLinkCount(): number {
       return city.identityLinks?.length ?? 0;
+    },
+    cameraFraming() {
+      return {
+        bounds: sceneHandle.bounds,
+        target: sceneHandle.framing.target,
+        position: sceneHandle.framing.position,
+      };
     },
   };
 }
