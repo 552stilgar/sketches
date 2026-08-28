@@ -11,6 +11,7 @@ import type { RepoGraph } from "../types.ts";
 import type { RepoNode } from "../types.ts";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
+import { hashFileContent } from "./content-hash.ts";
 import { readFileGitMetrics, readGitInfo } from "./git.ts";
 import { parseTypeScript } from "./parser.ts";
 import { scanSourceFiles } from "./scanner.ts";
@@ -80,6 +81,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       imports: parsed.imports,
       calls: parsed.calls,
       contains: [],
+      contentHash: hashFileContent(source),
     };
   });
 

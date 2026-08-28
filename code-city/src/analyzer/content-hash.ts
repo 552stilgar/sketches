@@ -12,7 +12,9 @@
 //
 // Implementation lane fills this in (V4 lane, analyzer side).
 
+import { createHash } from "node:crypto";
+
 /** Lowercase hex sha256 digest of `bytes`, exactly as given -- no normalization. */
 export function hashFileContent(bytes: Uint8Array | string): string {
-  throw new Error("NotImplemented");
+  return createHash("sha256").update(bytes).digest("hex");
 }
