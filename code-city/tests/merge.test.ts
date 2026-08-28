@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { mergeRepoGraphs } from "../src/analyzer/merge.ts";
 import { compileCity } from "../src/compiler/index.ts";
-import type { RepoGraph, RepoNode } from "../src/types.ts";
+import type { DatastoreSpec, RepoGraph, RepoNode } from "../src/types.ts";
 
 function node(id: string, imports: string[] = [], calls: string[] = []): RepoNode {
   return {
@@ -27,8 +27,14 @@ function node(id: string, imports: string[] = [], calls: string[] = []): RepoNod
   };
 }
 
-function repoGraph(nodes: RepoNode[], repoPath: string, headSha: string, headDate: string): RepoGraph {
-  return { nodes, repoPath, headSha, headDate };
+function repoGraph(
+  nodes: RepoNode[],
+  repoPath: string,
+  headSha: string,
+  headDate: string,
+  datastores?: DatastoreSpec[],
+): RepoGraph {
+  return { nodes, repoPath, headSha, headDate, ...(datastores !== undefined ? { datastores } : {}) };
 }
 
 describe("mergeRepoGraphs", () => {
@@ -169,5 +175,101 @@ describe("mergeRepoGraphs", () => {
   it("throws when a repo name contains a slash", () => {
     const repoA = repoGraph([node("a.ts")], "/repos/foo", "sha-foo", "2026-01-01T00:00:00.000Z");
     expect(() => mergeRepoGraphs([{ name: "a/b", graph: repoA }])).toThrow(/must not contain/i);
+  });
+
+  it("carries datastores through the merge, namespaced with <name>/<dir> and a recomputed id", () => {
+    const repoA = repoGraph(
+      [node("src/kernel/migrations/001.sql")],
+      "/repos/foo",
+      "sha-foo",
+      "2026-01-01T00:00:00.000Z",
+      [{ id: "datastore:src/kernel", dir: "src/kernel", tableCount: 22, migrationCount: 18 }],
+    );
+    const merged = mergeRepoGraphs([{ name: "foo", graph: repoA }]);
+    expect(merged.datastores).toEqual([
+      { id: "datastore:foo/src/kernel", dir: "foo/src/kernel", tableCount: 22, migrationCount: 18 },
+    ]);
+  });
+
+  it("namespaces a repo-root datastore (dir === \"\") to the bare repo name, no leading slash", () => {
+    const repoA = repoGraph([node("schema.sql")], "/repos/foo", "sha-foo", "2026-01-01T00:00:00.000Z", [
+      { id: "datastore:.", dir: "", tableCount: 3, migrationCount: 0 },
+    ]);
+    const merged = mergeRepoGraphs([{ name: "foo", graph: repoA }]);
+    expect(merged.datastores).toEqual([{ id: "datastore:foo", dir: "foo", tableCount: 3, migrationCount: 0 }]);
+  });
+
+  it("merges datastores across repos, sorted by (namespaced) dir, when some repos have none", () => {
+    const repoA = repoGraph([node("a.ts")], "/repos/foo", "sha-foo", "2026-01-01T00:00:00.000Z", [
+      { id: "datastore:src/kernel", dir: "src/kernel", tableCount: 22, migrationCount: 18 },
+    ]);
+    const repoB = repoGraph([node("b.ts")], "/repos/bar", "sha-bar", "2026-01-02T00:00:00.000Z");
+    const repoC = repoGraph([node("c.ts")], "/repos/baz", "sha-baz", "2026-01-03T00:00:00.000Z", [
+      { id: "datastore:vendor/kernel", dir: "vendor/kernel", tableCount: 22, migrationCount: 18 },
+    ]);
+
+    const merged = mergeRepoGraphs([
+      { name: "foo", graph: repoA },
+      { name: "bar", graph: repoB },
+      { name: "baz", graph: repoC },
+    ]);
+
+    expect(merged.datastores).toEqual([
+      { id: "datastore:baz/vendor/kernel", dir: "baz/vendor/kernel", tableCount: 22, migrationCount: 18 },
+      { id: "datastore:foo/src/kernel", dir: "foo/src/kernel", tableCount: 22, migrationCount: 18 },
+    ]);
+  });
+
+  it("leaves the merged `datastores` field absent when no input repo carried one", () => {
+    const repoA = repoGraph([node("a.ts")], "/repos/foo", "sha-foo", "2026-01-01T00:00:00.000Z");
+    const repoB = repoGraph([node("b.ts")], "/repos/bar", "sha-bar", "2026-01-02T00:00:00.000Z");
+    const merged = mergeRepoGraphs([
+      { name: "foo", graph: repoA },
+      { name: "bar", graph: repoB },
+    ]);
+    expect(merged.datastores).toBeUndefined();
+  });
+
+  it("stays deterministic with datastores present: same input -> byte-identical output", () => {
+    const repoA = repoGraph([node("a.ts")], "/repos/foo", "sha-foo", "2026-01-01T00:00:00.000Z", [
+      { id: "datastore:src/kernel", dir: "src/kernel", tableCount: 22, migrationCount: 18 },
+    ]);
+    const repoB = repoGraph([node("b.ts")], "/repos/bar", "sha-bar", "2026-01-02T00:00:00.000Z", [
+      { id: "datastore:src", dir: "src", tableCount: 3, migrationCount: 1 },
+    ]);
+    const input = [
+      { name: "foo", graph: repoA },
+      { name: "bar", graph: repoB },
+    ];
+    const out1 = JSON.stringify(mergeRepoGraphs(input));
+    const out2 = JSON.stringify(mergeRepoGraphs(input));
+    expect(out1).toBe(out2);
+  });
+
+  it("end-to-end: a merged multi-repo graph with datastores compiles to the expected landmark count", () => {
+    const repoA = repoGraph([node("src/kernel/db.ts")], "/repos/foo", "sha-foo", "2026-01-01T00:00:00.000Z", [
+      { id: "datastore:src/kernel", dir: "src/kernel", tableCount: 22, migrationCount: 18 },
+    ]);
+    const repoB = repoGraph([node("vendor/kernel/db.ts")], "/repos/bar", "sha-bar", "2026-01-02T00:00:00.000Z", [
+      { id: "datastore:vendor/kernel", dir: "vendor/kernel", tableCount: 22, migrationCount: 18 },
+    ]);
+    const repoC = repoGraph([node("src/schema.ts")], "/repos/baz", "sha-baz", "2026-01-03T00:00:00.000Z", [
+      { id: "datastore:src", dir: "src", tableCount: 4, migrationCount: 2 },
+    ]);
+
+    const merged = mergeRepoGraphs([
+      { name: "foo", graph: repoA },
+      { name: "bar", graph: repoB },
+      { name: "baz", graph: repoC },
+    ]);
+    const city = compileCity(merged);
+
+    expect(city.landmarks).toHaveLength(3);
+    expect(city.landmarks.map((l) => l.id).sort()).toEqual([
+      "datastore:bar/vendor/kernel",
+      "datastore:baz/src",
+      "datastore:foo/src/kernel",
+    ]);
+    for (const l of city.landmarks) expect(l.kind).toBe("datastore");
   });
 });

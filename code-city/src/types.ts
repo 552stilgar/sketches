@@ -38,11 +38,40 @@ export interface RepoNode {
   contentHash?: string;
 }
 
+/**
+ * One detected schema/migration-backed datastore (V4 contract D1, "Datastore detection" —
+ * docs/CONTRACT-repo-json.md). The single definition — `src/analyzer/datastores.ts` re-exports
+ * this rather than declaring a second copy that could drift from the RepoGraph field below.
+ */
+export interface DatastoreSpec {
+  /** Stable id for this datastore, derived from `dir`: `datastore:<dir>` (`datastore:.` for a
+   *  bare schema.sql sitting at the repo root, mirroring the "." root-district convention
+   *  `topLevelPath` already uses for flat top-level files -- see src/compiler/grammar.ts). */
+  id: string;
+  /** Repo-relative directory this datastore's tracked schema/migrations live under. Empty
+   *  string means the repo root (a bare `schema.sql` with no directory component). */
+  dir: string;
+  /** Table count, derived from tracked schema source (never a live .db file) -- feeds
+   *  Landmark.weight for kind "datastore" (docs/CONTRACT-city-json.md). */
+  tableCount: number;
+  /** Count of tracked `*.sql` files under a "migrations" directory for this datastore (0 if this
+   *  datastore was detected from a bare `schema.sql` instead). */
+  migrationCount: number;
+}
+
 export interface RepoGraph {
   nodes: RepoNode[];
   repoPath: string;
   headSha: string;
   headDate: string;
+  /**
+   * Datastores detected from tracked schema/migration source (V4 contract D1). Optional because
+   * this field lands ahead of the analyzer stage that fills it in — absent means NOT DETECTED,
+   * never "no datastores exist" (PROJECT_IDEA.md 5.5: constraint 2, never fabricate, applies to
+   * absence of a signal as much as to a value). `mergeRepoGraphs` must carry this field through,
+   * namespaced the same way node ids are — see CONTRACTS.md § "V4: datastores + clone identity".
+   */
+  datastores?: DatastoreSpec[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -235,6 +264,29 @@ export function validateRepoGraph(x: unknown): ValidationResult {
       errors.push(`${label}: contentHash must be a lowercase hex sha256 string when present`);
     }
   });
+
+  if (g.datastores !== undefined) {
+    if (!Array.isArray(g.datastores)) {
+      errors.push("datastores must be an array when present");
+    } else {
+      (g.datastores as unknown[]).forEach((raw, i) => {
+        if (!isPlainObject(raw)) {
+          errors.push(`datastores[${i}] must be an object`);
+          return;
+        }
+        const d = raw;
+        const label = isNonEmptyString(d.id) ? `datastore "${d.id}"` : `datastores[${i}]`;
+        if (!isNonEmptyString(d.id)) errors.push(`datastores[${i}]: missing/invalid id`);
+        if (typeof d.dir !== "string") errors.push(`${label}: dir must be a string`);
+        if (!isFiniteNumber(d.tableCount) || d.tableCount < 0 || !Number.isInteger(d.tableCount)) {
+          errors.push(`${label}: tableCount must be a non-negative integer`);
+        }
+        if (!isFiniteNumber(d.migrationCount) || d.migrationCount < 0 || !Number.isInteger(d.migrationCount)) {
+          errors.push(`${label}: migrationCount must be a non-negative integer`);
+        }
+      });
+    }
+  }
 
   return { ok: errors.length === 0, errors };
 }

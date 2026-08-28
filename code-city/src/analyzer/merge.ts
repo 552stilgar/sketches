@@ -15,8 +15,9 @@
 // PURE, same contract as compileCity: no I/O, no clock, no randomness, no dependence on Set/Map
 // iteration order. Same input graphs in the same order -> byte-identical output, always.
 
-import type { RepoGraph, RepoNode } from "../types.ts";
+import type { DatastoreSpec, RepoGraph, RepoNode } from "../types.ts";
 import { validateRepoGraph } from "../types.ts";
+import { compareCodepoints } from "../util/compare.ts";
 
 export interface NamedRepoGraph {
   name: string;
@@ -44,6 +45,19 @@ function prefixId(name: string, id: string): string {
 // (src/compiler/index.ts) handles it with no special-casing here.
 function remapEdges(name: string, ownIds: ReadonlySet<string>, edges: readonly string[]): string[] {
   return edges.map((target) => (ownIds.has(target) ? prefixId(name, target) : target));
+}
+
+// Namespaces one DatastoreSpec the same way a node's own id/path is namespaced above: prefix
+// `dir` with "<name>/" (or just the bare repo name when `dir === ""` -- a repo-root datastore
+// has no "/" to insert into, mirroring `prefixId`'s own "<name>/<id>" shape without producing a
+// trailing slash), then recompute `id` from the new `dir` using the exact same
+// `datastore:<dir-or-".">` convention `detectDatastores` (src/analyzer/datastores.ts) uses. This
+// keeps a merged datastore landing in the same district its namespaced dir now maps to
+// (compileCity's topLevelPathOfDir), same one-district-per-repo guarantee as everything else in
+// this file.
+function namespaceDatastore(name: string, spec: DatastoreSpec): DatastoreSpec {
+  const dir = spec.dir === "" ? name : prefixId(name, spec.dir);
+  return { ...spec, id: `datastore:${dir}`, dir };
 }
 
 export function mergeRepoGraphs(graphs: readonly NamedRepoGraph[]): RepoGraph {
@@ -95,7 +109,24 @@ export function mergeRepoGraphs(graphs: readonly NamedRepoGraph[]): RepoGraph {
     graphs[0].graph.headDate,
   );
 
-  const merged: RepoGraph = { nodes, repoPath, headSha, headDate };
+  // Carry datastores through the merge, namespaced the same way nodes are (see
+  // namespaceDatastore above). Only some input repos may have run datastore detection at all
+  // (`datastores` is optional on RepoGraph, absent means NOT DETECTED — never "none exist"); the
+  // merged field itself stays absent only when NONE of the inputs carried it, so "some repos
+  // have datastores, some don't" still produces a present (possibly partial) merged list rather
+  // than silently dropping back to "not detected" for the whole city.
+  const anyDatastoresField = graphs.some(({ graph }) => graph.datastores !== undefined);
+  const datastores: DatastoreSpec[] = graphs
+    .flatMap(({ name, graph }) => (graph.datastores ?? []).map((spec) => namespaceDatastore(name, spec)))
+    .sort((a, b) => compareCodepoints(a.dir, b.dir));
+
+  const merged: RepoGraph = {
+    nodes,
+    repoPath,
+    headSha,
+    headDate,
+    ...(anyDatastoresField ? { datastores } : {}),
+  };
 
   const check = validateRepoGraph(merged);
   if (!check.ok) {

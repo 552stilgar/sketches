@@ -22,18 +22,6 @@ import { scanSourceFiles } from "./scanner.ts";
 
 const execFileAsync = promisify(execFile);
 
-// V4 (CONTRACTS.md § "V4: datastores + clone identity", contract note added to types.ts
-// pending a full RepoGraph field -- see the `datastores` intersection type below): RepoGraph's
-// TS interface (src/types.ts) is frozen for this lane (five lanes run in parallel against it
-// right now), and it does not carry a `datastores` field. `detectDatastores` is pure over
-// `{path, content}[]`; to get its output from analyzeRepo to compileCity without touching
-// types.ts, analyzeRepo attaches an additional `datastores` property to the RepoGraph value it
-// returns (still valid, byte-identical JSON on disk -- repo.json is untyped once serialized),
-// and compileCity's landmark-emission section reads it back via the same intersection type.
-// This is disclosed here and in the compiler, not silent -- flagged in the lane report as a gap
-// in the frozen contract worth folding into src/types.ts properly once the V4 lanes converge.
-export type RepoGraphWithDatastores = RepoGraph & { datastores?: DatastoreSpec[] };
-
 // Finds every tracked datastore-schema candidate (`*.sql` under a `migrations/` directory, or a
 // bare `schema.sql`) WITHOUT ever touching a `.db` file -- D1's core guarantee. This walks
 // `git ls-files` (or, if the repo isn't a git work tree, a raw directory walk) for ALL tracked
@@ -167,7 +155,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
     );
   }
 
-  const graph: RepoGraphWithDatastores = {
+  const graph: RepoGraph = {
     nodes,
     repoPath: absoluteRepoPath,
     headSha: gitInfo.headSha,

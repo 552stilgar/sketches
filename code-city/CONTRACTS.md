@@ -37,13 +37,24 @@ New producer/consumer pairs:
 | Contract | Producer | Consumer |
 |---|---|---|
 | `RepoNode.contentHash` | `hashFileContent()` — `src/analyzer/content-hash.ts` | `compileCity()` (groups into `identityLinks`) |
-| datastore `Landmark`s | `detectDatastores()` — `src/analyzer/datastores.ts` | `compileCity()` (emits into `landmarks`) |
+| `RepoGraph.datastores` | `detectDatastores()` — `src/analyzer/datastores.ts`, assigned by `analyzeRepo()` | `mergeRepoGraphs()` (namespaces and carries through), `compileCity()` (emits into `landmarks`) |
 | `CityModel.identityLinks` | `compileCity()` — `src/compiler/index.ts` | `buildTethers()` — `src/renderer/tethers.ts` |
 | `CityModel.landmarks` (kind `"datastore"`) | `compileCity()` | `buildLandmarks()` — `src/renderer/landmarks.ts` |
 
 Full field shapes and validation rules: `docs/CONTRACT-repo-json.md` §§ "Clone identity / content
 hash", "Datastore detection"; `docs/CONTRACT-city-json.md` §§ "Landmarks (V4)", "Clone identity
 (V4)", and the D4 LOD-exemption paragraph under "LOD".
+
+**Fixed 2026-08-28** — `datastores` originally landed as an untyped property attached to the
+`RepoGraph` value `analyzeRepo()` returns, read back by `compileCity()` through a local
+`RepoGraph & { datastores?: DatastoreSpec[] }` intersection cast, disclosed at the time as a
+structural workaround (the frozen `RepoGraph` type had five lanes running against it in
+parallel). `mergeRepoGraphs()` was built before this V4 lane existed and constructs a fresh
+`RepoGraph` from typed fields only, so the untyped property did not survive a multi-repo merge —
+`datastores` silently vanished and every merged city rendered zero datastore landmarks, with all
+231 tests staying green throughout. `datastores?: DatastoreSpec[]` is now a real, validated field
+on `RepoGraph` (`src/types.ts`); `mergeRepoGraphs()` carries it through, namespaced the same way
+node ids are (see `docs/CONTRACT-repo-json.md` § "Multi-repo merge").
 
 Four frozen decisions (not open questions — reopen only with Usul's explicit buy-in):
 

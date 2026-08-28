@@ -9,18 +9,10 @@
 // move when one file's metrics change, no AABB overlaps, every building inside a district, every
 // road resolves to a real building id, and the LOD table (fixed, see the contract doc).
 
-import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark } from "../types.ts";
-import type { DatastoreSpec } from "../analyzer/datastores.ts";
+import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark, DatastoreSpec } from "../types.ts";
 import { dominantLanguage, footprintSide, normalizePath, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
 import { shelfSlots, squarify } from "./layout.ts";
 import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
-
-// V4 (CONTRACTS.md § "V4: datastores + clone identity"): the frozen RepoGraph type (src/types.ts)
-// has no `datastores` field -- see the matching comment in src/analyzer/index.ts, which attaches
-// this property to the RepoGraph value it returns without widening the type declared there.
-// Reading it back here via the same intersection type, rather than a plain `graph.datastores`
-// access, keeps this file's only new dependency on that gap local and greppable.
-type RepoGraphWithDatastores = RepoGraph & { datastores?: DatastoreSpec[] };
 
 // A bare directory string (no filename component) has different "first segment" semantics than
 // `topLevelPath(node)`, which is built for a full file path and treats a no-slash path as a
@@ -35,7 +27,7 @@ function topLevelPathOfDir(dir: string): string {
 }
 
 export function compileCity(graph: RepoGraph): CityModel {
-  const datastores = (graph as RepoGraphWithDatastores).datastores ?? [];
+  const datastores = graph.datastores ?? [];
   const files = graph.nodes.filter((node) => node.type === "file");
   const districtMembers = new Map<string, RepoNode[]>();
   for (const file of files) {

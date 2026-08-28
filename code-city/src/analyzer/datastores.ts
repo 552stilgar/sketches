@@ -17,22 +17,11 @@
 // tests/datastores.test.ts for the RED gate this satisfies.
 
 import { compareCodepoints } from "../util/compare.ts";
+import type { DatastoreSpec } from "../types.ts";
 
-export interface DatastoreSpec {
-  /** Stable id for this datastore, derived from `dir`: `datastore:<dir>` (`datastore:.` for a
-   *  bare schema.sql sitting at the repo root, mirroring the "." root-district convention
-   *  `topLevelPath` already uses for flat top-level files -- see src/compiler/grammar.ts). */
-  id: string;
-  /** Repo-relative directory this datastore's tracked schema/migrations live under. Empty
-   *  string means the repo root (a bare `schema.sql` with no directory component). */
-  dir: string;
-  /** Table count, derived from tracked schema source (never a live .db file) -- feeds
-   *  Landmark.weight for kind "datastore" (docs/CONTRACT-city-json.md). */
-  tableCount: number;
-  /** Count of tracked `*.sql` files under a "migrations" directory for this datastore (0 if this
-   *  datastore was detected from a bare `schema.sql` instead). */
-  migrationCount: number;
-}
+// DatastoreSpec's single definition lives in src/types.ts (RepoGraph's `datastores` field carries
+// it) -- re-exported here so existing importers of this module keep working unchanged.
+export type { DatastoreSpec };
 
 /** True when `path` is a `*.sql` file with a path segment literally named "migrations"
  *  somewhere above it (handles both `dir/migrations/x.sql` and nested `dir/migrations/y/x.sql` --

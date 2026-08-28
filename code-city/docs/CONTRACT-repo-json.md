@@ -39,6 +39,11 @@ interface RepoGraph {
   headSha: string;       // `git rev-parse HEAD` of repoPath at analysis time
   headDate: string;       // ISO-8601 — the HEAD commit's date. THIS, not wall-clock
                             // `Date.now()`, is the anchor for every age/churn computation below.
+  datastores?: DatastoreSpec[];  // V4 — see "Datastore detection" below. Optional: absent means
+                                   // NOT DETECTED, never "no datastores exist" (§5.5 constraint 2
+                                   // applies to absence of a signal as much as to a value).
+                                   // `mergeRepoGraphs` MUST carry this field through, namespaced
+                                   // the same way node ids are — see "Multi-repo merge" below.
 }
 ```
 
@@ -135,8 +140,13 @@ carry this field.
 
 - Producer: `detectDatastores(files: {path: string, content: string}[]): DatastoreSpec[]` —
   `src/analyzer/datastores.ts`
-- Consumer: the analyzer emits one `Landmark` (kind `"datastore"`) per `DatastoreSpec` into the
-  `RepoGraph` → `compileCity` → `CityModel.landmarks` (`docs/CONTRACT-city-json.md` § "Landmarks")
+- Consumer: the analyzer assigns `detectDatastores`'s output to `RepoGraph.datastores` →
+  `compileCity` emits one `Landmark` (kind `"datastore"`) per `DatastoreSpec` into
+  `CityModel.landmarks` (`docs/CONTRACT-city-json.md` § "Landmarks")
+
+`DatastoreSpec` is defined once, in `src/types.ts` (alongside `RepoGraph`, whose `datastores`
+field carries it) — `src/analyzer/datastores.ts` re-exports the same type rather than declaring a
+second copy that could drift:
 
 ```ts
 interface DatastoreSpec {
@@ -229,6 +239,21 @@ name, full stop — a repo's own internal directory structure (e.g. `src/`, `lib
 separate districts once merged; it all collapses into that one repo's district. This is the
 accepted shape of the first merged view, not a claim that intra-repo structure doesn't matter.
 
+**Datastores (V4)** are carried through the merge with the same namespacing mechanism, not a
+special case bolted on beside it: each `DatastoreSpec`'s `dir` gets the same `<name>/` prefix a
+node's `id`/`path` gets (a repo-root datastore, `dir === ""`, namespaces to the bare repo name —
+there is no `/` to insert into an empty string), and `id` is recomputed from the new `dir` using
+the same `datastore:<dir>` convention `detectDatastores` uses, so the datastore keeps landing in
+the district its namespaced `dir` now maps to. The merged `RepoGraph.datastores` field is present
+whenever **any** input repo carried one (even if another input had none, or an empty list) —
+absent only when none of the inputs did. Example, the three-repo dogfood case that motivated V4:
+
+```
+usul-mgmt/src/kernel            -> usul-mgmt/src/kernel
+usul-mgmt-itba/vendor/kernel    -> usul-mgmt-itba/vendor/kernel
+usul-heighliner-radio/src       -> usul-heighliner-radio/src   (schema.sql at repo-relative "src")
+```
+
 ## Validation
 
 `validateRepoGraph` checks: `nodes` is an array; every node has all fields above with the correct
@@ -236,7 +261,10 @@ type (`loc`/`complexity`/`churn`/`age` numeric and non-negative; `contributors`/
 `calls`/`contains` are string arrays; `type` is one of the six enum values); every node `id` is
 non-empty and unique across the graph; `repoPath`/`headSha` are non-empty strings and `headDate`
 parses as a valid date; when present, `contentHash` is a lowercase hex sha256 string (64 hex
-characters) — absent is always legal, a malformed non-hash string is a hard validation error. It
-does **not** check referential integrity of `imports`/`calls`/`contains` against other node ids,
-or validate the churn/age windowing math — those are behavioral checks, owned by
+characters) — absent is always legal, a malformed non-hash string is a hard validation error. When
+present, `datastores` is checked the same way: an array of objects each with a non-empty `id`, a
+`dir` string (empty string legal — the repo-root case), and non-negative integer `tableCount` /
+`migrationCount` — absent is always legal (V4 contract D1: absent means not detected). It does
+**not** check referential integrity of `imports`/`calls`/`contains` against other node ids, or
+validate the churn/age windowing math — those are behavioral checks, owned by
 `tests/analyzer.test.ts` and `tests/compiler-*.test.ts`, not structural schema checks.
