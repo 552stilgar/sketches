@@ -9,6 +9,8 @@ import { validateCity } from "./types.ts";
 import { createScene } from "./renderer/scene.ts";
 import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts";
 import { buildRoads } from "./renderer/roads.ts";
+import { buildLandmarks } from "./renderer/landmarks.ts";
+import { buildTethers } from "./renderer/tethers.ts";
 import { setupUI } from "./renderer/ui.ts";
 
 interface TestBridge {
@@ -23,6 +25,15 @@ interface TestBridge {
   /** Current dash offset of the road at flat index `index` (see RoadsHandle.dashOffsetOf), or
    * null if out of range. Lets a headless check assert the offset actually advances over time. */
   roadDashOffset(index: number): number | null;
+  /** city.landmarks.length -- V4 (CONTRACTS.md § "V4: datastores + clone identity"). Reads the
+   * loaded CityModel directly, same discipline as buildingCount() above: a data-level count, not
+   * "how many rendered successfully" (buildLandmarks failing under the temporary scaffolding
+   * try/catch does not change this number). */
+  landmarkCount(): number;
+  /** city.identityLinks.length -- V4. `identityLinks` is legal-absent on a pre-V4 city.json
+   * (src/types.ts doc comment on CityModel), so this defaults a missing array to 0 rather than
+   * throwing. */
+  identityLinkCount(): number;
 }
 
 declare global {
@@ -119,6 +130,28 @@ async function main(): Promise<void> {
   scene.add(roadsHandle.group);
   showFlowLegend(app, roadsHandle.provenanceLabel);
 
+  // V4 (CONTRACTS.md § "V4: datastores + clone identity"): datastore landmarks + clone-identity
+  // tethers. buildLandmarks/buildTethers are stubs (throw NotImplemented) until their
+  // implementation lane lands -- this try/catch is TEMPORARY SCAFFOLDING for exactly that
+  // window, so the app keeps running end-to-end in the meantime instead of main() throwing
+  // before the camera/roads/UI below it ever get wired. Remove the try/catch once both stubs are
+  // real; a landmark/tether build failure after that point should fail loudly like everything
+  // else in this pipeline (Failure Discipline law), not be swallowed silently.
+  try {
+    const landmarksGroup = buildLandmarks(city);
+    scene.add(landmarksGroup);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("buildLandmarks failed (expected until its V4 lane lands):", err);
+  }
+  try {
+    const tethersGroup = buildTethers(city, buildingsHandle.buildingCenter);
+    scene.add(tethersGroup);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("buildTethers failed (expected until its V4 lane lands):", err);
+  }
+
   const ui = setupUI({
     container: app,
     domElement: renderer.domElement,
@@ -163,6 +196,12 @@ async function main(): Promise<void> {
     },
     roadDashOffset(index: number): number | null {
       return roadsHandle.dashOffsetOf(index);
+    },
+    landmarkCount(): number {
+      return city.landmarks.length;
+    },
+    identityLinkCount(): number {
+      return city.identityLinks?.length ?? 0;
     },
   };
 }

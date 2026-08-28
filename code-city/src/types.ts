@@ -27,6 +27,15 @@ export interface RepoNode {
   imports: string[];
   calls: string[];
   contains: string[];
+  /**
+   * Lowercase hex sha256 of the file's raw bytes (V4 contract D3, "exact content hash only" —
+   * see CONTRACTS.md § "V4: datastores + clone identity"). Optional because this field lands
+   * ahead of the analyzer stage that fills it in (src/analyzer/content-hash.ts) — absent means
+   * NOT HASHED, never "no clones found" (PROJECT_IDEA.md 5.5: constraint 2, never fabricate,
+   * applies to absence of a signal as much as to a value). Only "file"-type nodes are expected
+   * to carry this; it is meaningless for aggregate node types.
+   */
+  contentHash?: string;
 }
 
 export interface RepoGraph {
@@ -86,7 +95,39 @@ export interface Landmark {
   id: string;
   x: number;
   y: number;
+  /**
+   * Open string by design — a landmark kind is whatever a future analyzer signal produces.
+   * V4 emits exactly one kind: "datastore", detected from tracked schema/migration source
+   * (docs/CONTRACT-repo-json.md § "Datastore detection", V4 contract D1). Any other kind string
+   * is legal shape-wise but has no defined renderer treatment yet.
+   */
   kind: string;
+  /** Display label, e.g. a datastore's directory-derived name ("auth-db"). Optional so the
+   *  field can land ahead of a producer that always fills it. */
+  label?: string;
+  /**
+   * Scale signal for the renderer, meaning defined per `kind`. For "datastore", this is TABLE
+   * COUNT — derived from tracked schema (migration files / schema.sql), never from a live .db
+   * file's size or row counts (V4 contract D1: sizing a landmark from a runtime artifact would
+   * make the city rearrange on every app restart, breaking the determinism constraint).
+   */
+  weight?: number;
+}
+
+/**
+ * A CLONE IDENTITY link (V4 contract D2/D3): a group of 2+ buildings whose source files are
+ * byte-identical (sha256 over raw content — D3, exact hash only, no near-duplicate fuzzing).
+ * This is deliberately NOT a Road: a road asserts traffic, and vendored copies carry zero
+ * traffic between them by construction — that is the entire finding an identityLink exists to
+ * show (CONTRACTS.md § "V4", D2). Renderers give identityLinks their own visual channel
+ * (src/renderer/tethers.ts) distinct from roads: elevated, static, no motion.
+ */
+export interface IdentityLink {
+  /** Lowercase hex sha256 of the shared content — the grouping key. */
+  hash: string;
+  /** Building ids that share this hash. Always 2 or more (a single match is not a clone group).
+   *  Sorted by codepoint (compareCodepoints, src/util/compare.ts) for determinism. */
+  members: string[];
 }
 
 export interface CityModel {
@@ -94,6 +135,14 @@ export interface CityModel {
   buildings: Building[];
   roads: Road[];
   landmarks: Landmark[];
+  /**
+   * Byte-identical content clusters across the whole city. `compileCity` MUST always emit this
+   * array (possibly empty) — same discipline as `Road.weight` (docs/CONTRACT-city-json.md,
+   * "Road weight"): required in this TYPE because a producer always has an answer, but
+   * `validateCity` treats a MISSING `identityLinks` key as legal on read (defaults to `[]`) so
+   * every `city.json` written before V4 still validates unchanged.
+   */
+  identityLinks: IdentityLink[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -119,6 +168,14 @@ function isStringArray(v: unknown): v is string[] {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// Lowercase hex sha256 digest -- shared shape check for RepoNode.contentHash and
+// IdentityLink.hash (V4 contract D3: exact content hash only, no other hash form accepted).
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+
+function isSha256Hex(v: unknown): v is string {
+  return typeof v === "string" && SHA256_HEX_RE.test(v);
 }
 
 export function validateRepoGraph(x: unknown): ValidationResult {
@@ -174,6 +231,9 @@ export function validateRepoGraph(x: unknown): ValidationResult {
     if (!isStringArray(n.imports)) errors.push(`${label}: imports must be a string[]`);
     if (!isStringArray(n.calls)) errors.push(`${label}: calls must be a string[]`);
     if (!isStringArray(n.contains)) errors.push(`${label}: contains must be a string[]`);
+    if (n.contentHash !== undefined && !isSha256Hex(n.contentHash)) {
+      errors.push(`${label}: contentHash must be a lowercase hex sha256 string when present`);
+    }
   });
 
   return { ok: errors.length === 0, errors };
@@ -279,7 +339,47 @@ export function validateCity(x: unknown): ValidationResult {
     if (!isNonEmptyString(l.id)) errors.push(`landmarks[${i}]: missing/invalid id`);
     if (!isFiniteNumber(l.x) || !isFiniteNumber(l.y)) errors.push(`landmarks[${i}]: x/y must be numbers`);
     if (!isNonEmptyString(l.kind)) errors.push(`landmarks[${i}]: missing/invalid kind`);
+    if (l.label !== undefined && !isNonEmptyString(l.label)) {
+      errors.push(`landmarks[${i}]: label must be a non-empty string when present`);
+    }
+    if (l.weight !== undefined && (!isFiniteNumber(l.weight) || l.weight < 0)) {
+      errors.push(`landmarks[${i}]: weight must be a non-negative number when present`);
+    }
   });
+
+  // identityLinks (V4 contract D2/D3): absent is legal on read -- every city.json written before
+  // V4 lacks this key entirely, and validateCity must keep accepting those unchanged (schema
+  // check only; compileCity's obligation to always EMIT the array, even empty, is a producer
+  // contract in src/types.ts's CityModel doc comment, not something the reader can enforce).
+  if (c.identityLinks !== undefined) {
+    if (!Array.isArray(c.identityLinks)) {
+      errors.push("identityLinks must be an array when present");
+    } else {
+      (c.identityLinks as unknown[]).forEach((raw, i) => {
+        if (!isPlainObject(raw)) {
+          errors.push(`identityLinks[${i}] must be an object`);
+          return;
+        }
+        const link = raw;
+        const label = isSha256Hex(link.hash) ? `identityLink "${link.hash}"` : `identityLinks[${i}]`;
+        if (!isSha256Hex(link.hash)) {
+          errors.push(`${label}: hash must be a lowercase hex sha256 string`);
+        }
+        if (!isStringArray(link.members)) {
+          errors.push(`${label}: members must be a string[]`);
+        } else {
+          if (link.members.length < 2) {
+            errors.push(`${label}: members must contain at least 2 building ids`);
+          }
+          for (const memberId of link.members) {
+            if (!buildingIds.has(memberId)) {
+              errors.push(`${label}: members references unknown building id "${memberId}"`);
+            }
+          }
+        }
+      });
+    }
+  }
 
   return { ok: errors.length === 0, errors };
 }

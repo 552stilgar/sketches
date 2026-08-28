@@ -1,0 +1,45 @@
+{
+  "districts": [
+    { "id": "d-utils", "name": "utils", "x": 40, "y": 40, "width": 260, "depth": 260, "style": "typescript" },
+    { "id": "d-auth", "name": "auth", "x": 360, "y": 40, "width": 260, "depth": 260, "style": "typescript" },
+    { "id": "d-payments", "name": "payments", "x": 680, "y": 40, "width": 260, "depth": 260, "style": "typescript" }
+  ],
+  "buildings": [
+    { "id": "b-logger", "x": 60, "y": 60, "width": 40, "depth": 40, "height": 5, "style": "typescript", "metrics": { "loc": 38, "complexity": 5, "churn": 1 } },
+    { "id": "b-format", "x": 120, "y": 60, "width": 36, "depth": 36, "height": 3, "style": "typescript", "metrics": { "loc": 25, "complexity": 3, "churn": 1 } },
+    { "id": "b-validate", "x": 60, "y": 120, "width": 38, "depth": 38, "height": 4, "style": "typescript", "metrics": { "loc": 27, "complexity": 4, "churn": 1 } },
+    { "id": "b-utils-index", "x": 120, "y": 120, "width": 24, "depth": 24, "height": 2, "style": "typescript", "metrics": { "loc": 12, "complexity": 2, "churn": 1 } },
+    { "id": "b-auth-types", "x": 380, "y": 60, "width": 30, "depth": 30, "height": 2, "style": "typescript", "metrics": { "loc": 17, "complexity": 2, "churn": 1 } },
+    { "id": "b-auth-tokens", "x": 430, "y": 60, "width": 38, "depth": 38, "height": 6, "style": "typescript", "metrics": { "loc": 28, "complexity": 6, "churn": 2 } },
+    { "id": "b-auth-session", "x": 380, "y": 120, "width": 44, "depth": 44, "height": 9, "style": "typescript", "metrics": { "loc": 39, "complexity": 9, "churn": 2 } },
+    { "id": "b-auth-login", "x": 450, "y": 120, "width": 38, "depth": 38, "height": 7, "style": "typescript", "metrics": { "loc": 27, "complexity": 7, "churn": 1 } },
+    { "id": "b-pay-types", "x": 700, "y": 60, "width": 32, "depth": 32, "height": 3, "style": "typescript", "metrics": { "loc": 20, "complexity": 3, "churn": 1 } },
+    { "id": "b-pay-ledger", "x": 750, "y": 60, "width": 36, "depth": 36, "height": 10, "style": "typescript", "metrics": { "loc": 25, "complexity": 10, "churn": 8 } },
+    { "id": "b-pay-charge", "x": 700, "y": 120, "width": 42, "depth": 42, "height": 14, "style": "typescript", "metrics": { "loc": 32, "complexity": 14, "churn": 9 } },
+    { "id": "b-pay-refund", "x": 760, "y": 120, "width": 40, "depth": 40, "height": 12, "style": "typescript", "metrics": { "loc": 31, "complexity": 12, "churn": 7 } }
+  ],
+  "roads": [
+    { "from": "b-auth-tokens", "to": "b-logger", "weight": 1 },
+    { "from": "b-auth-session", "to": "b-auth-tokens", "weight": 2 },
+    { "from": "b-auth-session", "to": "b-logger" },
+    { "from": "b-auth-login", "to": "b-auth-session", "weight": 1 },
+    { "from": "b-pay-ledger", "to": "b-logger", "weight": 3 },
+    { "from": "b-pay-charge", "to": "b-pay-ledger", "weight": 5 },
+    { "from": "b-pay-refund", "to": "b-pay-ledger" },
+    { "from": "b-pay-charge", "to": "b-logger", "weight": 2 }
+  ],
+  "landmarks": [
+    { "id": "landmark:auth-db", "x": 560, "y": 260, "kind": "datastore", "label": "auth-db", "weight": 4 },
+    { "id": "landmark:payments-db", "x": 880, "y": 260, "kind": "datastore", "label": "payments-db", "weight": 9 }
+  ],
+  "identityLinks": [
+    {
+      "hash": "b3f18e5c4d81d174d23a50d2b899c018af158709b1303d7613d676fb045c781e",
+      "members": ["b-auth-types", "b-logger", "b-pay-types"]
+    },
+    {
+      "hash": "a73a3aa36909c761976047907e6614490bc6adafeb3e2caec2e7e3d14fbb9e40",
+      "members": ["b-auth-tokens", "b-pay-ledger"]
+    }
+  ]
+}

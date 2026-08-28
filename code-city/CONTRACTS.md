@@ -22,6 +22,60 @@ Determinism and LOD are contractual, not implementation details — a violation 
 contract break, gated directly by `tests/compiler-determinism.test.ts` and
 `tests/compiler-layout.test.ts`, not a style nit to fix later.
 
+## V4: datastores + clone identity
+
+Motivation (dogfood run, 2026-08-28): rendering three related repos as one city produced zero
+roads between them because a shared kernel is *vendored* (copied into each consumer) rather than
+imported — 34 files exist in all three repos, 31 byte-identical. The city had no way to show
+that. Separately, a repo whose `data/` directory holds `.db` files rendered nothing for them,
+contradicting `docs/PROJECT_IDEA.md` §2's "exhaustive, not curated" promise. V4 adds two things to
+close both gaps: **datastore landmarks** and **clone-identity links**, plus a compiler LOD
+exemption so clone-bearing directories don't lose the very detail that makes them interesting.
+
+New producer/consumer pairs:
+
+| Contract | Producer | Consumer |
+|---|---|---|
+| `RepoNode.contentHash` | `hashFileContent()` — `src/analyzer/content-hash.ts` | `compileCity()` (groups into `identityLinks`) |
+| datastore `Landmark`s | `detectDatastores()` — `src/analyzer/datastores.ts` | `compileCity()` (emits into `landmarks`) |
+| `CityModel.identityLinks` | `compileCity()` — `src/compiler/index.ts` | `buildTethers()` — `src/renderer/tethers.ts` |
+| `CityModel.landmarks` (kind `"datastore"`) | `compileCity()` | `buildLandmarks()` — `src/renderer/landmarks.ts` |
+
+Full field shapes and validation rules: `docs/CONTRACT-repo-json.md` §§ "Clone identity / content
+hash", "Datastore detection"; `docs/CONTRACT-city-json.md` §§ "Landmarks (V4)", "Clone identity
+(V4)", and the D4 LOD-exemption paragraph under "LOD".
+
+Four frozen decisions (not open questions — reopen only with Usul's explicit buy-in):
+
+- **D1 — schema, never the live `.db` file.** A datastore is detected from tracked `*.sql` files
+  under a `migrations/` directory, or a bare `schema.sql` — never by opening, statting, or sizing
+  a runtime database file. Migrations are stable and git-tracked; a `.db` file grows every hour
+  the app runs, and sizing a landmark from it would rearrange the city daily, breaking the
+  determinism constraint (`PROJECT_IDEA.md` §3.2) outright.
+- **D2 — identity links are not roads.** A road means traffic; vendored copies carry zero traffic
+  by construction. Drawing a road between clones would assert flow that doesn't exist (§5.5,
+  never-fabricate). Clone identity gets its own visual channel instead: elevated, static, no
+  dashes — visibly not-a-road.
+- **D3 — exact content hash only.** sha256 over raw bytes, byte-identical or nothing. Near-
+  duplicate detection is a judgment call that would smuggle fabrication back in; that's
+  CRYSKNIFE's job (a separate VPS tool, an audit), not this project's — code-city renders
+  certainty, it does not estimate similarity.
+- **D4 — clone-aware LOD.** Past the 500-file threshold, `selectBuildingSources` normally
+  aggregates a whole directory into one building, which would leave a clone-bearing directory
+  with nothing for an `IdentityLink` to attach to — exactly what hid the vendored kernel in the
+  motivating dogfood run. A directory with any clone-participating file keeps file-level
+  granularity even past 500 files; every other directory still collapses as before.
+
+Fixture: `fixtures/mock-city-v4.json` — hand-written, `validateCity`-clean, 3 districts, 12
+buildings, 2 datastore landmarks, 2 identityLinks (a 3-building cross-district group and a
+2-building pair) — build against this ahead of the analyzer/compiler/renderer lanes that produce
+the real thing, same pattern `fixtures/mock-city.json` served for V1.
+
+RED gates (fail today, turn green as each V4 lane lands): `tests/content-hash.test.ts`,
+`tests/datastores.test.ts`, `tests/identity-links.test.ts` (compiler emission + D4 LOD exemption),
+`tests/landmarks-render.test.ts` (`buildLandmarks` + `buildTethers`). Each file's header comment
+says which lane turns it green.
+
 ## Fixtures
 
 - `fixtures/sample-project-src/` + `fixtures/build-fixture.mjs` — the 15-file, 4-directory,
@@ -32,6 +86,9 @@ contract break, gated directly by `tests/compiler-determinism.test.ts` and
   renderer lane builds against ahead of `compileCity` existing — see
   `docs/PROJECT_IDEA.md` §9.2) — a handwritten, `validateCity`-clean `CityModel`: 3 districts,
   12 buildings, 8 roads.
+- `fixtures/mock-city-v4.json` — V4's equivalent: same 3 districts / 12 buildings, plus 2
+  datastore landmarks and 2 identityLinks (a 3-building cross-district group, a 2-building pair).
+  See "V4: datastores + clone identity" below.
 
 ## Signatures (fixed — do not change without updating all three contract docs + the RED gates together)
 
@@ -40,6 +97,12 @@ analyzeRepo(repoPath: string): Promise<RepoGraph>   // src/analyzer/index.ts
 mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph  // src/analyzer/merge.ts — pure, sync
 compileCity(graph: RepoGraph): CityModel            // src/compiler/index.ts — pure, sync
 render2d(city: CityModel): string                   // src/renderer/svg.ts — pure, sync
+
+// V4 (see "V4: datastores + clone identity" above)
+hashFileContent(bytes: Uint8Array | string): string                       // src/analyzer/content-hash.ts
+detectDatastores(files: {path: string, content: string}[]): DatastoreSpec[]  // src/analyzer/datastores.ts
+buildLandmarks(city: CityModel): THREE.Group                              // src/renderer/landmarks.ts
+buildTethers(city: CityModel, buildingCenter: (id: string) => THREE.Vector3 | null): THREE.Group  // src/renderer/tethers.ts
 ```
 
 ## Status (contract lane)
