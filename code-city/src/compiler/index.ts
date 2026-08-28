@@ -10,9 +10,9 @@
 // road resolves to a real building id, and the LOD table (fixed, see the contract doc).
 
 import type { RepoGraph, CityModel, RepoNode, Road } from "../types.ts";
-import { dominantLanguage, footprintSide, selectBuildingSources, topLevelPath } from "./grammar.ts";
+import { dominantLanguage, footprintSide, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
 import { shelfSlots, squarify } from "./layout.ts";
-import { comparePathThenId } from "../util/compare.ts";
+import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
 
 export function compileCity(graph: RepoGraph): CityModel {
   const files = graph.nodes.filter((node) => node.type === "file");
@@ -23,7 +23,7 @@ export function compileCity(graph: RepoGraph): CityModel {
     members.push(file);
     districtMembers.set(path, members);
   }
-  const districtPaths = [...districtMembers.keys()].sort((a, b) => a.localeCompare(b));
+  const districtPaths = [...districtMembers.keys()].sort(compareCodepoints);
   const rectangles = squarify(
     districtPaths.map((path) => ({ path, weight: districtMembers.get(path)?.length ?? 1 })),
     { x: 0, y: 0, width: 1000, depth: 1000 },
@@ -34,6 +34,8 @@ export function compileCity(graph: RepoGraph): CityModel {
   });
 
   const sources = selectBuildingSources(graph.nodes).sort(comparePathThenId);
+  const locRef = p95(sources.map((source) => source.loc));
+  const complexityRef = p95(sources.map((source) => source.complexity));
   const sourcesByDistrict = new Map<string, typeof sources>();
   for (const source of sources) {
     const group = sourcesByDistrict.get(source.districtPath) ?? [];
@@ -48,14 +50,14 @@ export function compileCity(graph: RepoGraph): CityModel {
   const buildings = sources.map((source) => {
     const slot = slots.get(source.path);
     if (!slot) throw new Error(`No layout slot for ${source.path}`);
-    const side = footprintSide(source.loc, slot.maxSide);
+    const side = footprintSide(source.loc, slot.maxSide, locRef);
     return {
       id: source.id,
       x: slot.x,
       y: slot.y,
       width: side,
       depth: side,
-      height: Math.max(1, source.complexity),
+      height: 4 + (180 - 4) * Math.min(1, Math.sqrt(Math.max(0, source.complexity)) / Math.sqrt(complexityRef)),
       style: source.language,
       metrics: { loc: source.loc, complexity: source.complexity, churn: source.churn },
     };
@@ -68,21 +70,20 @@ export function compileCity(graph: RepoGraph): CityModel {
       buildingForNode.set(member.path, source.id);
     }
   }
-  const roadKeys = new Set<string>();
-  const roads: Road[] = [];
+  const roadsByKey = new Map<string, Road & { weight: number }>();
   for (const node of [...files].sort(comparePathThenId)) {
     const from = buildingForNode.get(node.id) ?? buildingForNode.get(node.path);
     if (!from) continue;
-    for (const target of [...node.imports].sort((a, b) => a.localeCompare(b))) {
+    for (const target of [...node.imports, ...node.calls].sort(compareCodepoints)) {
       const to = buildingForNode.get(target);
       if (!to || from === to) continue;
-      const key = `${from}\0${to}`;
-      if (!roadKeys.has(key)) {
-        roadKeys.add(key);
-        roads.push({ from, to });
-      }
+      const key = JSON.stringify([from, to]);
+      const road = roadsByKey.get(key);
+      if (road) road.weight += 1;
+      else roadsByKey.set(key, { from, to, weight: 1 });
     }
   }
-  roads.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
+  const roads: Road[] = [...roadsByKey.values()];
+  roads.sort((a, b) => compareCodepoints(a.from, b.from) || compareCodepoints(a.to, b.to));
   return { districts, buildings, roads, landmarks: [] };
 }

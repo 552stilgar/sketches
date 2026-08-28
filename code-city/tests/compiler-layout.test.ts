@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { compileCity } from "../src/compiler/index.ts";
 import { shelfSlots } from "../src/compiler/layout.ts";
-import { footprintSide } from "../src/compiler/grammar.ts";
+import { footprintSide, p95 } from "../src/compiler/grammar.ts";
 import { makeFixedRepoGraph, synthesizeGraph } from "./fixtures/repo-graph-fixture.ts";
 import type { Building, District, RepoGraph, RepoNode } from "../src/types.ts";
 
@@ -76,6 +76,12 @@ describe("shelfSlots on thin/narrow districts (bug: fixed padding pushes buildin
 });
 
 describe("footprintSide preserves the sqrt(loc) invariant (bug: clamp flattens the relationship)", () => {
+  it("uses a nearest-rank p95 without interpolation and floors the result at 1", () => {
+    expect(p95([])).toBe(1);
+    expect(p95([0, 0])).toBe(1);
+    expect(p95(Array.from({ length: 20 }, (_, i) => i + 1))).toBe(19);
+  });
+
   it("produces strictly increasing footprints for 3 files with increasing loc, even when maximum is small", () => {
     // With the old clamp (Math.min(maximum, Math.max(1, sqrt(loc)*2))), any
     // maximum < 1 forced EVERY loc to the same output (maximum itself),
@@ -97,6 +103,42 @@ describe("footprintSide preserves the sqrt(loc) invariant (bug: clamp flattens t
 
   it("never returns a non-positive side for loc=0", () => {
     expect(footprintSide(0, 20)).toBeGreaterThan(0);
+  });
+
+  it("keeps a visible footprint spread across a realistic wide LOC distribution", () => {
+    const graph = synthesizeGraph(20, 1);
+    graph.nodes.forEach((node, index) => {
+      node.loc = 1_000 * 2 ** index;
+    });
+    const widths = compileCity(graph).buildings.map((building) => building.width);
+    expect(Math.min(...widths) / Math.max(...widths)).toBeLessThan(0.6);
+  });
+});
+
+describe("compiler height normalization", () => {
+  it("bounds extreme complexity in [4, 180] while preserving complexity ordering", () => {
+    const graph = synthesizeGraph(20, 1);
+    graph.nodes.forEach((node, index) => {
+      node.complexity = index === 19 ? 1_000_000_000 : index * index;
+    });
+    const city = compileCity(graph);
+    const byComplexity = [...city.buildings].sort((a, b) => a.metrics.complexity - b.metrics.complexity);
+    const heights = byComplexity.map((building) => building.height);
+    expect(heights.every((height) => height >= 4 && height <= 180)).toBe(true);
+    expect(heights).toEqual([...heights].sort((a, b) => a - b));
+    expect(heights[0]).toBe(4);
+    expect(heights.at(-1)).toBe(180);
+  });
+
+  it("normalizes footprint and height independently", () => {
+    const graph = synthesizeGraph(2, 1);
+    graph.nodes[0].loc = 1;
+    graph.nodes[0].complexity = 10_000;
+    graph.nodes[1].loc = 10_000;
+    graph.nodes[1].complexity = 1;
+    const [smallTall, largeShort] = compileCity(graph).buildings;
+    expect(smallTall.width).toBeLessThan(largeShort.width);
+    expect(smallTall.height).toBeGreaterThan(largeShort.height);
   });
 });
 

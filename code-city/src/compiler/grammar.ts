@@ -78,19 +78,19 @@ export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSourc
     .map(([path, { districtPath, members }]) => aggregate(`directory:${path}`, path, districtPath, members));
 }
 
-// `reference` is the loc at which side ≈ maximum / sqrt(2) (~71% of the
-// slot's available space). Below it the curve is proportional to sqrt(loc)
-// (a 4x loc increase gives ~2x footprint, per the city.json contract);
-// above it side keeps rising but only asymptotically approaches maximum, so
-// large files stay distinguishable instead of all pinning to the same
-// ceiling. The floor is a fraction of `maximum` rather than a fixed
-// constant, so it degrades gracefully when maximum itself is small (as low
-// as 0.25 for tightly packed districts) instead of swallowing the whole
-// range.
-export function footprintSide(loc: number, maximum: number, reference = 200): number {
+/** Nearest-rank 95th percentile, floored at 1. Does not mutate the input. */
+export function p95(values: readonly number[]): number {
+  if (values.length === 0) return 1;
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.ceil(sorted.length * 0.95);
+  return Math.max(1, sorted[rank - 1]);
+}
+
+export function footprintSide(loc: number, maximum: number, locRef = 200): number {
   const safeLoc = Math.max(0, loc);
   const safeMax = Math.max(0, maximum);
   const floor = safeMax * 0.05;
-  const scaled = safeMax * (Math.sqrt(safeLoc) / Math.sqrt(safeLoc + reference));
+  const safeRef = Math.max(1, locRef);
+  const scaled = safeMax * (0.08 + 0.92 * Math.min(1, Math.sqrt(safeLoc) / Math.sqrt(safeRef)));
   return Math.min(safeMax, Math.max(floor, scaled));
 }
