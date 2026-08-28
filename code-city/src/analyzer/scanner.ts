@@ -60,7 +60,15 @@ async function gitFiles(repoPath: string): Promise<string[] | undefined> {
       maxBuffer: 64 * 1024 * 1024,
     });
     return stdout.split("\0").filter(Boolean);
-  } catch {
+  } catch (err) {
+    // Disclosed fallback, not a silent one (Failure Discipline LAW): repoPath genuinely isn't
+    // a git work tree (or `git ls-files` genuinely failed), so scanSourceFiles falls back to a
+    // raw filesystem walk() below — a real, workable result, just without .gitignore
+    // filtering. That's a legitimate degraded mode, but it must say so out loud rather than
+    // look identical to "this repo just has no git-tracked files".
+    console.warn(
+      `[code-city analyzer] git file listing unavailable for ${repoPath} (${(err as Error).message.split("\n")[0]}) — falling back to a raw directory walk (no .gitignore filtering)`,
+    );
     return undefined;
   }
 }

@@ -20,13 +20,36 @@ import { scanSourceFiles } from "./scanner.ts";
 // not the unsupported-language stub below.
 const PARSEABLE_LANGUAGES: ReadonlySet<string> = new Set(["typescript", "javascript"]);
 
+// Every file spawns 3 git subprocesses (readFileGitMetrics) plus one for the source read.
+// Firing all of them at once for a large repo is unbounded process fan-out; cap how many
+// files are in flight at a time with a plain worker-pool (no new dependency).
+const GIT_FANOUT_CONCURRENCY = 8;
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const i = nextIndex++;
+      results[i] = await fn(items[i]);
+    }
+  }
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
 export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
   const absoluteRepoPath = resolve(repoPath);
   const [files, gitInfo] = await Promise.all([scanSourceFiles(absoluteRepoPath), readGitInfo(absoluteRepoPath)]);
   const fileIds = new Set(files.map((file) => file.path));
   const unsupportedLanguages = new Set<string>();
 
-  const nodes = await Promise.all(files.map(async (file): Promise<RepoNode> => {
+  const nodes = await mapWithConcurrency(files, GIT_FANOUT_CONCURRENCY, async (file): Promise<RepoNode> => {
     const [source, history] = await Promise.all([
       readFile(file.absolutePath, "utf8"),
       readFileGitMetrics(absoluteRepoPath, file.path, gitInfo.headDate),
@@ -58,7 +81,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       calls: [],
       contains: [],
     };
-  }));
+  });
 
   if (unsupportedLanguages.size > 0) {
     const languages = [...unsupportedLanguages].sort().join(", ");

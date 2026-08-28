@@ -45,8 +45,14 @@ export async function readGitInfo(repoPath: string): Promise<GitInfo> {
       git(repoPath, ["log", "-1", "--format=%cI", "HEAD"]),
     ]);
     return { headSha, headDate: new Date(rawDate).toISOString() };
-  } catch {
-    return { headSha: "WORKTREE", headDate: new Date(0).toISOString() };
+  } catch (err) {
+    // Failure Discipline LAW: no swallowed exceptions. Every downstream age/churn number is
+    // anchored to headDate (see the contract's "Determinism rule" sections) — a fabricated
+    // headSha:"WORKTREE"/headDate:epoch placeholder here used to silently poison every file's
+    // metrics with confident-looking zeros instead of surfacing that repoPath isn't a readable
+    // git repo at all. Log the real cause, then rethrow.
+    console.error(`[code-city analyzer] readGitInfo failed for ${repoPath}: ${(err as Error).message}`);
+    throw err;
   }
 }
 
@@ -55,7 +61,6 @@ export async function readFileGitMetrics(
   filePath: string,
   headDate: string,
 ): Promise<FileGitMetrics> {
-  if (headDate === new Date(0).toISOString()) return { age: 0, churn: 0, contributors: [] };
   const headMs = Date.parse(headDate);
   const sinceMs = headMs - 90 * DAY_MS;
   try {
@@ -75,7 +80,14 @@ export async function readFileGitMetrics(
     const churn = countRecentTouches(commitsText, filePath, sinceMs, headMs);
     const contributors = [...new Set(authorsText.split("\n").filter(Boolean))].sort();
     return { age, churn, contributors };
-  } catch {
-    return { age: 0, churn: 0, contributors: [] };
+  } catch (err) {
+    // Failure Discipline LAW: no swallowed exceptions. A genuine git failure here (missing
+    // git binary, corrupted repo, permission error) used to come back as a confident-looking
+    // {age: 0, churn: 0, contributors: []} — indistinguishable from a real file with no
+    // history. Log the real cause, then rethrow; a file with genuinely no commits reaches the
+    // `firstDate ? ... : 0` fallback above via empty (not failed) git output, which is
+    // untouched by this change.
+    console.error(`[code-city analyzer] readFileGitMetrics failed for ${filePath} in ${repoPath}: ${(err as Error).message}`);
+    throw err;
   }
 }
