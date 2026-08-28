@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { compareCodepoints } from "../util/compare.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,7 +67,7 @@ async function gitFiles(repoPath: string): Promise<string[] | undefined> {
 
 async function walk(root: string, directory: string, result: string[]): Promise<void> {
   const entries = await readdir(directory, { withFileTypes: true });
-  entries.sort((a, b) => a.name.localeCompare(b.name));
+  entries.sort((a, b) => compareCodepoints(a.name, b.name));
   for (const entry of entries) {
     if (entry.name === ".git" || entry.name === "node_modules") continue;
     const absolutePath = join(directory, entry.name);
@@ -87,6 +88,6 @@ export async function scanSourceFiles(repoPath: string): Promise<ScannedFile[]> 
   return paths
     .map(toPosix)
     .filter(isSourceFile)
-    .sort((a, b) => a.localeCompare(b))
+    .sort(compareCodepoints)
     .map((path) => ({ absolutePath: join(root, ...path.split("/")), path, language: languageForPath(path) }));
 }
