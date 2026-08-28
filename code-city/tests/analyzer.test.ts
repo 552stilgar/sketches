@@ -67,6 +67,12 @@ describe("analyzer (RED — analyzeRepo not implemented yet)", () => {
     expect(byId.get("ui/dashboard.ts")?.imports).toContain("auth/session.ts");
   });
 
+  it("populates call edges from parsed files", () => {
+    const g = requireGraph();
+    const byId = new Map(g.nodes.map((n) => [n.id, n]));
+    expect(byId.get("ui/form.ts")?.calls).toEqual(["utils/validate.ts", "ui/button.ts"]);
+  });
+
   it("loc is within 10% of the manifest value for 3 named files", () => {
     const g = requireGraph();
     const byId = new Map(g.nodes.map((n) => [n.id, n]));

@@ -54,7 +54,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       readFile(file.absolutePath, "utf8"),
       readFileGitMetrics(absoluteRepoPath, file.path, gitInfo.headDate),
     ]);
-    let parsed: { imports: string[]; complexity: number };
+    let parsed: { imports: string[]; calls: string[]; complexity: number };
     if (PARSEABLE_LANGUAGES.has(file.language)) {
       parsed = await parseTypeScript(source, file.path, fileIds);
     } else {
@@ -62,7 +62,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       // parse, but it must not look identical to a real "no imports, complexity 1" file —
       // surface it so a reader of the logs (not just the JSON) knows it happened.
       unsupportedLanguages.add(file.language);
-      parsed = { imports: [], complexity: 1 };
+      parsed = { imports: [], calls: [], complexity: 1 };
     }
     const loc = source.length === 0 ? 0 : source.split("\n").length - (source.endsWith("\n") ? 1 : 0);
 
@@ -78,7 +78,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       age: history.age,
       contributors: history.contributors,
       imports: parsed.imports,
-      calls: [],
+      calls: parsed.calls,
       contains: [],
     };
   });
@@ -86,7 +86,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
   if (unsupportedLanguages.size > 0) {
     const languages = [...unsupportedLanguages].sort().join(", ");
     console.warn(
-      `[code-city analyzer] stubbed imports/complexity (imports=[], complexity=1) for unsupported language(s): ${languages} — real static analysis is TypeScript/JavaScript only in V1`,
+      `[code-city analyzer] stubbed imports/calls/complexity (imports=[], calls=[], complexity=1) for unsupported language(s): ${languages} — real static analysis is TypeScript/JavaScript only in V1`,
     );
   }
 

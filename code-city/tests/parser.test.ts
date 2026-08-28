@@ -29,3 +29,64 @@ describe("parseTypeScript — NodeNext '.js' specifier resolution", () => {
     expect(result.imports).toEqual([]);
   });
 });
+
+describe("parseTypeScript — call edges", () => {
+  it("resolves a call to a named imported function", async () => {
+    const files = new Set(["src/caller.ts", "src/target.ts"]);
+    const result = await parseTypeScript(
+      `import { run } from "./target.js";\nrun();\n`,
+      "src/caller.ts",
+      files,
+    );
+    expect(result.calls).toEqual(["src/target.ts"]);
+  });
+
+  it("keeps one entry for every call to the same import", async () => {
+    const files = new Set(["src/caller.ts", "src/target.ts"]);
+    const result = await parseTypeScript(
+      `import { run } from "./target";\nrun();\nrun();\nrun();\n`,
+      "src/caller.ts",
+      files,
+    );
+    expect(result.calls).toEqual(["src/target.ts", "src/target.ts", "src/target.ts"]);
+  });
+
+  it("resolves member calls rooted at a namespace import", async () => {
+    const files = new Set(["src/caller.ts", "src/target/index.ts"]);
+    const result = await parseTypeScript(
+      `import * as target from "./target";\ntarget.run();\ntarget["computed"]();\n`,
+      "src/caller.ts",
+      files,
+    );
+    expect(result.calls).toEqual(["src/target/index.ts"]);
+  });
+
+  it("drops calls to external imports and locally-defined functions", async () => {
+    const files = new Set(["src/caller.ts"]);
+    const result = await parseTypeScript(
+      `import { external } from "external-package";\nfunction local() {}\nexternal();\nlocal();\n`,
+      "src/caller.ts",
+      files,
+    );
+    expect(result.calls).toEqual([]);
+  });
+
+  it("preserves call-site source order across target files", async () => {
+    const files = new Set(["src/caller.ts", "src/a.ts", "src/b.ts"]);
+    const result = await parseTypeScript(
+      `import { a } from "./a";\nimport { b } from "./b";\nb();\na();\nb();\n`,
+      "src/caller.ts",
+      files,
+    );
+    expect(result.calls).toEqual(["src/b.ts", "src/a.ts", "src/b.ts"]);
+  });
+
+  it("returns byte-identical calls for the same input", async () => {
+    const files = new Set(["src/caller.ts", "src/target.ts"]);
+    const source = `import thing, * as target from "./target";\nthing();\ntarget.run();\n`;
+    const first = await parseTypeScript(source, "src/caller.ts", files);
+    const second = await parseTypeScript(source, "src/caller.ts", files);
+    expect(first.calls).toEqual(["src/target.ts", "src/target.ts"]);
+    expect(JSON.stringify(first.calls)).toBe(JSON.stringify(second.calls));
+  });
+});
