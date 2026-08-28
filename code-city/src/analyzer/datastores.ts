@@ -13,16 +13,18 @@
 //   - any file named `schema.sql`
 // One datastore per detected directory. `tableCount` and `migrationCount` are both derived from
 // the tracked files themselves (schema-driven), never from a runtime artifact -- see
-// docs/CONTRACT-repo-json.md § "Datastore detection" for the exact counting rules the
-// implementation lane must satisfy, and tests/datastores.test.ts for the RED gate.
-//
-// Implementation lane fills this in (V4 lane, analyzer side).
+// docs/CONTRACT-repo-json.md § "Datastore detection" for the exact counting rules and
+// tests/datastores.test.ts for the RED gate this satisfies.
+
+import { compareCodepoints } from "../util/compare.ts";
 
 export interface DatastoreSpec {
-  /** Stable id for this datastore, derived from `dir` -- see the contract doc for the exact
-   *  convention (implementation lane's call, documented there once made). */
+  /** Stable id for this datastore, derived from `dir`: `datastore:<dir>` (`datastore:.` for a
+   *  bare schema.sql sitting at the repo root, mirroring the "." root-district convention
+   *  `topLevelPath` already uses for flat top-level files -- see src/compiler/grammar.ts). */
   id: string;
-  /** Repo-relative directory this datastore's tracked schema/migrations live under. */
+  /** Repo-relative directory this datastore's tracked schema/migrations live under. Empty
+   *  string means the repo root (a bare `schema.sql` with no directory component). */
   dir: string;
   /** Table count, derived from tracked schema source (never a live .db file) -- feeds
    *  Landmark.weight for kind "datastore" (docs/CONTRACT-city-json.md). */
@@ -32,6 +34,74 @@ export interface DatastoreSpec {
   migrationCount: number;
 }
 
+/** True when `path` is a `*.sql` file with a path segment literally named "migrations"
+ *  somewhere above it (handles both `dir/migrations/x.sql` and nested `dir/migrations/y/x.sql` --
+ *  "under a directory named migrations", not just "directly inside" it). Returns the owning
+ *  directory (the path up to, not including, the "migrations" segment) alongside the match. */
+function migrationsOwner(path: string): string | undefined {
+  if (!path.toLowerCase().endsWith(".sql")) return undefined;
+  const segments = path.split("/");
+  const index = segments.indexOf("migrations");
+  if (index < 0 || index >= segments.length - 1) return undefined;
+  return segments.slice(0, index).join("/");
+}
+
+/** True when `path` is a bare `schema.sql` file (basename match, case-sensitive per the
+ *  contract's literal filename rule). Returns the owning directory (everything before the
+ *  filename; "" at repo root). */
+function schemaOwner(path: string): string | undefined {
+  const segments = path.split("/");
+  const basename = segments[segments.length - 1];
+  if (basename !== "schema.sql") return undefined;
+  return segments.slice(0, -1).join("/");
+}
+
+// Counts `CREATE TABLE` statements (case-insensitive keyword, optional `IF NOT EXISTS`) across
+// SQL source text. Deliberately does not parse or care about the table identifier itself
+// (quoted, unquoted, schema-qualified) -- only the statement count matters for `tableCount`, so
+// there is nothing about identifier quoting style that changes the result.
+const CREATE_TABLE_RE = /\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?/gi;
+
+function countCreateTableStatements(sql: string): number {
+  return [...sql.matchAll(CREATE_TABLE_RE)].length;
+}
+
+interface Group {
+  dir: string;
+  migrationSql: string[];
+  schemaSql: string[];
+  migrationCount: number;
+}
+
 export function detectDatastores(files: { path: string; content: string }[]): DatastoreSpec[] {
-  throw new Error("NotImplemented");
+  const groups = new Map<string, Group>();
+
+  for (const file of files) {
+    const migrationDir = migrationsOwner(file.path);
+    if (migrationDir !== undefined) {
+      const group = groups.get(migrationDir) ?? { dir: migrationDir, migrationSql: [], schemaSql: [], migrationCount: 0 };
+      group.migrationSql.push(file.content);
+      group.migrationCount += 1;
+      groups.set(migrationDir, group);
+      continue;
+    }
+    const schemaDir = schemaOwner(file.path);
+    if (schemaDir !== undefined) {
+      const group = groups.get(schemaDir) ?? { dir: schemaDir, migrationSql: [], schemaSql: [], migrationCount: 0 };
+      group.schemaSql.push(file.content);
+      groups.set(schemaDir, group);
+    }
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      const tableCount = countCreateTableStatements([...group.migrationSql, ...group.schemaSql].join("\n"));
+      return {
+        id: `datastore:${group.dir === "" ? "." : group.dir}`,
+        dir: group.dir,
+        tableCount,
+        migrationCount: group.migrationCount,
+      };
+    })
+    .sort((a, b) => compareCodepoints(a.dir, b.dir));
 }
