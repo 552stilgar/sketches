@@ -24,12 +24,28 @@ async function typescriptParser(): Promise<Parser> {
   return parserPromise;
 }
 
+// NodeNext extension remap: the correct way to import a .ts module under
+// "moduleResolution": "NodeNext" is to write the specifier with its eventual-output .js
+// extension (e.g. `import "./foo.js"` for a source file that is actually `foo.ts`). Map each
+// such extension to the real TS source extension it should ALSO be tried against, in addition
+// to the literal specifier itself.
+const NODENEXT_JS_TO_TS: Readonly<Record<string, string>> = {
+  ".js": ".ts",
+  ".mjs": ".mts",
+  ".cjs": ".cts",
+};
+
 function resolveImport(fromPath: string, specifier: string, files: ReadonlySet<string>): string | undefined {
   if (!specifier.startsWith(".")) return undefined;
   const base = posix.normalize(posix.join(posix.dirname(fromPath), specifier));
-  const candidates = extname(base)
-    ? [base]
-    : [base, `${base}.ts`, `${base}.tsx`, `${base}.mts`, `${base}.cts`, posix.join(base, "index.ts"), posix.join(base, "index.tsx")];
+  const ext = extname(base);
+  let candidates: string[];
+  if (!ext) {
+    candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}.mts`, `${base}.cts`, posix.join(base, "index.ts"), posix.join(base, "index.tsx")];
+  } else {
+    const tsExt = NODENEXT_JS_TO_TS[ext];
+    candidates = tsExt ? [base, `${base.slice(0, -ext.length)}${tsExt}`] : [base];
+  }
   return candidates.find((candidate) => files.has(candidate));
 }
 

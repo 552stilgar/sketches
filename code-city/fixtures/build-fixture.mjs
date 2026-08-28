@@ -3,10 +3,14 @@
 // then git-inits it with 6 fixed-date, fixed-author commits (commits 4-6
 // repeatedly touch payments/ to simulate a churn hotspot).
 //
+// Commits 5 and 6 mutate real file content in-place (same line count, so LOC stays matched
+// to fixtures/MANIFEST.md) rather than using --allow-empty — churn must come from real git
+// diffs, never from a fixture that fakes history the analyzer then has to infer around.
+//
 // Usage: node fixtures/build-fixture.mjs <target-dir>
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -26,7 +30,7 @@ function git(target, args, env) {
 
 function commit(target, { message, date, files }) {
   git(target, ["add", ...files]);
-  git(target, ["commit", "-m", message, "--allow-empty"], {
+  git(target, ["commit", "-m", message], {
     GIT_AUTHOR_NAME: AUTHOR_NAME,
     GIT_AUTHOR_EMAIL: AUTHOR_EMAIL,
     GIT_AUTHOR_DATE: date,
@@ -34,6 +38,18 @@ function commit(target, { message, date, files }) {
     GIT_COMMITTER_EMAIL: AUTHOR_EMAIL,
     GIT_COMMITTER_DATE: date,
   });
+}
+
+// In-place, same-line-count content edit — a real diff without changing wc -l, so
+// fixtures/MANIFEST.md's LOC figures (and the analyzer.test.ts assertions derived from them)
+// stay valid across the "rework" commits.
+function mutateLine(target, relPath, from, to) {
+  const filePath = join(target, relPath);
+  const content = readFileSync(filePath, "utf8");
+  if (!content.includes(from)) {
+    throw new Error(`fixture mutation failed: "${from}" not found in ${relPath}`);
+  }
+  writeFileSync(filePath, content.replace(from, to));
 }
 
 function main() {
@@ -89,11 +105,21 @@ function main() {
     files: ["payments/types.ts", "payments/ledger.ts", "payments/charge.ts"],
   });
 
+  // refund.ts is new (real add); ledger.ts already exists from commit 4, so mutate a log
+  // message in place (same line count) to produce a real diff instead of a no-op re-add.
+  mutateLine(target, "payments/ledger.ts", "recorded ${entry.type} ${entry.id}", "recorded entry ${entry.type}/${entry.id}");
+
   commit(target, {
     message: "payments: add refund flow",
     date: DATES[4],
     files: ["payments/refund.ts", "payments/ledger.ts"],
   });
+
+  // All three already exist by now — mutate each in place (same line count) so this "rework"
+  // commit carries a real diff for every file it claims to touch.
+  mutateLine(target, "payments/ledger.ts", "recorded entry ${entry.type}/${entry.id}", "recorded entry ${entry.type} #${entry.id}");
+  mutateLine(target, "payments/charge.ts", "created charge ${charge.id}", "charge created: ${charge.id}");
+  mutateLine(target, "payments/refund.ts", "refund ${refund.id} for charge ${chargeId}", "refund issued ${refund.id} for charge ${chargeId}");
 
   commit(target, {
     message: "payments: rework ledger and charge handling",

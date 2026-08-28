@@ -69,9 +69,10 @@ top-of-tree entry-point-shaped file.
 
 ## Commit plan (`fixtures/build-fixture.mjs`)
 
-Fixed author/committer: `Fixture Bot <fixture@example.com>`. All commits use
-`--allow-empty` (payments commits 4-6 repeatedly touch the same files without always
-changing byte content, which would otherwise produce nothing to commit).
+Fixed author/committer: `Fixture Bot <fixture@example.com>`. Every commit is a real, non-empty
+diff — commits 5 and 6 mutate an existing log-message string in place (same line count, so
+LOC stays matched to the table above) in the payments files they claim to touch, rather than
+re-adding unchanged content or using `--allow-empty`.
 
 | # | Date (UTC) | Message | Files touched |
 |---|---|---|---|
