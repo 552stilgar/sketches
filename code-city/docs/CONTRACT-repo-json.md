@@ -63,6 +63,33 @@ fixture — and `tests/analyzer.test.ts` asserts exactly that). External/bare-sp
 (`import "three"`) are NOT edges into this graph — there is no external-package node type in V1,
 leave them out of `imports[]`.
 
+## Call edges
+
+`calls[]` holds one entry per **call site whose callee resolves to a known file in the scan set**,
+expressed in the same id space as `imports[]` (a resolved repo-relative file path). It is the
+finer-grained sibling of `imports[]`: imports say two files are connected, calls say how much
+traffic that connection actually carries (`PROJECT_IDEA.md` §5.5 → `Road.weight`).
+
+Rules, all load-bearing:
+
+- **Duplicates are kept, and they are the signal.** Ten calls into the same target file produce
+  ten entries. Do not deduplicate — `compileCity` counts occurrences to weight roads.
+- **Order is source order** (first appearance to last, as traversed). Stable for a fixed input,
+  which is what `repo.json` byte-determinism requires.
+- **Never fabricate an edge.** A call site whose callee cannot be resolved to a file in the scan
+  set — dynamic dispatch, a computed member, a bare-specifier/external package, a local or
+  built-in — is **dropped**. It is not guessed at by name, not attributed to a plausible target,
+  and not inferred from an identifier match. An unresolvable call contributes nothing.
+
+  This is not a style preference. A churn heuristic that invented data from commit-message
+  prefixes was written, shipped, and had to be deleted (`318773d`); §5.5 restates the rule for
+  traffic specifically. **A module with no resolvable calls must be distinguishable from a module
+  nobody analyzed** — dark-because-nobody-looked is not dark-because-nothing-runs.
+- Resolution reuses the existing import resolver's semantics (relative specifiers, NodeNext
+  `.js`→`.ts` extension remap, `index.ts` directory resolution) so `calls[]` and `imports[]`
+  cannot drift into two different notions of "the same file".
+- An empty `calls[]` is always valid: it means no call site resolved, never that the file is idle.
+
 ## Determinism rule: churn
 
 `churn` = the count of commits touching this file in the **90 days before the repo's HEAD commit

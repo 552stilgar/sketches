@@ -28,7 +28,10 @@ interface Building {
   metrics: { loc: number; complexity: number; churn: number };
 }
 
-interface Road { from: string; to: string; }  // building ids
+interface Road {
+  from: string; to: string;   // building ids
+  weight?: number;            // structural edge multiplicity, integer >= 1 — see "Road weight"
+}
 
 interface Landmark { id: string; x: number; y: number; kind: string; }  // [] is valid — Phase 2
                                                                           // does not require any
@@ -53,8 +56,60 @@ Fixed `1000 x 1000` coordinate space. `x`/`y` are the **top-left corner** of a r
   ~2x the footprint dimension, not 4x (`docs/PROJECT_IDEA.md` §3.2, §4.1). The scale constant is
   the compiler's choice; what's contractual is the `sqrt` relationship, applied identically to
   every building so relative sizes stay meaningful across a whole city.
-- **Height**: `height = max(1, complexity)`.
+
+  **Scale reference is the city's own distribution, not a fixed constant** (ratified 2026-08-28,
+  after a dogfood run on `usul-qol` produced a district of near-identical footprints). The
+  saturating form `sqrt(loc)/sqrt(loc + 200)` flattens toward `maximum` for every building once
+  loc is large relative to the constant — which is the normal case at directory-aggregate LOD.
+  Instead:
+
+  ```
+  locRef = p95(loc over all building sources in this city, nearest-rank), floored at 1
+  side   = clamp(maximum * (0.08 + 0.92 * min(1, sqrt(loc) / sqrt(locRef))), floor, maximum)
+  ```
+
+  Below `locRef` this is exactly proportional to `sqrt(loc)` (the contractual relationship, now
+  actually observable); the top 5% clamp at `maximum` so a single outlier cannot compress the
+  rest of the city into one bucket. `p95` is **nearest-rank on a sorted array** — no
+  interpolation, no ties ambiguity — so the function stays a pure, byte-deterministic function
+  of the graph. Degenerate cities (one building; every loc equal) are well-defined: every
+  building lands at `maximum`.
+
+- **Height**: bounded band, normalized the same way — raw complexity is NOT a world-space
+  dimension (ratified 2026-08-28: the same dogfood run produced a height of 2961 inside a
+  1000-wide canvas, which reads as a spike, not a skyline).
+
+  ```
+  cRef   = p95(complexity over all building sources, nearest-rank), floored at 1
+  height = HEIGHT_MIN + (HEIGHT_MAX - HEIGHT_MIN) * min(1, sqrt(complexity) / sqrt(cRef))
+  HEIGHT_MIN = 4, HEIGHT_MAX = 180
+  ```
+
+  Footprint and height are normalized **independently**, which is what preserves the diagnostic
+  reading the whole metaphor rests on (`§4.1`): small footprint + tall = little code doing too
+  much; large + short = lots of straightforward code; large + tall = the monster.
+
 - **District**: one district per top-level directory (see LOD below).
+
+## Road weight (fixed — do not redesign)
+
+Roads are **not** a deduplicated adjacency set. Each `Road` carries `weight`: the number of
+`(source node, resolved target)` pairs that route along that `(from, to)` building pair, counting
+`imports[]` and `calls[]` entries alike, one per occurrence.
+
+- At file LOD, `A imports B` once ⇒ `weight: 1`. At directory LOD, a building aggregating seven
+  files that each import into the same target building ⇒ `weight: 7`.
+- Duplicate entries within one node's `imports[]`/`calls[]` each count. Multiplicity IS the
+  signal — that is the whole point of the field (`PROJECT_IDEA.md` §5.5, structural traffic tier).
+- Self-edges (`from === to`) are still dropped, as before.
+- `weight` is an integer `>= 1`. A road with weight 0 is not a road; it must be absent.
+- The compiler **MUST** emit it. It is optional in `types.ts` only so the field could land ahead
+  of the compiler that fills it; a renderer reading `city.json` treats a missing weight as `1`
+  (an *unweighted* road), never as zero traffic.
+
+The compiler emits weights; the **renderer** owns anything animated from them. `compileCity` stays
+a pure function with no clock and no randomness — no frame timing, pulse rate, or dash offset ever
+appears in `city.json` (`PROJECT_IDEA.md` §5.5, determinism constraint).
 
 ## Layout algorithm (fixed — do not redesign)
 

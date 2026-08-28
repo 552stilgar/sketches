@@ -70,6 +70,16 @@ export interface Building {
 export interface Road {
   from: string;
   to: string;
+  /**
+   * Structural edge multiplicity: how many (source node, resolved target) pairs across this
+   * road's endpoints route along it, counting `imports[]` and `calls[]` alike. Integer >= 1.
+   *
+   * Optional in the TYPE so the field can land ahead of the compiler that emits it, but the
+   * compiler MUST emit it (docs/CONTRACT-city-json.md, "Road weight"). Renderers treat a
+   * missing weight as 1 — an unweighted road, never a zero-traffic one (PROJECT_IDEA §5.5:
+   * unmeasured must never render as quiet).
+   */
+  weight?: number;
 }
 
 export interface Landmark {
@@ -254,6 +264,9 @@ export function validateCity(x: unknown): ValidationResult {
       errors.push(`roads[${i}]: missing/invalid to`);
     } else if (!buildingIds.has(r.to)) {
       errors.push(`roads[${i}]: to references unknown building id "${r.to}"`);
+    }
+    if (r.weight !== undefined && (!isFiniteNumber(r.weight) || !Number.isInteger(r.weight) || r.weight < 1)) {
+      errors.push(`roads[${i}]: weight must be an integer >= 1 when present`);
     }
   });
 
