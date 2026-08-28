@@ -138,26 +138,12 @@ async function main(): Promise<void> {
   showFlowLegend(app, roadsHandle.provenanceLabel);
 
   // V4 (CONTRACTS.md § "V4: datastores + clone identity"): datastore landmarks + clone-identity
-  // tethers. buildLandmarks/buildTethers are stubs (throw NotImplemented) until their
-  // implementation lane lands -- this try/catch is TEMPORARY SCAFFOLDING for exactly that
-  // window, so the app keeps running end-to-end in the meantime instead of main() throwing
-  // before the camera/roads/UI below it ever get wired. Remove the try/catch once both stubs are
-  // real; a landmark/tether build failure after that point should fail loudly like everything
-  // else in this pipeline (Failure Discipline law), not be swallowed silently.
-  try {
-    const landmarksGroup = buildLandmarks(city);
-    scene.add(landmarksGroup);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("buildLandmarks failed (expected until its V4 lane lands):", err);
-  }
-  try {
-    const tethersGroup = buildTethers(city, buildingsHandle.buildingCenter);
-    scene.add(tethersGroup);
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.error("buildTethers failed (expected until its V4 lane lands):", err);
-  }
+  // tethers. These were stubs behind a temporary try/catch while their implementation lanes were
+  // in flight; both landed, so the guard is gone -- a landmark or tether build failure now fails
+  // loudly like every other stage in this pipeline (Failure Discipline law) instead of being
+  // swallowed into a console line.
+  scene.add(buildLandmarks(city));
+  scene.add(buildTethers(city, buildingsHandle.buildingCenter));
 
   const ui = setupUI({
     container: app,
