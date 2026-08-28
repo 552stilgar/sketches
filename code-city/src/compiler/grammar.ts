@@ -55,34 +55,26 @@ export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSourc
     }));
   }
 
-  const explicitDirectories = nodes
-    .filter((node) => node.type === "package" || node.type === "module")
-    .filter((node) => normalizePath(node.path).split("/").length === 2)
-    .sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id));
-
-  if (explicitDirectories.length > 0) {
-    return explicitDirectories.map((directory) => {
-      const directoryPath = normalizePath(directory.path);
-      const members = files.filter((file) => {
-        const filePath = normalizePath(file.path);
-        return filePath === directoryPath || filePath.startsWith(`${directoryPath}/`);
-      });
-      return aggregate(directory.id, directoryPath, topLevelPath(directory), members.length > 0 ? members : [directory]);
-    });
-  }
-
-  const groups = new Map<string, RepoNode[]>();
+  // Aggregate into one building per top-level directory (or per
+  // second-level directory when a top-level dir nests deeper), so building
+  // count stays well below file count. Flat top-level files (no directory
+  // at all, districtPath === ".") have no directory to roll up into --
+  // grouping them by their own path instead of collapsing them all onto a
+  // shared "." key keeps a repo's top-level files distinguishable instead
+  // of erasing every one of them into a single building.
+  const groups = new Map<string, { districtPath: string; members: RepoNode[] }>();
   for (const file of files) {
+    const filePath = normalizePath(file.path);
     const district = topLevelPath(file);
-    const parts = normalizePath(file.path).split("/");
-    const path = parts.length > 2 ? `${parts[0]}/${parts[1]}` : district;
-    const group = groups.get(path) ?? [];
-    group.push(file);
+    const parts = filePath.split("/");
+    const path = district === "." ? filePath : parts.length > 2 ? `${parts[0]}/${parts[1]}` : district;
+    const group = groups.get(path) ?? { districtPath: district, members: [] };
+    group.members.push(file);
     groups.set(path, group);
   }
   return [...groups]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([path, members]) => aggregate(`directory:${path}`, path, path.split("/")[0] ?? ".", members));
+    .map(([path, { districtPath, members }]) => aggregate(`directory:${path}`, path, districtPath, members));
 }
 
 // `reference` is the loc at which side ≈ maximum / sqrt(2) (~71% of the

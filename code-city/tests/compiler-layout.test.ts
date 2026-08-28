@@ -120,4 +120,41 @@ describe("compiler LOD (RED — compileCity not implemented yet)", () => {
     expect(city.buildings.length).toBeGreaterThan(0);
     expect(city.buildings.length).toBeLessThan(800);
   });
+
+  it(">500 files, genuinely flat repo (no subdirectories at all) -> does NOT collapse to 1 building", () => {
+    // Every existing >500-files fixture nests each file one directory deep,
+    // so it never exercises the flat-repo grouping path. A repo with many
+    // top-level files and zero subdirectories has topLevelPath === "." for
+    // every file, and the old fallback grouping used "." as the group key
+    // for all of them -- collapsing 600 distinct files into exactly one
+    // building.
+    const nodes: RepoNode[] = [];
+    for (let i = 0; i < 600; i++) {
+      const id = `file${i}.ts`;
+      nodes.push({
+        id,
+        type: "file",
+        language: "typescript",
+        name: id,
+        path: id,
+        loc: 20 + (i % 50),
+        complexity: 1 + (i % 10),
+        churn: i % 5,
+        age: 30 + i,
+        contributors: ["dev@example.com"],
+        imports: [],
+        calls: [],
+        contains: [],
+      });
+    }
+    const g: RepoGraph = {
+      nodes,
+      repoPath: "/fixtures/synth-flat-600",
+      headSha: "0000000000000000000000000000000000flat",
+      headDate: "2026-06-01T12:00:00.000Z",
+    };
+    const city = compileCity(g);
+    expect(city.buildings.length).toBeGreaterThan(1);
+    expect(city.buildings.length).toBeLessThanOrEqual(600);
+  });
 });
