@@ -75,6 +75,31 @@ describe("shelfSlots on thin/narrow districts (bug: fixed padding pushes buildin
   });
 });
 
+describe("footprintSide preserves the sqrt(loc) invariant (bug: clamp flattens the relationship)", () => {
+  it("produces strictly increasing footprints for 3 files with increasing loc, even when maximum is small", () => {
+    // With the old clamp (Math.min(maximum, Math.max(1, sqrt(loc)*2))), any
+    // maximum < 1 forced EVERY loc to the same output (maximum itself),
+    // since the floor of 1 always won the inner max() and then got clamped
+    // down to maximum regardless of loc. maxSide can legitimately be this
+    // small (shelfSlots floors it at 0.25 for tightly packed districts).
+    const maximum = 0.6;
+    const sideSmall = footprintSide(5, maximum);
+    const sideMedium = footprintSide(60, maximum);
+    const sideLarge = footprintSide(600, maximum);
+    expect(sideSmall).toBeLessThan(sideMedium);
+    expect(sideMedium).toBeLessThan(sideLarge);
+    expect(sideLarge).toBeLessThanOrEqual(maximum);
+  });
+
+  it("still respects the maximum ceiling for very large loc", () => {
+    expect(footprintSide(10_000_000, 20)).toBeLessThanOrEqual(20);
+  });
+
+  it("never returns a non-positive side for loc=0", () => {
+    expect(footprintSide(0, 20)).toBeGreaterThan(0);
+  });
+});
+
 describe("compiler LOD (RED — compileCity not implemented yet)", () => {
   it("<50 files -> buildings = files, 1:1 (30 files -> exactly 30 buildings)", () => {
     const g = synthesizeGraph(30, 4);

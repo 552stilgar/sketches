@@ -85,6 +85,19 @@ export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSourc
     .map(([path, members]) => aggregate(`directory:${path}`, path, path.split("/")[0] ?? ".", members));
 }
 
-export function footprintSide(loc: number, maximum: number): number {
-  return Math.min(maximum, Math.max(1, Math.sqrt(Math.max(0, loc)) * 2));
+// `reference` is the loc at which side ≈ maximum / sqrt(2) (~71% of the
+// slot's available space). Below it the curve is proportional to sqrt(loc)
+// (a 4x loc increase gives ~2x footprint, per the city.json contract);
+// above it side keeps rising but only asymptotically approaches maximum, so
+// large files stay distinguishable instead of all pinning to the same
+// ceiling. The floor is a fraction of `maximum` rather than a fixed
+// constant, so it degrades gracefully when maximum itself is small (as low
+// as 0.25 for tightly packed districts) instead of swallowing the whole
+// range.
+export function footprintSide(loc: number, maximum: number, reference = 200): number {
+  const safeLoc = Math.max(0, loc);
+  const safeMax = Math.max(0, maximum);
+  const floor = safeMax * 0.05;
+  const scaled = safeMax * (Math.sqrt(safeLoc) / Math.sqrt(safeLoc + reference));
+  return Math.min(safeMax, Math.max(floor, scaled));
 }
