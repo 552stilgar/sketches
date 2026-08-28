@@ -141,3 +141,5 @@ Also fixed the orchestrate-task skill's assertLaneReport heuristic that nearly d
 structural report evidence (commit SHAs, test counts) now outranks keyword matching; lesson logged.
 
 ## 2026-08-28 — (save stub; full narrative at close) code-city dogfood run on usul-qol surfaced footprint-saturation + unscaled-height bugs at real scale; vite.config.ts allowedHosts fix for tailnet dev access
+
+## 2026-08-28 — (save stub; full narrative at close) code-city vision pass: liveness/traffic added as PROJECT_IDEA §5.5 (3 tiers + determinism/no-fabrication constraints); V2 legibility / V3 lenses / V4 time roadmap proposed; two localeCompare byte-determinism survivors queued

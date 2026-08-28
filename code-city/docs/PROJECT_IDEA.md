@@ -233,6 +233,46 @@ Don't insist `1 file = 1 building` for every repo.
 
 Otherwise a big monorepo becomes São Paulo rendered one brick at a time.
 
+### 5.5 Liveness & Traffic
+
+A city with no movement is a model of a city. Dependencies and calls are not just topology — they
+are **flow**, and rendering them as flow is what separates an explorable city from a bar chart in
+3D. Roads should carry visible traffic whose intensity encodes how much actually moves along that
+edge; buildings should look occupied in proportion to how much of the system routes through them.
+
+**Three sources of "traffic," deliberately kept distinct:**
+
+| Tier | Source | Available | Means |
+|------|--------|-----------|-------|
+| **Structural** | `imports[]` / `calls[]` edge multiplicity, fan-in, betweenness | now (imports); `calls[]` unpopulated | "how much of the codebase routes through here" |
+| **Historical** | Git co-change coupling, churn | now | "how much *developer* traffic this edge sees" |
+| **Measured** | OTel traces, profiler samples, log volume, via an optional `traffic.json` sidecar | future | "what actually executed, how often, how slow" |
+
+**Rendering vocabulary:**
+- **Road tiering** — footpath / street / arterial / highway by edge weight. Static, and on its own
+  makes the graph legible without a single animated pixel.
+- **Animated flow** — particles or an offset dash travelling the edge, rate ∝ weight. Direction
+  defaults to **data flow** (`A imports B` ⇒ animate B→A: results flowing up out of the leaves
+  toward entry points), not control flow. Cheap to implement as a scrolling texture offset.
+- **Occupancy** — building facade emissive density ∝ fan-in. Hubs glow; leaves are dim.
+- **Interchanges** — high-betweenness nodes render as stations/gates (§4.1 "API endpoint = city gate").
+- **Dead code** — zero fan-in falls straight out of this: unlit, no traffic, abandoned.
+
+**Constraint — determinism is not negotiable (§3.2).** The compiler emits *weights*; the renderer
+owns *animation*. `compileCity` stays a pure function with no clock and no randomness — pulse rate,
+particle density, and dash offset are all renderer-side functions of a static number. A frame timing
+must never appear in `city.json`.
+
+**Constraint — never fabricate flow.** Structurally-derived traffic and measured runtime traffic
+must be distinguishable (by lens name at minimum). A module with no runtime data renders as
+**unmeasured**, not as **quiet** — dark-because-nobody-looked is not dark-because-nothing-runs.
+Prior art for why this rule exists: a churn heuristic that invented data from commit-message
+prefixes was written, shipped, and had to be deleted (`318773d`).
+
+**Known gaps blocking this:** `calls[]` is declared and validated in `types.ts` but the analyzer
+never populates it. `Road` is `{from, to}` with no weight, and `compiler/index.ts` dedupes edges
+through a `Set`, discarding multiplicity at compile time — both are `city.json` contract changes.
+
 ---
 
 ## 6. Differentiation: Code City vs. CodeTerrain
