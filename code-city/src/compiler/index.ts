@@ -9,12 +9,33 @@
 // move when one file's metrics change, no AABB overlaps, every building inside a district, every
 // road resolves to a real building id, and the LOD table (fixed, see the contract doc).
 
-import type { RepoGraph, CityModel, RepoNode, Road } from "../types.ts";
-import { dominantLanguage, footprintSide, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
+import type { RepoGraph, CityModel, RepoNode, Road, Landmark } from "../types.ts";
+import type { DatastoreSpec } from "../analyzer/datastores.ts";
+import { dominantLanguage, footprintSide, normalizePath, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
 import { shelfSlots, squarify } from "./layout.ts";
 import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
 
+// V4 (CONTRACTS.md § "V4: datastores + clone identity"): the frozen RepoGraph type (src/types.ts)
+// has no `datastores` field -- see the matching comment in src/analyzer/index.ts, which attaches
+// this property to the RepoGraph value it returns without widening the type declared there.
+// Reading it back here via the same intersection type, rather than a plain `graph.datastores`
+// access, keeps this file's only new dependency on that gap local and greppable.
+type RepoGraphWithDatastores = RepoGraph & { datastores?: DatastoreSpec[] };
+
+// A bare directory string (no filename component) has different "first segment" semantics than
+// `topLevelPath(node)`, which is built for a full file path and treats a no-slash path as a
+// ROOT-LEVEL FILE (mapping to the "." district). For a directory string, a no-slash value like
+// "src" already *is* the top-level segment -- it must map to the "src" district, not ".". Only
+// the true repo-root case (`dir === ""`, a bare schema.sql with no directory at all) maps to ".".
+function topLevelPathOfDir(dir: string): string {
+  const normalized = normalizePath(dir);
+  if (normalized === "") return ".";
+  const slash = normalized.indexOf("/");
+  return slash < 0 ? normalized : normalized.slice(0, slash);
+}
+
 export function compileCity(graph: RepoGraph): CityModel {
+  const datastores = (graph as RepoGraphWithDatastores).datastores ?? [];
   const files = graph.nodes.filter((node) => node.type === "file");
   const districtMembers = new Map<string, RepoNode[]>();
   for (const file of files) {
@@ -22,6 +43,15 @@ export function compileCity(graph: RepoGraph): CityModel {
     const members = districtMembers.get(path) ?? [];
     members.push(file);
     districtMembers.set(path, members);
+  }
+  // A datastore can live in a directory that holds no analyzed source files at all (e.g. a
+  // migrations-only directory) -- never let that silently drop its landmark for lack of a
+  // district to place it in. Ensure every datastore's district key exists (possibly with zero
+  // file members) before districts are laid out, so `squarify`/`shelfSlots` always have
+  // somewhere deterministic to put it.
+  for (const spec of datastores) {
+    const path = topLevelPathOfDir(spec.dir);
+    if (!districtMembers.has(path)) districtMembers.set(path, []);
   }
   const districtPaths = [...districtMembers.keys()].sort(compareCodepoints);
   const rectangles = squarify(
@@ -42,10 +72,24 @@ export function compileCity(graph: RepoGraph): CityModel {
     group.push(source);
     sourcesByDistrict.set(source.districtPath, group);
   }
+  const datastoresByDistrict = new Map<string, DatastoreSpec[]>();
+  for (const spec of datastores) {
+    const path = topLevelPathOfDir(spec.dir);
+    const group = datastoresByDistrict.get(path) ?? [];
+    group.push(spec);
+    datastoresByDistrict.set(path, group);
+  }
   const slots = new Map<string, ReturnType<typeof shelfSlots> extends Map<string, infer S> ? S : never>();
   for (const district of districts) {
     const group = sourcesByDistrict.get(district.name) ?? [];
-    for (const [path, slot] of shelfSlots(group.map((source) => source.path), district)) slots.set(path, slot);
+    // Landmarks share the same shelf-grid pass as this district's buildings (rather than a
+    // separate placement step) specifically so they land in a distinct, non-overlapping cell by
+    // the same construction that already guarantees no two buildings overlap -- `spec.id`
+    // (always prefixed "datastore:") is added to the same key list `shelfSlots` partitions, and
+    // never collides with a real building path.
+    const landmarkKeys = (datastoresByDistrict.get(district.name) ?? []).map((spec) => spec.id);
+    const keys = [...group.map((source) => source.path), ...landmarkKeys];
+    for (const [path, slot] of shelfSlots(keys, district)) slots.set(path, slot);
   }
   const buildings = sources.map((source) => {
     const slot = slots.get(source.path);
@@ -85,11 +129,31 @@ export function compileCity(graph: RepoGraph): CityModel {
   }
   const roads: Road[] = [...roadsByKey.values()];
   roads.sort((a, b) => compareCodepoints(a.from, b.from) || compareCodepoints(a.to, b.to));
+
+  // Landmarks (V4 contract, "Landmarks" section of docs/CONTRACT-city-json.md): one per
+  // DatastoreSpec, positioned at the center of the shelf-grid cell reserved for it above (never
+  // overlapping a building -- same non-overlap guarantee `shelfSlots` already gives buildings,
+  // reused rather than re-derived). `weight` is `tableCount` (schema-derived, D1); `label` is
+  // the full datastore directory so two same-named "migrations" dirs in different districts of a
+  // merged/multi-repo city stay distinguishable (bare basenames would collide).
+  const landmarks: Landmark[] = datastores.map((spec) => {
+    const slot = slots.get(spec.id);
+    const district = districts.find((d) => d.name === topLevelPathOfDir(spec.dir));
+    // Defensive fallback only -- every datastore's district key was seeded into districtMembers
+    // above, so `slot` is always present in practice; this keeps compileCity total rather than
+    // throwing if that invariant is ever broken by a future edit, while still placing the
+    // landmark inside a real district rectangle rather than off-canvas.
+    const x = slot ? slot.x + slot.width / 2 : (district?.x ?? 0) + (district?.width ?? 0) / 2;
+    const y = slot ? slot.y + slot.depth / 2 : (district?.y ?? 0) + (district?.depth ?? 0) / 2;
+    return { id: spec.id, x, y, kind: "datastore", label: spec.dir === "" ? "." : spec.dir, weight: spec.tableCount };
+  });
+  landmarks.sort((a, b) => compareCodepoints(a.id, b.id));
+
   // identityLinks: V4 clone-identity detection (CONTRACTS.md, D2/D3) lands in a later lane --
   // this stays [] until then. CityModel.identityLinks is non-optional in the TYPE (the compiler
   // must always answer, even with no clones found), so this placeholder is required for
   // compileCity to keep satisfying its own return type -- not a behavior claim that no repo has
   // clones. tests/identity-links.test.ts is the RED gate that turns green once a real lane
   // replaces this literal with computed groups.
-  return { districts, buildings, roads, landmarks: [], identityLinks: [] };
+  return { districts, buildings, roads, landmarks, identityLinks: [] };
 }
