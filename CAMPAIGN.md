@@ -144,4 +144,81 @@ structural report evidence (commit SHAs, test counts) now outranks keyword match
 
 ## 2026-08-28 — (save stub; full narrative at close) code-city vision pass: liveness/traffic added as PROJECT_IDEA §5.5 (3 tiers + determinism/no-fabrication constraints); V2 legibility / V3 lenses / V4 time roadmap proposed; two localeCompare byte-determinism survivors queued
 
-## 2026-08-28 — (save stub; full narrative at close) code-city V2: contracts frozen (distribution-normalized geometry, Road.weight, calls[] rule) + 6-leaf orchestrated build shipped (compiler weights, analyzer calls[], road tiering, building occupancy/dead-dark/4 style profiles); dogfood on usul-qol HONEST on all 6 checks; browser-verify PASS 7/7
+## 2026-08-28 — code-city V2 shipped (contracts frozen + 6-leaf build), then V3 (animated flow) and V4 (datastores + clone-identity tethers) in the same day
+
+Continuation of the V2 close (contracts frozen — distribution-normalized geometry, Road.weight,
+calls[] rule — + 6-leaf orchestrated build: compiler weights, analyzer calls[], road tiering,
+building occupancy/dead-dark/4 style profiles; dogfood on usul-qol HONEST on all 6 checks;
+browser-verify PASS 7/7; pushed).
+
+**V3 — animated flow.** A `/usul-next-steps` board picked "consume the weights V2 shipped but
+never animated" over lenses/git-history/dogfood-more. Built `src/renderer/flow.ts` as a single
+shared weight-to-motion contract (direction fixed to data-flow `to-from`, monotone speed/dashPeriod
+anchored to the same q3 boundary road-tiering uses, provenance-tagged so structural traffic can
+never read as measured — PROJECT_IDEA §5.5's no-fabrication rule extended to motion). Two build
+lanes ran in parallel against it — 3D dash-shader (sonnet) and SVG dash animation (codex
+gpt-5.6-sol, gates-first-try) — merged with the actual judgment call being cross-renderer
+coherence: both realize `to→from`, both read speed from `flowParams`, neither re-hardcodes the
+provenance string. browser-verify PASS 7/7 (offsets wrap within `dashPeriod`, weight-proportional
+rate confirmed at two different roads, legend visible on screen). ROI: 15.3min wall vs ~130min
+estimated inline.
+
+**Dogfood + multi-repo merge stage.** Ran usul-heighliner-radio (336 buildings, all 6 checks
+HONEST, `.mjs` import resolution at parity with `.ts`) in parallel with building `bin/merge.ts` — a
+pure `RepoGraph`-level transform that namespaces every repo's paths so `topLevelPath()` turns each
+repo into its own district with zero compiler changes. Rendered usul-mgmt + usul-mgmt-itba +
+usul-mgmt-frd-ops as one city: 0 of 18 roads crossed a district boundary, confirming (graph AND
+sha256 file comparison agreed) that the shared kernel is vendored into each consumer rather than
+imported — 31/34 kernel files byte-identical across all three repos, 3 drifted together (itba and
+frd-ops pinned to the same stale revision). That finding was handed directly to the concurrent
+usul-mgmt session via SendMessage rather than tracked here. Screenshots of both cities (2D SVG +
+3D Three.js) were also captured; the 3D pass surfaced that the camera never fits itself to the
+city's bounds — a 336-building city spawns as unreadable soup, a 21-building city spawns inside a
+block with labels clipped — so neither "wide" shot actually was one.
+
+**V4 — datastores as landmarks + clone-identity tethers.** A board scoped the fix (camera
+fit-to-bounds) alongside a bigger wave: `landmarks[]` was declared in `types.ts` since Phase 2 but
+the compiler had always hardcoded it to `[]`, and Plate I (heighliner) proved the gap was real —
+`data/` held three `.db` files and rendered nothing. Design decisions frozen before the build (P1,
+single-writer contract lane): datastore geometry comes from tracked `migrations/*.sql` and
+`schema.sql`, NEVER from the live `.db` (which grows hourly and would break the determinism
+contract, and there are 4 gitignored backup copies per repo which file-driven detection would have
+mis-rendered as 4 reservoirs); identity links are a separate, static, non-animated, elevated visual
+channel from roads — a road means traffic, vendored clones carry none, and drawing one would
+fabricate flow that doesn't exist; clone detection is exact sha256 content-hash only, no
+near-duplicate scoring; a directory containing any detected clone keeps file-level LOD past the
+500-file threshold so tethers have something to attach to (this landed at *district* granularity
+rather than *directory*, a disclosed trade-off, not yet reconciled).
+
+A 5-lane par fanned out against the frozen contract: camera fit-to-bounds + shadow frustum
+(sonnet), district-as-territory + building massing (sonnet), datastore detection → landmark
+emission (codex gpt-5.6-sol), content-hash clone detection + identity links + clone-aware LOD
+(codex gpt-5.6-sol), landmark/tether renderer for both 3D and SVG (sonnet). Both codex lanes
+shipped gates-first-try and committed their own work. The merge step's actual job was judgment,
+not mechanics: lanes C and D each hardcoded a placeholder for the OTHER's field
+(`identityLinks: []` / `landmarks: []`) in their shared `compiler/index.ts` edit — taking either
+side verbatim would have silently zeroed a whole feature under a fully green suite, since each
+lane's own tests only assert its own field. Resolved to both-computed. The merge also independently
+verified the D2 no-fabrication rule by reading actual output, not lane prose: SVG roads emit
+`<animate>`+dasharray, tethers are bare `<line class="tether">` with neither; 3D roads use a
+per-frame `ShaderMaterial`, tethers set only `position` once and are never touched in the
+animation loop.
+
+**A real bug the green suite didn't catch.** Ran the fixed pipeline against the actual usul-mgmt
+trio post-merge and got 0 landmarks despite all three repos having migrations — traced to
+`datastores` having been attached to `RepoGraph` as an untyped property (a disclosed structural
+workaround from the V4 build lane) that `mergeRepoGraphs` silently dropped since it only carries
+typed fields. 231 tests stayed green throughout; only real-repo verification surfaced it. Fixed:
+`RepoGraph.datastores` is now a proper typed, validated field, carried through the merge with the
+same namespacing convention as node ids, plus an end-to-end merge→compile landmark-count test that
+closes the exact gap that let it ship (237 tests, 6 new). Re-rendered the real trio: 5 landmarks,
+including the vendored-kernel reservoir in all three repos (weights 24/22/22 — the vendored copies
+are 2 tables behind the source, corroborating the earlier file-drift finding independently).
+Removed the V4 contract lane's temporary `try/catch` scaffolding around `buildLandmarks`/
+`buildTethers` in `main.ts` now that both are real, so a render failure fails loudly again per this
+repo's Failure Discipline convention.
+
+Final: 237/237 tests, build clean, smoke green. Two live tailnet views stood up for direct
+inspection — a static gallery (2D SVG plates + 3D screenshots) and a live orbit-able 3D viewer
+serving the real merged mgmt city. 13 commits local, not pushed pending Usul's push confirm at
+close. LOD district-vs-directory trade-off and the two tailnet serve teardowns are open.
