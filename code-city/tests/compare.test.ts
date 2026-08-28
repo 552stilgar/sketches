@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { compareCodepoints } from "../src/util/compare.ts";
+import { compareCodepoints, comparePathThenId } from "../src/util/compare.ts";
 
 describe("compareCodepoints", () => {
   it("returns 0 for equal strings", () => {
@@ -122,5 +122,25 @@ describe("compareCodepoints", () => {
         else expect(cmp).toBe(0);
       }
     }
+  });
+});
+
+describe("comparePathThenId", () => {
+  it("orders by path first", () => {
+    expect(comparePathThenId({ path: "a.ts", id: "z" }, { path: "b.ts", id: "a" })).toBeLessThan(0);
+  });
+
+  it("breaks ties on path by id", () => {
+    expect(comparePathThenId({ path: "same.ts", id: "a" }, { path: "same.ts", id: "b" })).toBeLessThan(0);
+    expect(comparePathThenId({ path: "same.ts", id: "b" }, { path: "same.ts", id: "a" })).toBeGreaterThan(0);
+  });
+
+  it("returns 0 for identical path+id", () => {
+    expect(comparePathThenId({ path: "same.ts", id: "a" }, { path: "same.ts", id: "a" })).toBe(0);
+  });
+
+  it("never calls localeCompare (codepoint order, not locale-dependent)", () => {
+    const source = comparePathThenId.toString();
+    expect(source).not.toContain("localeCompare");
   });
 });

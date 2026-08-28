@@ -12,6 +12,7 @@
 import type { RepoGraph, CityModel, RepoNode, Road } from "../types.ts";
 import { dominantLanguage, footprintSide, selectBuildingSources, topLevelPath } from "./grammar.ts";
 import { shelfSlots, squarify } from "./layout.ts";
+import { comparePathThenId } from "../util/compare.ts";
 
 export function compileCity(graph: RepoGraph): CityModel {
   const files = graph.nodes.filter((node) => node.type === "file");
@@ -32,7 +33,7 @@ export function compileCity(graph: RepoGraph): CityModel {
     return { id: `district:${path}`, name: path, ...rect, style: dominantLanguage(districtMembers.get(path) ?? []) };
   });
 
-  const sources = selectBuildingSources(graph.nodes).sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id));
+  const sources = selectBuildingSources(graph.nodes).sort(comparePathThenId);
   const sourcesByDistrict = new Map<string, typeof sources>();
   for (const source of sources) {
     const group = sourcesByDistrict.get(source.districtPath) ?? [];
@@ -69,7 +70,7 @@ export function compileCity(graph: RepoGraph): CityModel {
   }
   const roadKeys = new Set<string>();
   const roads: Road[] = [];
-  for (const node of [...files].sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id))) {
+  for (const node of [...files].sort(comparePathThenId)) {
     const from = buildingForNode.get(node.id) ?? buildingForNode.get(node.path);
     if (!from) continue;
     for (const target of [...node.imports].sort((a, b) => a.localeCompare(b))) {

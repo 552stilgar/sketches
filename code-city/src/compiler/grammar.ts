@@ -1,4 +1,5 @@
 import type { RepoNode } from "../types.ts";
+import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
 
 export interface BuildingSource {
   id: string;
@@ -24,7 +25,7 @@ export function topLevelPath(node: RepoNode): string {
 export function dominantLanguage(nodes: readonly RepoNode[]): string {
   const counts = new Map<string, number>();
   for (const node of nodes) counts.set(node.language, (counts.get(node.language) ?? 0) + 1);
-  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] ?? "unknown";
+  return [...counts].sort((a, b) => b[1] - a[1] || compareCodepoints(a[0], b[0]))[0]?.[0] ?? "unknown";
 }
 
 function aggregate(id: string, path: string, districtPath: string, members: RepoNode[]): BuildingSource {
@@ -41,7 +42,7 @@ function aggregate(id: string, path: string, districtPath: string, members: Repo
 }
 
 export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSource[] {
-  const files = nodes.filter((node) => node.type === "file").sort((a, b) => a.path.localeCompare(b.path) || a.id.localeCompare(b.id));
+  const files = nodes.filter((node) => node.type === "file").sort(comparePathThenId);
   if (files.length <= 500) {
     return files.map((node) => ({
       id: node.id,
@@ -73,7 +74,7 @@ export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSourc
     groups.set(path, group);
   }
   return [...groups]
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => compareCodepoints(a, b))
     .map(([path, { districtPath, members }]) => aggregate(`directory:${path}`, path, districtPath, members));
 }
 

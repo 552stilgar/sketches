@@ -1,3 +1,5 @@
+import { compareCodepoints } from "../util/compare.ts";
+
 export interface Rect {
   x: number;
   y: number;
@@ -43,7 +45,7 @@ function placeRow(row: readonly WeightedPath[], remaining: Rect, totalWeight: nu
 export function squarify(items: readonly WeightedPath[], bounds: Rect): Map<string, Rect> {
   const pending = [...items]
     .map((item) => ({ ...item, weight: Math.max(1, item.weight) }))
-    .sort((a, b) => b.weight - a.weight || a.path.localeCompare(b.path));
+    .sort((a, b) => b.weight - a.weight || compareCodepoints(a.path, b.path));
   const output = new Map<string, Rect>();
   let remaining = { ...bounds };
   let remainingWeight = pending.reduce((sum, item) => sum + item.weight, 0);
@@ -70,7 +72,7 @@ export interface Slot extends Rect {
 }
 
 export function shelfSlots(paths: readonly string[], district: Rect, padding = 8, gap = 4): Map<string, Slot> {
-  const sorted = [...paths].sort((a, b) => a.localeCompare(b));
+  const sorted = [...paths].sort(compareCodepoints);
   // Clamp padding to a fraction of the district's own extent instead of
   // applying it unconditionally: a fixed padding can exceed a thin/narrow
   // district's width or depth outright, pushing every slot coordinate past
