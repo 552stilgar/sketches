@@ -12,7 +12,12 @@
 // agree on what counts as a footpath vs. a highway for a given city.
 
 import type { CityModel } from "../types.ts";
-import { computeRoadTierBoundaries, roadTier, type RoadTier } from "./roads.ts";
+import {
+  FLOW_PROVENANCE_LABEL,
+  flowBoundaries,
+  flowParams,
+} from "./flow.ts";
+import { roadTier, type RoadTier } from "./roads.ts";
 
 /** Stroke width + opacity per tier. Mirrors TIER_STYLE in roads.ts, adapted for SVG stroke
  * rendering (width is a legible signal in 2D, unlike WebGL line width). */
@@ -29,7 +34,7 @@ export function render2d(city: CityModel): string {
     .replaceAll('"', "&quot;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
-  const lines = ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000">'];
+  const lines = [`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="1000" height="1000" data-flow-provenance="${escape(FLOW_PROVENANCE_LABEL.structural)}">`];
   for (const district of city.districts) {
     lines.push(`  <g class="district" data-id="${escape(district.id)}">`);
     lines.push(`    <rect class="district-ground" x="${district.x}" y="${district.y}" width="${district.width}" height="${district.depth}" data-style="${escape(district.style)}" />`);
@@ -39,14 +44,19 @@ export function render2d(city: CityModel): string {
     lines.push(`  <rect class="building" data-id="${escape(building.id)}" x="${building.x}" y="${building.y}" width="${building.width}" height="${building.depth}" data-height="${building.height}" data-style="${escape(building.style)}" />`);
   }
   const centers = new Map(city.buildings.map((building) => [building.id, { x: building.x + building.width / 2, y: building.y + building.depth / 2 }]));
-  const boundaries = computeRoadTierBoundaries(city.roads.map((road) => road.weight));
+  const boundaries = flowBoundaries(city.roads.map((road) => road.weight));
   for (const road of city.roads) {
     const from = centers.get(road.from);
     const to = centers.get(road.to);
     if (!from || !to) continue;
     const tier = roadTier(road.weight, boundaries);
     const stroke = TIER_STROKE[tier];
-    lines.push(`  <line class="road" data-from="${escape(road.from)}" data-to="${escape(road.to)}" data-tier="${tier}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke-width="${stroke.width}" stroke-opacity="${stroke.opacity}" />`);
+    const flow = flowParams(road.weight, boundaries);
+    const dashLength = flow.dashPeriod / 2;
+    const duration = flow.dashPeriod / flow.speed;
+    lines.push(`  <line class="road" data-from="${escape(road.from)}" data-to="${escape(road.to)}" data-tier="${tier}" x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke-width="${stroke.width}" stroke-opacity="${stroke.opacity}" stroke-dasharray="${dashLength} ${dashLength}">`);
+    lines.push(`    <animate attributeName="stroke-dashoffset" from="0" to="${flow.dashPeriod}" dur="${duration}s" repeatCount="indefinite" />`);
+    lines.push("  </line>");
   }
   lines.push("</svg>");
   return `${lines.join("\n")}\n`;

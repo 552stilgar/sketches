@@ -4,6 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { FLOW_PROVENANCE_LABEL } from "../src/renderer/flow.ts";
 import { render2d } from "../src/renderer/svg.ts";
 import { validateCity } from "../src/types.ts";
 import type { CityModel } from "../src/types.ts";
@@ -184,5 +185,61 @@ describe("render2d road tiering (docs/PROJECT_IDEA.md 5.5 — static-only, mirro
     expect(first).toBe(second);
     expect(render2d(city)).toBe(first);
     expect(third).toBe(render2d(loadMockCity()));
+  });
+});
+
+describe("render2d structural road flow", () => {
+  function parseRoadFlow(svg: string): Array<{
+    road: Record<string, string>;
+    animation: Record<string, string>;
+  }> {
+    const elements = svg.match(/<line class="road"[^>]*>[\s\S]*?<\/line>/g) ?? [];
+    return elements.map((element) => {
+      const roadTag = element.match(/^<line[^>]*>/)?.[0] ?? "";
+      const animationTag = element.match(/<animate[^>]*\/>/)?.[0] ?? "";
+      return { road: parseAttrs(roadTag), animation: parseAttrs(animationTag) };
+    });
+  }
+
+  it("emits deterministic declarative animation markup", () => {
+    const city = weightedRoadsCity();
+    const first = render2d(city);
+    const second = render2d(city);
+    const firstFlow = parseRoadFlow(first);
+    const secondFlow = parseRoadFlow(second);
+
+    expect(firstFlow).toEqual(secondFlow);
+    expect(firstFlow).toHaveLength(city.roads.length);
+    for (const { animation } of firstFlow) {
+      expect(animation.attributeName).toBe("stroke-dashoffset");
+      expect(animation.from).toBe("0");
+      expect(Number(animation.to)).toBeGreaterThan(0);
+      expect(animation.dur).toMatch(/^[0-9.]+s$/);
+      expect(animation.repeatCount).toBe("indefinite");
+    }
+  });
+
+  it("gives a heavier road a denser dash pattern and shorter cycle", () => {
+    const flows = parseRoadFlow(render2d(weightedRoadsCity()));
+    const byPair = new Map(flows.map((flow) => [
+      `${flow.road["data-from"]}->${flow.road["data-to"]}`,
+      flow,
+    ]));
+    const light = byPair.get("b-1->b-2")!; // weight 1
+    const heavy = byPair.get("b-4->b-5")!; // weight 4
+    const dashPeriod = (flow: typeof light): number => flow.road["stroke-dasharray"]
+      .split(" ")
+      .map(Number)
+      .reduce((sum, part) => sum + part, 0);
+    const duration = (flow: typeof light): number => Number.parseFloat(flow.animation.dur);
+
+    expect(dashPeriod(heavy)).toBeLessThan(dashPeriod(light));
+    expect(duration(heavy)).toBeLessThan(duration(light));
+    expect(Number(heavy.animation.to)).toBe(dashPeriod(heavy));
+    expect(Number(light.animation.to)).toBe(dashPeriod(light));
+  });
+
+  it("labels the flow as structurally derived", () => {
+    expect(render2d(weightedRoadsCity())).toContain(FLOW_PROVENANCE_LABEL.structural);
   });
 });
