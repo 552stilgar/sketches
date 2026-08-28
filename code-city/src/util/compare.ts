@@ -19,3 +19,12 @@
 export function compareCodepoints(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
+
+// Shared tie-break comparator for anything with a `path` and an `id`: order
+// by path first, then by id to break ties between same-path entries.
+// Built on compareCodepoints rather than `.localeCompare()` for the same
+// determinism reason -- locale-dependent ordering would make city.json
+// output vary across machines for identical input.
+export function comparePathThenId(a: { path: string; id: string }, b: { path: string; id: string }): number {
+  return compareCodepoints(a.path, b.path) || compareCodepoints(a.id, b.id);
+}
