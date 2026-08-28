@@ -5,15 +5,20 @@ import {
   classifyStructuralLiveness,
   computeFanIn,
   computeOutgoing,
+  districtVisual,
   occupancyIntensity,
   p95,
   PROFILE_NAMES,
   styleProfile,
 } from "../src/renderer/buildings.ts";
-import type { Road } from "../src/types.ts";
+import type { District, Road } from "../src/types.ts";
 
 function road(from: string, to: string, weight?: number): Road {
   return weight === undefined ? { from, to } : { from, to, weight };
+}
+
+function district(id: string, style: string): District {
+  return { id, name: id, x: 0, y: 0, width: 260, depth: 260, style };
 }
 
 describe("computeFanIn", () => {
@@ -201,3 +206,73 @@ function profileToLanguage(name: (typeof PROFILE_NAMES)[number]): string {
       return "html";
   }
 }
+
+describe("buildProfileGeometry -- body/crown tier reads as a distinct mass, not one flat tone", () => {
+  for (const name of PROFILE_NAMES) {
+    it(`gives the "${name}" profile a body + crown vertex-color split`, () => {
+      const geometry = buildProfileGeometry(styleProfile(profileToLanguage(name)));
+      const color = geometry.getAttribute("color");
+      expect(color).toBeDefined();
+      const factors = new Set<number>();
+      for (let i = 0; i < color!.count; i++) factors.add(Math.round(color!.getX(i) * 1000) / 1000);
+      // at least a "body" factor and a distinct "crown/roof" factor
+      expect(factors.size).toBeGreaterThanOrEqual(2);
+    });
+  }
+
+  it("keeps the flat-roof profiles' crown setback inside the unit cube (regression)", () => {
+    for (const name of ["tower", "storefront"] as const) {
+      const geometry = buildProfileGeometry(styleProfile(profileToLanguage(name)));
+      geometry.computeBoundingBox();
+      const box = geometry.boundingBox!;
+      const EPS = 1e-6;
+      expect(box.min.y).toBeGreaterThanOrEqual(-0.5 - EPS);
+      expect(box.max.y).toBeLessThanOrEqual(0.5 + EPS);
+      expect(box.min.x).toBeGreaterThanOrEqual(-0.5 - EPS);
+      expect(box.max.x).toBeLessThanOrEqual(0.5 + EPS);
+    }
+  });
+});
+
+describe("districtVisual -- territory identity is pure, id-derived, never positional", () => {
+  it("is a pure function: the same district in always produces the same colors/elevation out", () => {
+    const d = district("district:src/auth", "typescript");
+    const a = districtVisual(d);
+    const b = districtVisual(d);
+    expect(a.fill.getHex()).toBe(b.fill.getHex());
+    expect(a.edge.getHex()).toBe(b.edge.getHex());
+    expect(a.elevation).toBe(b.elevation);
+  });
+
+  it("gives districts that share a style (the real dogfood defect) visibly different fills", () => {
+    // fixtures/mock-city-v4.json: 3 districts, all dominant-language "typescript" -- the old
+    // districtColor(style) rendered these three IDENTICALLY. Same ids/styles reproduced here.
+    const a = districtVisual(district("d-utils", "typescript"));
+    const b = districtVisual(district("d-auth", "typescript"));
+    const c = districtVisual(district("d-payments", "typescript"));
+    expect(a.fill.getHex()).not.toBe(b.fill.getHex());
+    expect(b.fill.getHex()).not.toBe(c.fill.getHex());
+    expect(a.fill.getHex()).not.toBe(c.fill.getHex());
+    // boundary-wall tint distinguishes them too, independent of the ground fill
+    expect(a.edge.getHex()).not.toBe(b.edge.getHex());
+  });
+
+  it("stays distinguishable across 8 sibling districts", () => {
+    const ids = Array.from({ length: 8 }, (_, i) => `district:pkg-${i}/module`);
+    const hexes = ids.map((id) => districtVisual(district(id, "typescript")).fill.getHex());
+    expect(new Set(hexes).size).toBe(8);
+  });
+
+  it("never depends on array position -- reordering the same id set changes nothing per-district", () => {
+    const ids = ["district:a", "district:b", "district:c"];
+    const forward = ids.map((id) => districtVisual(district(id, "typescript")).fill.getHex());
+    const reversed = [...ids].reverse().map((id) => districtVisual(district(id, "typescript")).fill.getHex());
+    expect(forward).toEqual([...reversed].reverse());
+  });
+
+  it("keeps elevation in a small, road-safe band (roads run at building-top height, never here)", () => {
+    const { elevation } = districtVisual(district("district:x", "typescript"));
+    expect(elevation).toBeGreaterThanOrEqual(0.15);
+    expect(elevation).toBeLessThan(3);
+  });
+});
