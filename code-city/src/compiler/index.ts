@@ -9,7 +9,7 @@
 // move when one file's metrics change, no AABB overlaps, every building inside a district, every
 // road resolves to a real building id, and the LOD table (fixed, see the contract doc).
 
-import type { RepoGraph, CityModel, RepoNode, Road, Landmark } from "../types.ts";
+import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark } from "../types.ts";
 import type { DatastoreSpec } from "../analyzer/datastores.ts";
 import { dominantLanguage, footprintSide, normalizePath, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
 import { shelfSlots, squarify } from "./layout.ts";
@@ -149,11 +149,30 @@ export function compileCity(graph: RepoGraph): CityModel {
   });
   landmarks.sort((a, b) => compareCodepoints(a.id, b.id));
 
-  // identityLinks: V4 clone-identity detection (CONTRACTS.md, D2/D3) lands in a later lane --
-  // this stays [] until then. CityModel.identityLinks is non-optional in the TYPE (the compiler
-  // must always answer, even with no clones found), so this placeholder is required for
-  // compileCity to keep satisfying its own return type -- not a behavior claim that no repo has
-  // clones. tests/identity-links.test.ts is the RED gate that turns green once a real lane
-  // replaces this literal with computed groups.
-  return { districts, buildings, roads, landmarks, identityLinks: [] };
+  // identityLinks: V4 clone-identity detection (CONTRACTS.md, D2/D3). Byte-identical files are
+  // grouped by contentHash and resolved to the buildings that carry them; groups of one are not
+  // clones and are dropped.
+  const filesByHash = new Map<string, RepoNode[]>();
+  for (const file of files) {
+    if (file.contentHash === undefined) continue;
+    const matches = filesByHash.get(file.contentHash) ?? [];
+    matches.push(file);
+    filesByHash.set(file.contentHash, matches);
+  }
+  const identityLinks: IdentityLink[] = [...filesByHash]
+    .filter(([, matches]) => matches.length >= 2)
+    .sort(([a], [b]) => compareCodepoints(a, b))
+    .map(([hash, matches]) => ({
+      hash,
+      members: matches
+        .map((file) => {
+          const buildingId = buildingForNode.get(file.id) ?? buildingForNode.get(file.path);
+          // Every file belongs to a selected source. Failing here prevents emitting a dangling
+          // identity member if that compiler invariant is ever broken by a future LOD rule.
+          if (!buildingId) throw new Error(`No building for clone member ${file.id}`);
+          return buildingId;
+        })
+        .sort(compareCodepoints),
+    }));
+  return { districts, buildings, roads, landmarks, identityLinks };
 }

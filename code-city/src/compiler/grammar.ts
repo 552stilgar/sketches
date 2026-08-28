@@ -43,17 +43,34 @@ function aggregate(id: string, path: string, districtPath: string, members: Repo
 
 export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSource[] {
   const files = nodes.filter((node) => node.type === "file").sort(comparePathThenId);
+  const toFileSource = (node: RepoNode): BuildingSource => ({
+    id: node.id,
+    path: normalizePath(node.path || node.id),
+    districtPath: topLevelPath(node),
+    language: node.language,
+    loc: node.loc,
+    complexity: node.complexity,
+    churn: node.churn,
+    members: [node],
+  });
   if (files.length <= 500) {
-    return files.map((node) => ({
-      id: node.id,
-      path: normalizePath(node.path || node.id),
-      districtPath: topLevelPath(node),
-      language: node.language,
-      loc: node.loc,
-      complexity: node.complexity,
-      churn: node.churn,
-      members: [node],
-    }));
+    return files.map(toFileSource);
+  }
+
+  const filesByHash = new Map<string, RepoNode[]>();
+  for (const file of files) {
+    if (file.contentHash === undefined) continue;
+    const matches = filesByHash.get(file.contentHash) ?? [];
+    matches.push(file);
+    filesByHash.set(file.contentHash, matches);
+  }
+  // A district is the compiler's top-level directory boundary. Keeping every group in a
+  // clone-bearing district at file LOD preserves both the clone's attachment point and its
+  // sibling files, rather than producing a mixed directory/file representation within it.
+  const cloneDistricts = new Set<string>();
+  for (const matches of filesByHash.values()) {
+    if (matches.length < 2) continue;
+    for (const file of matches) cloneDistricts.add(topLevelPath(file));
   }
 
   // Aggregate into one building per top-level directory (or per
@@ -75,7 +92,11 @@ export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSourc
   }
   return [...groups]
     .sort(([a], [b]) => compareCodepoints(a, b))
-    .map(([path, { districtPath, members }]) => aggregate(`directory:${path}`, path, districtPath, members));
+    .flatMap(([path, { districtPath, members }]) =>
+      cloneDistricts.has(districtPath)
+        ? [...members].sort(comparePathThenId).map(toFileSource)
+        : [aggregate(`directory:${path}`, path, districtPath, members)],
+    );
 }
 
 /** Nearest-rank 95th percentile, floored at 1. Does not mutate the input. */

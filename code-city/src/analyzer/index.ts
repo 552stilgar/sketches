@@ -13,6 +13,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { promisify } from "node:util";
+import { hashFileContent } from "./content-hash.ts";
 import type { DatastoreSpec } from "./datastores.ts";
 import { detectDatastores } from "./datastores.ts";
 import { readFileGitMetrics, readGitInfo } from "./git.ts";
@@ -155,6 +156,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       imports: parsed.imports,
       calls: parsed.calls,
       contains: [],
+      contentHash: hashFileContent(source),
     };
   });
 
