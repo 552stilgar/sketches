@@ -85,5 +85,11 @@ export function compileCity(graph: RepoGraph): CityModel {
   }
   const roads: Road[] = [...roadsByKey.values()];
   roads.sort((a, b) => compareCodepoints(a.from, b.from) || compareCodepoints(a.to, b.to));
-  return { districts, buildings, roads, landmarks: [] };
+  // identityLinks: V4 clone-identity detection (CONTRACTS.md, D2/D3) lands in a later lane --
+  // this stays [] until then. CityModel.identityLinks is non-optional in the TYPE (the compiler
+  // must always answer, even with no clones found), so this placeholder is required for
+  // compileCity to keep satisfying its own return type -- not a behavior claim that no repo has
+  // clones. tests/identity-links.test.ts is the RED gate that turns green once a real lane
+  // replaces this literal with computed groups.
+  return { districts, buildings, roads, landmarks: [], identityLinks: [] };
 }

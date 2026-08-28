@@ -26,6 +26,11 @@ interface RepoNode {
                                        // graph — [] is fine at file-level granularity, V1 scope)
   contains: string[];                  // ids this node structurally contains (a future "module"
                                          // node would contain its file ids) — [] for file nodes
+  contentHash?: string;                 // V4 — lowercase hex sha256 of the file's raw bytes, see
+                                          // "Clone identity / content hash" below. Optional: lands
+                                          // ahead of the analyzer stage that fills it in. Absent
+                                          // means NOT HASHED, never "no clones" (§5.5 constraint 2
+                                          // applies to absence of a signal as much as a value).
 }
 
 interface RepoGraph {
@@ -109,6 +114,69 @@ eventual source — `docs/PROJECT_IDEA.md` §3.1). Any real, structure-derived, 
 is acceptable for V1; `complexity` feeds directly into `compileCity`'s height rule
 (`height = max(1, complexity)`), so it must be `>= 0`.
 
+## Clone identity / content hash (V4)
+
+- Producer: `hashFileContent(bytes: Uint8Array | string): string` — `src/analyzer/content-hash.ts`
+- Consumer: `compileCity(graph: RepoGraph): CityModel` — groups nodes sharing a `contentHash`
+  into `CityModel.identityLinks` (`docs/CONTRACT-city-json.md` § "Clone identity")
+
+**D3 — EXACT CONTENT HASH ONLY.** `contentHash` is sha256 over a file's **raw bytes**, hex-encoded,
+lowercase — byte-identical or nothing. No normalization (whitespace, line endings, comments), no
+near-duplicate/fuzzy matching, no truncation. Near-duplicate detection is a judgment call and
+would smuggle fabrication back in through the side door (`PROJECT_IDEA.md` §5.5, constraint 2,
+"never fabricate") — CRYSKNIFE, a separate VPS tool, already does near-duplicate detection as an
+audit; code-city RENDERS certainty (an `IdentityLink`), it does not estimate similarity.
+
+A node with no `contentHash` was simply not hashed — it must never be treated as "confirmed no
+clone", and must never appear in any `IdentityLink`. Only `"file"`-type nodes are expected to
+carry this field.
+
+## Datastore detection (V4)
+
+- Producer: `detectDatastores(files: {path: string, content: string}[]): DatastoreSpec[]` —
+  `src/analyzer/datastores.ts`
+- Consumer: the analyzer emits one `Landmark` (kind `"datastore"`) per `DatastoreSpec` into the
+  `RepoGraph` → `compileCity` → `CityModel.landmarks` (`docs/CONTRACT-city-json.md` § "Landmarks")
+
+```ts
+interface DatastoreSpec {
+  id: string;              // stable id derived from `dir`
+  dir: string;              // repo-relative directory this datastore's tracked schema lives under
+  tableCount: number;        // see "Sizing", below — feeds Landmark.weight
+  migrationCount: number;     // count of tracked *.sql files under this datastore's migrations/ dir
+}
+```
+
+**D1 — DATASTORE GEOMETRY COMES FROM SCHEMA, NEVER FROM THE LIVE DATABASE FILE.** Migrations and
+`schema.sql` are tracked in git and stable; a `.db` file grows every hour the app runs, and sizing
+a landmark from it would make the city rearrange daily — breaking the determinism constraint
+(`PROJECT_IDEA.md` §3.2) outright. Live row counts are the MEASURED tier: allowed later, labelled,
+never blended into structural. `detectDatastores` and every caller of it must never open, stat, or
+size a `.db` file — its only input is tracked `{path, content}` pairs the analyzer already read
+off git, the same source `imports`/`calls` resolution uses.
+
+**Detection rule** — a datastore is detected from TRACKED SOURCE, and nothing else:
+- any `*.sql` file under a directory named `migrations`
+- any file named `schema.sql`
+
+**Grouping** — one datastore per directory: the directory containing a `migrations/` folder, or
+the directory directly containing a bare `schema.sql`. Real examples from a 2026-08-28 dogfood run
+(three repos sharing a vendored kernel):
+```
+usul-mgmt/src/kernel/migrations/*.sql            -> dir: "src/kernel"
+usul-heighliner-radio/src/schema.sql             -> dir: "src"
+usul-mgmt-itba/vendor/kernel/migrations/*.sql    -> dir: "vendor/kernel"
+```
+A repo may additionally hold gitignored runtime artifacts for the same store (e.g. four rotating
+`backups/*.db` copies) — these are never inspected, so they never produce extra datastores; the
+one `migrations/` directory already resolves to exactly one `DatastoreSpec`.
+
+**Sizing**: `tableCount` = the number of `CREATE TABLE` statements (case-insensitive, including
+`CREATE TABLE IF NOT EXISTS`) across the datastore's own tracked schema content — never a row
+count, never anything read from a `.db` file. `migrationCount` = the number of tracked `*.sql`
+files under that datastore's `migrations/` directory (`0` for a bare-`schema.sql` datastore, which
+has no migrations directory to count).
+
 ## Multi-repo merge
 
 - Producer: `mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph` —
@@ -167,7 +235,8 @@ accepted shape of the first merged view, not a claim that intra-repo structure d
 type (`loc`/`complexity`/`churn`/`age` numeric and non-negative; `contributors`/`imports`/
 `calls`/`contains` are string arrays; `type` is one of the six enum values); every node `id` is
 non-empty and unique across the graph; `repoPath`/`headSha` are non-empty strings and `headDate`
-parses as a valid date. It does **not** check referential integrity of `imports`/`calls`/
-`contains` against other node ids, or validate the churn/age windowing math — those are
-behavioral checks, owned by `tests/analyzer.test.ts` and `tests/compiler-*.test.ts`, not
-structural schema checks.
+parses as a valid date; when present, `contentHash` is a lowercase hex sha256 string (64 hex
+characters) — absent is always legal, a malformed non-hash string is a hard validation error. It
+does **not** check referential integrity of `imports`/`calls`/`contains` against other node ids,
+or validate the churn/age windowing math — those are behavioral checks, owned by
+`tests/analyzer.test.ts` and `tests/compiler-*.test.ts`, not structural schema checks.

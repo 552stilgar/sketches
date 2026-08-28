@@ -31,6 +31,7 @@ function weightedRoadsCity(): CityModel {
       { from: "b-4", to: "b-5", weight: 4 },
     ],
     landmarks: [],
+    identityLinks: [],
   };
   const check = validateCity(city);
   if (!check.ok) throw new Error(`weightedRoadsCity fixture is invalid: ${check.errors.join("; ")}`);

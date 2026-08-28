@@ -33,14 +33,22 @@ interface Road {
   weight?: number;            // structural edge multiplicity, integer >= 1 — see "Road weight"
 }
 
-interface Landmark { id: string; x: number; y: number; kind: string; }  // [] is valid — Phase 2
-                                                                          // does not require any
+interface Landmark {
+  id: string; x: number; y: number;
+  kind: string;      // open string; V4 emits exactly one: "datastore" (see "Landmarks" below)
+  label?: string;     // display label, e.g. a datastore's directory-derived name ("auth-db")
+  weight?: number;     // scale signal, meaning defined per `kind` — for "datastore", TABLE COUNT
+}                                                        // [] is valid — no landmarks is legal
+
+interface IdentityLink { hash: string; members: string[]; }  // V4 — see "Clone identity" below.
+                                                                // [] is valid — no clones found.
 
 interface CityModel {
   districts: District[];
   buildings: Building[];
   roads: Road[];
   landmarks: Landmark[];
+  identityLinks: IdentityLink[];
 }
 ```
 
@@ -111,6 +119,36 @@ The compiler emits weights; the **renderer** owns anything animated from them. `
 a pure function with no clock and no randomness — no frame timing, pulse rate, or dash offset ever
 appears in `city.json` (`PROJECT_IDEA.md` §5.5, determinism constraint).
 
+## Landmarks (V4)
+
+`Landmark.kind` is an open string, but V4's analyzer/compiler pipeline emits exactly one kind:
+`"datastore"`, one per `DatastoreSpec` detected by `detectDatastores`
+(`docs/CONTRACT-repo-json.md` § "Datastore detection"). `label` is the datastore's directory-
+derived display name; `weight` is its `tableCount` — schema-derived, never sized from a live
+`.db` file (D1, same rule the analyzer side is built on: a landmark's geometry must not change
+just because the app ran for another hour).
+
+## Clone identity (V4)
+
+`identityLinks` groups buildings compiled from byte-identical source files (`RepoNode.contentHash`,
+`docs/CONTRACT-repo-json.md` § "Clone identity / content hash"). `compileCity` groups file nodes
+by `contentHash`, keeping only groups with 2+ members (a hash held by a single node is not a clone
+group and produces no `IdentityLink`); `members` holds the resulting building ids, **sorted by
+codepoint** (`compareCodepoints`, `src/util/compare.ts`) for determinism, same discipline as every
+other ordering rule on this page. A node with no `contentHash` never contributes to any group.
+
+**D2 — IDENTITY LINKS ARE NOT ROADS.** A `Road` asserts traffic; vendored copies carry ZERO
+traffic between them — that is the entire finding an `IdentityLink` exists to show. Nothing in
+`compileCity` may turn an `IdentityLink` into a `Road` (or vice versa) — they are disjoint fields
+for a reason. The renderer gives clone identity its own visual channel
+(`src/renderer/tethers.ts`): elevated above road height, **static** (no dash animation, no
+per-frame update, no clock read), no dashes at all — visibly not-a-road, so a viewer who sees
+motion on roads and stillness on tethers learns the difference in one glance.
+
+**D3 — exact hash only.** See `docs/CONTRACT-repo-json.md` § "Clone identity / content hash" for
+the full rule; it applies identically here — `compileCity` must never widen exact-hash grouping
+into any form of near-duplicate clustering.
+
 ## Layout algorithm (fixed — do not redesign)
 
 1. Hierarchical spatial allocation first — treemap/Voronoi subdivision for districts.
@@ -144,13 +182,35 @@ ratified reading (contract lane, 2026-08-21) of `docs/PROJECT_IDEA.md`'s Phase-2
 which call out the district-grouping detail explicitly only for the 50–500 band; it applies
 uniformly. `tests/compiler-layout.test.ts` asserts this at the 200-file band directly.
 
+**D4 — clone-aware LOD exemption (V4).** At >500 files, `selectBuildingSources`
+(`src/compiler/grammar.ts`) normally aggregates a whole directory into one building — which means
+a clone-bearing directory would have nothing for an `IdentityLink` to attach to, exactly the gap
+a 2026-08-28 dogfood run hit (a merged 618-node city with three vendored kernel copies couldn't
+show any of them once directory-level LOD kicked in). The rule: **a directory containing any file
+that participates in an `IdentityLink` KEEPS FILE GRANULARITY**, even past the 500-file threshold
+— every other directory still collapses exactly as before. The threshold itself stays 500; only
+clone-bearing directories are exempted from the aggregation step. `tests/identity-links.test.ts`
+("clone-aware LOD" describe block) is the RED gate for this exemption; `tests/compiler-layout.test.ts`
+remains the gate for the ordinary (non-clone) aggregation behavior, unchanged.
+
 ## Validation
 
-`validateCity` checks: all four top-level arrays are present; every district/building has the
-required fields with correct types (`metrics.loc`/`.complexity`/`.churn` included); every
-district id is unique among districts and every building id is unique among buildings; every
-road's `from`/`to` resolves to a real building id (dangling road refs are a hard validation
-failure). It does **not** check the geometric invariants above (no-overlap, containment,
-footprint-vs-loc proportionality, byte-identical determinism) — those are compiler *behavior*
-checks owned by `tests/compiler-layout.test.ts` and `tests/compiler-determinism.test.ts`, not
-schema-shape checks.
+`validateCity` checks: `districts`/`buildings`/`roads`/`landmarks` are present; every
+district/building has the required fields with correct types (`metrics.loc`/`.complexity`/
+`.churn` included); every district id is unique among districts and every building id is unique
+among buildings; every road's `from`/`to` resolves to a real building id (dangling road refs are a
+hard validation failure); a landmark's `label`/`weight`, when present, are a non-empty string /
+non-negative number respectively. It does **not** check the geometric invariants above (no-overlap,
+containment, footprint-vs-loc proportionality, byte-identical determinism) — those are compiler
+*behavior* checks owned by `tests/compiler-layout.test.ts` and `tests/compiler-determinism.test.ts`,
+not schema-shape checks.
+
+**`identityLinks` (V4)**: unlike the four fields above, a **missing** `identityLinks` key is
+legal — every `city.json` written before V4 lacks it entirely, and `validateCity` must keep
+accepting those files unchanged (reader-side leniency; `compileCity` is still obligated to always
+*emit* the array, per its own contract above — this asymmetry is deliberate, same shape as
+`Road.weight`'s "optional in the type, mandatory from the producer" idiom). When `identityLinks`
+**is** present: it must be an array, and each entry is validated as a hard error if — its `hash`
+is not a lowercase hex sha256 string (64 hex characters); its `members` is not a string array;
+`members` has fewer than 2 entries; or any `members` entry does not resolve to a real building id
+(the same "dangling reference is a hard failure" discipline `roads[].from`/`.to` already gets).
