@@ -8,7 +8,6 @@ export interface UIHandle {
   /** Opens the metrics overlay for a building id (no-op + no throw if the id is unknown). */
   openOverlay(buildingId: string): void;
   closeOverlay(): void;
-  isOpen(): boolean;
   /** Plain-text contents of the open overlay, or null when closed. Used by window.__test. */
   overlayText(): string | null;
   dispose(): void;
@@ -68,10 +67,6 @@ export function setupUI(params: SetupUIParams): UIHandle {
   function closeOverlay(): void {
     openId = null;
     overlay.style.display = "none";
-  }
-
-  function isOpen(): boolean {
-    return openId !== null;
   }
 
   function overlayText(): string | null {
@@ -147,5 +142,5 @@ export function setupUI(params: SetupUIParams): UIHandle {
     overlay.remove();
   }
 
-  return { openOverlay, closeOverlay, isOpen, overlayText, dispose };
+  return { openOverlay, closeOverlay, overlayText, dispose };
 }

@@ -11,13 +11,10 @@ export interface SceneHandle {
   camera: THREE.PerspectiveCamera;
   renderer: THREE.WebGLRenderer;
   controls: OrbitControls;
-  /** Call once per frame from an external loop, or use startRenderLoop(). */
+  /** Call once per frame from an external loop. */
   render(): void;
-  /** Starts a requestAnimationFrame loop that also drives OrbitControls damping. */
-  startRenderLoop(): void;
   /** Keeps camera aspect / renderer size in sync with the container element. */
   handleResize(): void;
-  dispose(): void;
 }
 
 const CANVAS_SIZE = 1000; // matches the CityModel canvas convention (docs/CONTRACT-city-json.md)
@@ -83,16 +80,6 @@ export function createScene(container: HTMLElement): SceneHandle {
     renderer.render(scene, camera);
   }
 
-  let rafId = 0;
-  function startRenderLoop(): void {
-    const tick = (): void => {
-      controls.update();
-      render();
-      rafId = requestAnimationFrame(tick);
-    };
-    rafId = requestAnimationFrame(tick);
-  }
-
   function handleResize(): void {
     const w = container.clientWidth;
     const h = Math.max(1, container.clientHeight);
@@ -101,11 +88,5 @@ export function createScene(container: HTMLElement): SceneHandle {
     renderer.setSize(w, h);
   }
 
-  function dispose(): void {
-    if (rafId) cancelAnimationFrame(rafId);
-    controls.dispose();
-    renderer.dispose();
-  }
-
-  return { scene, camera, renderer, controls, render, startRenderLoop, handleResize, dispose };
+  return { scene, camera, renderer, controls, render, handleResize };
 }
