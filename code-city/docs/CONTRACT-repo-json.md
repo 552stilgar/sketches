@@ -109,6 +109,58 @@ eventual source — `docs/PROJECT_IDEA.md` §3.1). Any real, structure-derived, 
 is acceptable for V1; `complexity` feeds directly into `compileCity`'s height rule
 (`height = max(1, complexity)`), so it must be `>= 0`.
 
+## Multi-repo merge
+
+- Producer: `mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph` —
+  `src/analyzer/merge.ts`
+- Consumer: `compileCity(graph: RepoGraph): CityModel` — same consumer as a single-repo
+  `repo.json`, unchanged
+- CLI: `bin/merge.ts <name>=<repo.json> [<name>=<repo.json> ...] <out.json>`
+
+`mergeRepoGraphs` takes N already-produced `RepoGraph`s, each tagged with a short repo `name`,
+and returns one `RepoGraph` that stands in for all of them — a **pure repo.json-to-repo.json
+transform**, same purity contract as `compileCity` (no I/O, no clock, no randomness; same input
+graphs in the same order → byte-identical output).
+
+**Namespacing rule — this is the entire mechanism:** every node's `id` and `path` gets prefixed
+with `<name>/`. Because `compileCity` derives each district from `topLevelPath()` — the first
+path segment, nothing more (`src/compiler/grammar.ts`) — prefixing every node in a repo with
+that repo's name makes the repo name itself the first segment for all of its nodes. **One repo
+in the input list becomes exactly one district in the compiled city, with no changes anywhere in
+`src/compiler/` or `src/analyzer/index.ts`.**
+
+**Edge remapping:** every entry in `imports[]`, `calls[]`, and `contains[]` is rewritten the same
+way an node's own id is, but only when it resolves to a node id that existed in **that same
+repo's own pre-merge graph** — per the "Node id convention" above, an edge is always authored in
+its own repo's id space, never another repo's. An entry that does not resolve within its own
+repo is left byte-for-byte untouched. This is deliberate, not a shortcut: resolving against the
+union of every input repo's ids would risk fabricating a cross-repo edge purely because two
+unrelated repos happen to share a filename (e.g. both vendor a `src/db.ts`) — exactly the kind of
+invented edge the "Call edges" rule above forbids for the single-repo case. An edge left
+unresolved post-merge doesn't match any id in the merged graph, so it produces no road, via the
+exact same "unresolved target → no road" path `compileCity` already has for the single-repo case
+(`src/compiler/index.ts`) — no special-casing needed downstream.
+
+**Degenerate inputs**, all handled explicitly rather than left to fall out of the shape of the
+code:
+- **Empty input** (`[]`) throws — there is no repo to name the merged graph's `repoPath` after.
+- **A single-element input** is a legal (if trivial) merge: every node gets the one repo's name
+  prefixed on, one district results.
+- **A repo-name collision** (two entries with the same `name`) throws before any prefixing
+  happens.
+- **A repo name containing `"/"`** throws — it would split across the first path segment
+  `topLevelPath()` keys districts on, silently breaking the one-district-per-repo guarantee.
+
+`repoPath` and `headSha` on the merged graph are informational concatenations
+(`"<name>=<value>;<name>=<value>;..."`) — no single filesystem path or commit identifies a
+multi-repo view. `headDate` is the latest (`Date.parse`-max) `headDate` across the input repos —
+well-defined for any non-empty input, independent of argument order.
+
+**Known limitation, not a bug:** repo-name prefixing means every node's district is its repo
+name, full stop — a repo's own internal directory structure (e.g. `src/`, `lib/`) no longer forms
+separate districts once merged; it all collapses into that one repo's district. This is the
+accepted shape of the first merged view, not a claim that intra-repo structure doesn't matter.
+
 ## Validation
 
 `validateRepoGraph` checks: `nodes` is an array; every node has all fields above with the correct

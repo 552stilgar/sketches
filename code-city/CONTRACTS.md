@@ -5,7 +5,8 @@ contract that lets the analyzer, compiler, and renderer be built — and tested 
 
 | Contract | Producer | Consumer | Spec |
 |---|---|---|---|
-| `repo.json` (RepoGraph) | `analyzeRepo()` — `src/analyzer/index.ts` | `compileCity()` | [docs/CONTRACT-repo-json.md](docs/CONTRACT-repo-json.md) |
+| `repo.json` (RepoGraph) | `analyzeRepo()` — `src/analyzer/index.ts` | `compileCity()`, `mergeRepoGraphs()` | [docs/CONTRACT-repo-json.md](docs/CONTRACT-repo-json.md) |
+| merged `repo.json` (RepoGraph) | `mergeRepoGraphs()` — `src/analyzer/merge.ts` | `compileCity()` | [docs/CONTRACT-repo-json.md](docs/CONTRACT-repo-json.md) § "Multi-repo merge" |
 | `city.json` (CityModel) | `compileCity()` — `src/compiler/index.ts` | `render2d()`, future 3D renderer | [docs/CONTRACT-city-json.md](docs/CONTRACT-city-json.md) |
 | `city.svg` output | `render2d()` — `src/renderer/svg.ts` | browser / debug view | [docs/CONTRACT-render-svg.md](docs/CONTRACT-render-svg.md) |
 
@@ -36,6 +37,7 @@ contract break, gated directly by `tests/compiler-determinism.test.ts` and
 
 ```ts
 analyzeRepo(repoPath: string): Promise<RepoGraph>   // src/analyzer/index.ts
+mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph  // src/analyzer/merge.ts — pure, sync
 compileCity(graph: RepoGraph): CityModel            // src/compiler/index.ts — pure, sync
 render2d(city: CityModel): string                   // src/renderer/svg.ts — pure, sync
 ```

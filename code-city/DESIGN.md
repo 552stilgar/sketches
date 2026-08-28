@@ -38,12 +38,15 @@ implementation convenience.
 
 ## CLIs
 
-`bin/analyze.ts <repo-path> <repo.json>`, `bin/compile.ts <repo.json> <city.json>`,
-`bin/render2d.ts <city.json> <city.svg>` are thin wiring: parse argv, call the one stage
-function, run the output through the matching `validate*` from `src/types.ts`, write the file.
-All three fail loudly (non-zero exit, printed validation errors) rather than writing an invalid
-or partial file — Failure Discipline law, real result → disclosed failure → thrown error, never
-a silent stub written to disk.
+`bin/analyze.ts <repo-path> <repo.json>`, `bin/merge.ts <name>=<repo.json> [<name>=<repo.json>
+...] <out.json>`, `bin/compile.ts <repo.json> <city.json>`, `bin/render2d.ts <city.json>
+<city.svg>` are thin wiring: parse argv, call the one stage function, run the output through the
+matching `validate*` from `src/types.ts`, write the file. All four fail loudly (non-zero exit,
+printed validation errors) rather than writing an invalid or partial file — Failure Discipline
+law, real result → disclosed failure → thrown error, never a silent stub written to disk.
+`bin/merge.ts` is optional — a single-repo run skips straight from `bin/analyze.ts`'s output to
+`bin/compile.ts`; it only sits between them when the goal is one city over N repos (see
+`docs/CONTRACT-repo-json.md` § "Multi-repo merge").
 
 ## Determinism is load-bearing, not a nice-to-have
 
