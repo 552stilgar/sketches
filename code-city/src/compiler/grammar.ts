@@ -41,7 +41,34 @@ function aggregate(id: string, path: string, districtPath: string, members: Repo
   };
 }
 
-export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSource[] {
+/**
+ * D4 clone-aware LOD scope (CONTRACTS.md V4, docs/CONTRACT-city-json.md "D4"):
+ *   - "district": a clone-participating file exempts its ENTIRE top-level district from
+ *     directory-aggregate LOD -- every file in that district keeps file-level granularity. This
+ *     is the original V4 behavior and stays the default so omitting the option is bit-for-bit
+ *     unchanged.
+ *   - "directory": exemption is scoped to the aggregation GROUP the clone file itself would fall
+ *     into (the same key `groups` below partitions on -- the file's immediate top-level dir, or
+ *     its second-level dir when nested deeper) rather than the whole district. Non-clone-bearing
+ *     sibling directories inside the same district still collapse normally.
+ */
+export type CloneLodScope = "district" | "directory";
+
+/** The aggregation-group key a file falls into past the 500-file threshold -- same key `groups`
+ *  below is partitioned on. Exposed standalone so both the clone-exemption pass and the grouping
+ *  pass agree on exactly the same key without recomputing it differently in two places. */
+function aggregationGroupKey(file: RepoNode): string {
+  const filePath = normalizePath(file.path);
+  const district = topLevelPath(file);
+  const parts = filePath.split("/");
+  return district === "." ? filePath : parts.length > 2 ? `${parts[0]}/${parts[1]}` : district;
+}
+
+export function selectBuildingSources(
+  nodes: readonly RepoNode[],
+  opts?: { cloneLodScope?: CloneLodScope },
+): BuildingSource[] {
+  const cloneLodScope: CloneLodScope = opts?.cloneLodScope ?? "district";
   const files = nodes.filter((node) => node.type === "file").sort(comparePathThenId);
   const toFileSource = (node: RepoNode): BuildingSource => ({
     id: node.id,
@@ -64,13 +91,14 @@ export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSourc
     matches.push(file);
     filesByHash.set(file.contentHash, matches);
   }
-  // A district is the compiler's top-level directory boundary. Keeping every group in a
-  // clone-bearing district at file LOD preserves both the clone's attachment point and its
-  // sibling files, rather than producing a mixed directory/file representation within it.
-  const cloneDistricts = new Set<string>();
+  // Exemption keys: either the whole top-level district ("district" scope, original V4 behavior)
+  // or just the aggregation group each clone file itself belongs to ("directory" scope).
+  const exemptKeys = new Set<string>();
   for (const matches of filesByHash.values()) {
     if (matches.length < 2) continue;
-    for (const file of matches) cloneDistricts.add(topLevelPath(file));
+    for (const file of matches) {
+      exemptKeys.add(cloneLodScope === "directory" ? aggregationGroupKey(file) : topLevelPath(file));
+    }
   }
 
   // Aggregate into one building per top-level directory (or per
@@ -82,21 +110,20 @@ export function selectBuildingSources(nodes: readonly RepoNode[]): BuildingSourc
   // of erasing every one of them into a single building.
   const groups = new Map<string, { districtPath: string; members: RepoNode[] }>();
   for (const file of files) {
-    const filePath = normalizePath(file.path);
+    const path = aggregationGroupKey(file);
     const district = topLevelPath(file);
-    const parts = filePath.split("/");
-    const path = district === "." ? filePath : parts.length > 2 ? `${parts[0]}/${parts[1]}` : district;
     const group = groups.get(path) ?? { districtPath: district, members: [] };
     group.members.push(file);
     groups.set(path, group);
   }
   return [...groups]
     .sort(([a], [b]) => compareCodepoints(a, b))
-    .flatMap(([path, { districtPath, members }]) =>
-      cloneDistricts.has(districtPath)
+    .flatMap(([path, { districtPath, members }]) => {
+      const exempt = cloneLodScope === "directory" ? exemptKeys.has(path) : exemptKeys.has(districtPath);
+      return exempt
         ? [...members].sort(comparePathThenId).map(toFileSource)
-        : [aggregate(`directory:${path}`, path, districtPath, members)],
-    );
+        : [aggregate(`directory:${path}`, path, districtPath, members)];
+    });
 }
 
 /** Nearest-rank 95th percentile, floored at 1. Does not mutate the input. */

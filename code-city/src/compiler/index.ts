@@ -11,6 +11,7 @@
 
 import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark, DatastoreSpec } from "../types.ts";
 import { dominantLanguage, footprintSide, normalizePath, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
+import type { CloneLodScope } from "./grammar.ts";
 import { shelfSlots, squarify } from "./layout.ts";
 import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
 
@@ -26,7 +27,13 @@ function topLevelPathOfDir(dir: string): string {
   return slash < 0 ? normalized : normalized.slice(0, slash);
 }
 
-export function compileCity(graph: RepoGraph): CityModel {
+export interface CompileCityOptions {
+  /** D4 clone-aware LOD scope (CONTRACTS.md V4, docs/CONTRACT-city-json.md "D4"). Defaults to
+   *  "district" (the original V4 behavior) so omitting this option is bit-for-bit unchanged. */
+  cloneLodScope?: CloneLodScope;
+}
+
+export function compileCity(graph: RepoGraph, options?: CompileCityOptions): CityModel {
   const datastores = graph.datastores ?? [];
   const files = graph.nodes.filter((node) => node.type === "file");
   const districtMembers = new Map<string, RepoNode[]>();
@@ -55,7 +62,9 @@ export function compileCity(graph: RepoGraph): CityModel {
     return { id: `district:${path}`, name: path, ...rect, style: dominantLanguage(districtMembers.get(path) ?? []) };
   });
 
-  const sources = selectBuildingSources(graph.nodes).sort(comparePathThenId);
+  const sources = selectBuildingSources(graph.nodes, { cloneLodScope: options?.cloneLodScope }).sort(
+    comparePathThenId,
+  );
   const locRef = p95(sources.map((source) => source.loc));
   const complexityRef = p95(sources.map((source) => source.complexity));
   const sourcesByDistrict = new Map<string, typeof sources>();
