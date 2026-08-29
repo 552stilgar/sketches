@@ -76,6 +76,13 @@ Four frozen decisions (not open questions — reopen only with Usul's explicit b
   with nothing for an `IdentityLink` to attach to — exactly what hid the vendored kernel in the
   motivating dogfood run. A directory with any clone-participating file keeps file-level
   granularity even past 500 files; every other directory still collapses as before.
+  **Reopened as a selectable option (Lane B, 2026-08-29):** the *scope* of that exemption —
+  whole top-level DISTRICT vs. just the clone member's immediate aggregation-group DIRECTORY —
+  turned out to be an aesthetic call, not a settled one: district scope took a real merged city
+  from 21 buildings to 625 because one duplicated file pair dragged its entire district back to
+  file LOD. `compileCity(graph, { cloneLodScope: "district" | "directory" })` makes both modes
+  selectable; `"district"` stays the default so omitting the option is bit-for-bit unchanged.
+  Which mode ships as Usul's pick is still open — see `docs/CONTRACT-city-json.md` § "D4".
 
 Fixture: `fixtures/mock-city-v4.json` — hand-written, `validateCity`-clean, 3 districts, 12
 buildings, 2 datastore landmarks, 2 identityLinks (a 3-building cross-district group and a
@@ -106,7 +113,10 @@ says which lane turns it green.
 ```ts
 analyzeRepo(repoPath: string): Promise<RepoGraph>   // src/analyzer/index.ts
 mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph  // src/analyzer/merge.ts — pure, sync
-compileCity(graph: RepoGraph): CityModel            // src/compiler/index.ts — pure, sync
+compileCity(graph: RepoGraph, options?: { cloneLodScope?: "district" | "directory" }): CityModel
+                                                     // src/compiler/index.ts — pure, sync. cloneLodScope
+                                                     // defaults to "district" (bit-for-bit unchanged if
+                                                     // omitted) — see "D4" in docs/CONTRACT-city-json.md.
 render2d(city: CityModel): string                   // src/renderer/svg.ts — pure, sync
 
 // V4 (see "V4: datastores + clone identity" above)

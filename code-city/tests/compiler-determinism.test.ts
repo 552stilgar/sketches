@@ -47,6 +47,20 @@ describe("compiler determinism (RED — compileCity not implemented yet)", () =>
     }
   });
 
+  it("compileCity(G, { cloneLodScope: 'directory' }) is also byte-identical across repeated calls", () => {
+    const g = makeFixedRepoGraph();
+    const a = JSON.stringify(compileCity(g, { cloneLodScope: "directory" }));
+    const b = JSON.stringify(compileCity(structuredClone(g), { cloneLodScope: "directory" }));
+    expect(a).toBe(b);
+  });
+
+  it("omitting cloneLodScope is bit-for-bit identical to passing 'district' explicitly (default is a no-op, not a hidden entropy source)", () => {
+    const g = makeFixedRepoGraph();
+    const implicit = JSON.stringify(compileCity(g));
+    const explicit = JSON.stringify(compileCity(structuredClone(g), { cloneLodScope: "district" }));
+    expect(implicit).toBe(explicit);
+  });
+
   it("uses codepoint ordering at every compiler sort site without consulting the locale", () => {
     const g = makeFixedRepoGraph();
     g.nodes[0].id = "é/é.ts";

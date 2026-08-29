@@ -169,3 +169,93 @@ describe("compileCity — clone-aware LOD (Part B, D4)", () => {
     expect(city.buildings.length).toBeGreaterThan(0);
   });
 });
+
+describe("compileCity — cloneLodScope option (Lane B)", () => {
+  // 6 top-level directories, ~90 filler files each (540 total). d0 additionally has a
+  // second-level "sub/" dir with 30 more filler files and one clone file nested three deep
+  // (d0/sub/kernel/logger.ts). This shape lets "district" vs "directory" scope diverge visibly:
+  // district scope keeps ALL of d0 (including d0/sub) at file LOD; directory scope only keeps
+  // the clone file's own aggregation group (d0/sub, per selectBuildingSources's grouping key)
+  // at file LOD and still collapses d0's top-level filler files.
+  function buildScopeGraph(): RepoGraph {
+    const nodes: RepoNode[] = [];
+    const dirs = ["d0", "d1", "d2", "d3", "d4", "d5"];
+    for (const dir of dirs) {
+      for (let i = 0; i < 90; i++) {
+        nodes.push(file(`${dir}/filler${i}.ts`, 20 + (i % 10)));
+      }
+    }
+    for (let i = 0; i < 30; i++) {
+      nodes.push(file(`d0/sub/filler${i}.ts`, 15));
+    }
+    nodes.push(file("d0/sub/kernel/logger.ts", 35, HASH_KERNEL));
+    nodes.push(file("d1/kernel/logger.ts", 35, HASH_KERNEL));
+    return graph(nodes);
+  }
+
+  it("defaults to 'district' scope: omitting the option is bit-for-bit identical to passing it explicitly", () => {
+    const g = buildScopeGraph();
+    const implicit = compileCity(g);
+    const explicit = compileCity(structuredClone(g), { cloneLodScope: "district" });
+    expect(JSON.stringify(implicit)).toBe(JSON.stringify(explicit));
+  });
+
+  it("'district' scope keeps ALL of a clone-bearing district at file LOD, including non-clone siblings", () => {
+    const city = compileCity(buildScopeGraph(), { cloneLodScope: "district" });
+    const buildingIds = new Set(city.buildings.map((b) => b.id));
+    // d0's plain top-level filler files are NOT clone participants, but district scope keeps
+    // them at file level anyway because they share a district with a clone member.
+    for (let i = 0; i < 90; i++) {
+      expect(buildingIds.has(`d0/filler${i}.ts`)).toBe(true);
+    }
+  });
+
+  it("'directory' scope collapses a non-clone-bearing sibling directory that 'district' scope would keep", () => {
+    const cityDistrict = compileCity(buildScopeGraph(), { cloneLodScope: "district" });
+    const cityDirectory = compileCity(buildScopeGraph(), { cloneLodScope: "directory" });
+    const districtIds = new Set(cityDistrict.buildings.map((b) => b.id));
+    const directoryIds = new Set(cityDirectory.buildings.map((b) => b.id));
+
+    // Sanity: district scope keeps d0's top-level filler files at file LOD (asserted above too).
+    expect(districtIds.has("d0/filler0.ts")).toBe(true);
+
+    // Directory scope only exempts the clone member's own aggregation group (d0/sub) -- d0's
+    // top-level filler files, which share a DISTRICT but not a group with the clone, collapse.
+    for (let i = 0; i < 90; i++) {
+      expect(directoryIds.has(`d0/filler${i}.ts`)).toBe(false);
+    }
+    const d0Aggregate = cityDirectory.buildings.filter((b) => b.id === "directory:d0");
+    expect(d0Aggregate.length).toBe(1);
+
+    // The clone file's own aggregation group (d0/sub, holding the nested kernel/ clone) still
+    // keeps file granularity under directory scope.
+    expect(directoryIds.has("d0/sub/kernel/logger.ts")).toBe(true);
+    for (let i = 0; i < 30; i++) {
+      expect(directoryIds.has(`d0/sub/filler${i}.ts`)).toBe(true);
+    }
+
+    // directory scope must therefore produce fewer buildings than district scope on this fixture.
+    expect(cityDirectory.buildings.length).toBeLessThan(cityDistrict.buildings.length);
+  });
+
+  it("every identityLink member resolves to a real building id in BOTH scopes (validateCity clean, no dangling tether)", () => {
+    for (const cloneLodScope of ["district", "directory"] as const) {
+      const city = compileCity(buildScopeGraph(), { cloneLodScope });
+      expect(city.identityLinks).toHaveLength(1);
+      const buildingIds = new Set(city.buildings.map((b) => b.id));
+      for (const memberId of city.identityLinks[0].members) {
+        expect(buildingIds.has(memberId)).toBe(true);
+      }
+      const result = validateCity(city);
+      expect(result.ok).toBe(true);
+      expect(result.errors).toEqual([]);
+    }
+  });
+
+  it("'directory' scope is itself deterministic across repeat calls", () => {
+    const g = buildScopeGraph();
+    const a = JSON.stringify(compileCity(g, { cloneLodScope: "directory" }));
+    const b = JSON.stringify(compileCity(structuredClone(g), { cloneLodScope: "directory" }));
+    expect(a).toBe(b);
+  });
+});

@@ -193,6 +193,33 @@ clone-bearing directories are exempted from the aggregation step. `tests/identit
 ("clone-aware LOD" describe block) is the RED gate for this exemption; `tests/compiler-layout.test.ts`
 remains the gate for the ordinary (non-clone) aggregation behavior, unchanged.
 
+**`cloneLodScope` option (Lane B, 2026-08-29).** "A directory containing any file" above was
+ambiguous between two readings, and the one that shipped in V4 (whole top-level district) turned
+out to have a real cost: one duplicated file pair anywhere in a district drags that district's
+*entire* contents back to file LOD, regardless of size. On a real merged city this took building
+count from 21 to 625. Both readings now exist as an explicit, selectable option on `compileCity`:
+
+```ts
+compileCity(graph: RepoGraph, options?: { cloneLodScope?: "district" | "directory" }): CityModel
+```
+
+- `"district"` (default — omitting the option is bit-for-bit identical to pre-Lane-B output): a
+  clone-participating file exempts its whole top-level district from aggregation, as originally
+  specified above.
+- `"directory"`: exemption is scoped to just the aggregation GROUP the clone file itself falls
+  into — the same key `selectBuildingSources`'s internal `groups` map partitions on (a file's
+  immediate top-level directory, or its second-level directory when nested deeper than that).
+  Non-clone-bearing sibling directories inside the same district still collapse to directory LOD
+  exactly as they would with zero clones anywhere in the repo.
+
+In both modes every `IdentityLink.members` entry MUST resolve to a real building id — a tether
+pointing at a collapsed/aggregated node is a hard failure (`compileCity` throws), never a
+silently-dropped or warned-about link; see the "no building for clone member" throw in
+`src/compiler/index.ts`. `bin/compile.ts` exposes the option as `--clone-lod-scope=<value>`,
+failing loudly (non-zero exit, listing the valid set) on anything else. Which mode ships as the
+long-term default is Usul's aesthetic call, made by eye against a real repo — this option makes
+that call deferrable rather than baked in.
+
 ## Validation
 
 `validateCity` checks: `districts`/`buildings`/`roads`/`landmarks` are present; every
