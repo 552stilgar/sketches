@@ -1,5 +1,6 @@
 node_modules/
 dist/
+out/
 public/repo.json
 public/city.json
 public/city.svg
