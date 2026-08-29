@@ -94,6 +94,48 @@ RED gates (fail today, turn green as each V4 lane lands): `tests/content-hash.te
 `tests/landmarks-render.test.ts` (`buildLandmarks` + `buildTethers`). Each file's header comment
 says which lane turns it green.
 
+## Phase 4: git time-travel (timeline scrub)
+
+Motivation (PROJECT_IDEA.md §5.2/Phase 4): a repo's history is a fourth navigable dimension.
+`bin/snapshots.ts` (already merged, P3) resolves the last N months of history into one
+`repo-YYYY-MM.json` per month, skipping (never fabricating) a month with no qualifying commit.
+This phase compiles that directory into a scrubbable sequence and renders it as a morphing city.
+
+New producer/consumer pairs:
+
+| Contract | Producer | Consumer |
+|---|---|---|
+| `TimelineManifest` (`timeline.json`) | `buildTimelineManifest()` — `src/compiler/sequence.ts`, written by `bin/sequence.ts` | `src/timeline-main.ts` (fetches it + every `TimelineEntry.cityFile`) |
+| `MorphedBuilding` | `morphBuilding()`/`morphBuildings()` — `src/renderer/morph.ts` | `src/renderer/timeline.ts`'s `buildTimeline()` |
+
+Two frozen decisions:
+
+- **Gaps render as gaps, never as smooth interpolation across missing history.** A `TimelineEntry`
+  whose month doesn't calendar-follow the previous entry gets `gapBefore: true`
+  (`isCalendarConsecutive`, `src/compiler/sequence.ts`). `src/renderer/timeline.ts`'s `setPosition`
+  detects a gapped pair and hard-cuts at the midpoint instead of calling `morphBuildings` across
+  it — `currentDate()` freezes to whichever boundary snapshot's real date it cut to, rather than
+  reporting an interpolated instant nothing in the underlying history actually reaches.
+- **Only buildings morph.** Districts/roads/landmarks/identity tethers snap to the scrub pair's
+  "to" snapshot and are rebuilt (not interpolated) on every pair change. Two reasons: district-
+  level treemap reflow is unstable by contract (`squarify` is pinned "fixed" below), so a smooth
+  district morph would assert a stability the layout doesn't have; and roads/landmarks/tethers are
+  keyed to a single city's own building ids, with no defined meaning "50% between two repo
+  states". `src/renderer/timeline.ts`'s header comment carries the full rationale.
+
+Morphing is DISPLAY ONLY (constraint 5, extended by this phase): `MorphedBuilding` is never a
+`Building` and is never written into a `CityModel` or handed to `compileCity` — it exists to be
+applied to one rendered Three.js frame and discarded (see `src/renderer/morph.ts`'s header doc).
+
+RED-turned-green this lane: `tests/sequence.test.ts`, `tests/morph.test.ts`, `tests/timeline.test.ts`.
+
+Fixtures: `fixtures/mock-timeline.json` + `fixtures/mock-city-2026-{01,02,03,06}.json` (byte-
+identical copies in `public/`, same "build the renderer against a handwritten mock first"
+convention `fixtures/mock-city.json` established for V1) — four months exercising a building
+appearing (`b-notifications`, added in `-02`), a building vanishing (`b-format`, dropped in `-03`;
+`b-notifications` again in `-06`), metric/height growth, and a real gap (`-03` -> `-06` skips
+April/May, `gapBefore: true` on the `-06` entry).
+
 ## Fixtures
 
 - `fixtures/sample-project-src/` + `fixtures/build-fixture.mjs` — the 15-file, 4-directory,
@@ -124,6 +166,12 @@ hashFileContent(bytes: Uint8Array | string): string                       // src
 detectDatastores(files: {path: string, content: string}[]): DatastoreSpec[]  // src/analyzer/datastores.ts
 buildLandmarks(city: CityModel): THREE.Group                              // src/renderer/landmarks.ts
 buildTethers(city: CityModel, buildingCenter: (id: string) => THREE.Vector3 | null): THREE.Group  // src/renderer/tethers.ts
+
+// Phase 4 (see "Phase 4: git time-travel (timeline scrub)" above)
+buildTimelineManifest(entries: TimelineManifestInput[]): TimelineManifest  // src/compiler/sequence.ts — pure, sync
+morphBuilding(from: Building | undefined, to: Building | undefined, t: number): MorphedBuilding | null  // src/renderer/morph.ts — pure
+morphBuildings(fromCity: CityModel, toCity: CityModel, t: number): MorphedBuilding[]                    // src/renderer/morph.ts — pure
+buildTimeline(snapshots: TimelineSnapshot[], initialLens?: LensId): TimelineHandle  // src/renderer/timeline.ts
 ```
 
 ## Status (contract lane)

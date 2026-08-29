@@ -176,6 +176,15 @@ export function styleProfile(language: string): StyleProfile {
   return PROFILE_DEFS[name];
 }
 
+/** Looks up a StyleProfile by its own profile NAME (as opposed to styleProfile()'s
+ *  language -> name mapping) -- for a caller that already grouped buildings by ProfileName (e.g.
+ *  src/renderer/timeline.ts, which groups a morphed building UNION the same way buildBuildings()
+ *  does) and needs the StyleProfile back without re-deriving it from an arbitrary representative
+ *  language string. */
+export function profileByName(name: ProfileName): StyleProfile {
+  return PROFILE_DEFS[name];
+}
+
 // -- geometry construction -------------------------------------------------------------------
 // Local unit space matches the original plain box: x/z span [-0.5, 0.5], y spans [-0.5, 0.5].
 // After the per-instance transform (position = center, scale = width/height/depth) this maps
@@ -324,7 +333,11 @@ function styleHue(style: string): number {
   return hashUnit(style);
 }
 
-function buildingColor(b: Building, lightnessBias: number): THREE.Color {
+// Widened to `{id, style}` (rather than the full `Building`) so a non-Building caller with the
+// same two fields -- src/renderer/timeline.ts's MorphedBuilding, notably -- can reuse the exact
+// same base-color derivation without either duplicating this function or being forced to
+// construct a fake `Building`. `Building` itself still satisfies this shape unchanged.
+export function buildingColor(b: { id: string; style: string }, lightnessBias: number): THREE.Color {
   const baseHue = styleHue(b.style);
   const jitter = (hashUnit(b.id) - 0.5) * 0.06;
   const hue = (baseHue + jitter + 1) % 1;

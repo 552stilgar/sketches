@@ -13,6 +13,7 @@
     "test": "vitest run",
     "analyze": "node --experimental-strip-types bin/analyze.ts",
     "compile": "node --experimental-strip-types bin/compile.ts",
+    "sequence": "node --experimental-strip-types bin/sequence.ts",
     "render:2d": "node --experimental-strip-types bin/render2d.ts",
     "smoke": "node scripts/smoke.mjs"
   },
