@@ -175,6 +175,42 @@ export interface CityModel {
 }
 
 // ---------------------------------------------------------------------------------------------
+// timeline.json — TimelineManifest (Phase 4, "git time-travel" — see CONTRACTS.md § "Timeline
+// manifest (Phase 4)")
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * One resolved monthly snapshot in a scrubbable sequence: `src/compiler/sequence.ts`'s
+ * `buildTimelineManifest()` is the sole producer, `bin/sequence.ts` writes it, and
+ * `src/renderer/timeline.ts` is the sole consumer (fetches `cityFile` alongside this manifest).
+ */
+export interface TimelineEntry {
+  /** "YYYY-MM", unique across the manifest, ascending order. */
+  month: string;
+  /** ISO-8601 commit date this snapshot is anchored to (RepoGraph.headDate, carried through
+   *  compileCity unchanged) -- the renderer's date HUD reads this, never wall-clock "now". */
+  date: string;
+  /** Filename of this month's compiled CityModel, relative to the same directory as
+   *  timeline.json (e.g. "city-2026-01.json"). */
+  cityFile: string;
+  buildingCount: number;
+  districtCount: number;
+  /**
+   * True when this entry's month is NOT the calendar month immediately following the previous
+   * entry's month -- i.e. one or more months with no qualifying commit were skipped between them
+   * (src/analyzer/snapshots.ts never fabricates an empty/interpolated graph for a missing month).
+   * Always false for the first entry (nothing precedes it to be a gap from). A renderer scrubbing
+   * across a `gapBefore: true` boundary MUST NOT morph smoothly across it (never-fabricate,
+   * extended to time) -- see CONTRACTS.md.
+   */
+  gapBefore: boolean;
+}
+
+export interface TimelineManifest {
+  entries: TimelineEntry[];
+}
+
+// ---------------------------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------------------------
 
@@ -430,6 +466,69 @@ export function validateCity(x: unknown): ValidationResult {
           }
         }
       });
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+const MONTH_KEY_RE = /^\d{4}-\d{2}$/;
+
+/** Runtime validator for `timeline.json` -- same discipline as validateRepoGraph/validateCity:
+ *  bin/sequence.ts runs its manifest through this before writing (Failure Discipline LAW). */
+export function validateTimelineManifest(x: unknown): ValidationResult {
+  const errors: string[] = [];
+
+  if (!isPlainObject(x)) {
+    return { ok: false, errors: ["TimelineManifest must be an object"] };
+  }
+  const m = x;
+
+  if (!Array.isArray(m.entries)) {
+    return { ok: false, errors: ["entries must be an array"] };
+  }
+
+  const seenMonths = new Set<string>();
+  const entries = m.entries as unknown[];
+  entries.forEach((raw, i) => {
+    if (!isPlainObject(raw)) {
+      errors.push(`entries[${i}] must be an object`);
+      return;
+    }
+    const e = raw;
+    const label = isNonEmptyString(e.month) ? `entry "${e.month}"` : `entries[${i}]`;
+
+    if (!isNonEmptyString(e.month) || !MONTH_KEY_RE.test(e.month)) {
+      errors.push(`entries[${i}]: month must be a "YYYY-MM" string`);
+    } else if (seenMonths.has(e.month)) {
+      errors.push(`duplicate month in timeline manifest: "${e.month}"`);
+    } else {
+      seenMonths.add(e.month);
+    }
+    if (!isNonEmptyString(e.date) || Number.isNaN(Date.parse(e.date))) {
+      errors.push(`${label}: date must be a non-empty ISO-8601 date string`);
+    }
+    if (!isNonEmptyString(e.cityFile)) errors.push(`${label}: cityFile must be a non-empty string`);
+    if (!isFiniteNumber(e.buildingCount) || e.buildingCount < 0 || !Number.isInteger(e.buildingCount)) {
+      errors.push(`${label}: buildingCount must be a non-negative integer`);
+    }
+    if (!isFiniteNumber(e.districtCount) || e.districtCount < 0 || !Number.isInteger(e.districtCount)) {
+      errors.push(`${label}: districtCount must be a non-negative integer`);
+    }
+    if (typeof e.gapBefore !== "boolean") errors.push(`${label}: gapBefore must be a boolean`);
+    if (i === 0 && e.gapBefore === true) {
+      errors.push(`${label}: the first entry's gapBefore must be false (nothing precedes it)`);
+    }
+  });
+
+  // Ascending order is a manifest invariant, not just a build-time convenience -- a renderer
+  // scrubs entries[] by index, so an out-of-order manifest would make the slider jump backward
+  // in time as the user drags it forward.
+  for (let i = 1; i < entries.length; i++) {
+    const prev = entries[i - 1] as Record<string, unknown>;
+    const cur = entries[i] as Record<string, unknown>;
+    if (isNonEmptyString(prev.month) && isNonEmptyString(cur.month) && prev.month >= cur.month) {
+      errors.push(`entries must be in ascending month order: "${prev.month}" then "${cur.month}"`);
     }
   }
 

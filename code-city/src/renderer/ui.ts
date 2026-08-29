@@ -246,3 +246,111 @@ export function setupLensControl(params: SetupLensControlParams): LensControlHan
 
   return { activeLens, setActiveLens, dispose };
 }
+
+// -------------------------------------------------------------------------------------------
+// Timeline scrub control (Phase 4, PROJECT_IDEA.md §5.2) -- a slider over the snapshot sequence
+// plus the always-visible date readout acceptance criterion 3 requires ("a user must never be
+// unsure which moment they are looking at") and a gap badge for criterion 6. Deliberately its own
+// handle, same reasoning as the lens control above: independent state (scrub position) from
+// independent concerns (the overlay, the lens), sharing nothing but the container element.
+// -------------------------------------------------------------------------------------------
+
+export interface TimelineControlEntry {
+  month: string;
+  date: string;
+}
+
+export interface TimelineControlHandle {
+  /** Programmatically sets the slider's displayed value (e.g. to reflect a position set some
+   *  other way) without re-invoking onScrub. */
+  setPosition(globalT: number): void;
+  /** Updates the date/gap readout -- called after every setPosition on the underlying
+   *  TimelineHandle so the HUD always reflects what's actually rendered, never a value computed
+   *  independently of it. */
+  setReadout(dateISO: string, isGap: boolean): void;
+  dispose(): void;
+}
+
+export interface SetupTimelineControlParams {
+  container: HTMLElement;
+  /** One entry per resolved snapshot, in the same order as the TimelineHandle's own sequence --
+   *  the slider's min/max/step are derived from this length, never a second source of truth. */
+  entries: readonly TimelineControlEntry[];
+  /** Called with the slider's raw index-space value on every drag/keyboard move. */
+  onScrub(globalT: number): void;
+  initialPosition?: number;
+}
+
+function formatMonthLabel(entry: TimelineControlEntry): string {
+  return entry.month;
+}
+
+/**
+ * Builds the timeline slider + date/gap HUD. The slider itself only ever emits a position
+ * (`onScrub`) -- it does not compute or display the date on its own; the caller is expected to
+ * read back the TimelineHandle's own currentDate()/isInGap() (the thing actually rendered) and
+ * feed it to setReadout(), so the on-screen date can never drift from what the scene shows.
+ */
+export function setupTimelineControl(params: SetupTimelineControlParams): TimelineControlHandle {
+  const { container, entries, onScrub } = params;
+  if (entries.length === 0) throw new Error("setupTimelineControl requires at least one entry");
+
+  const root = document.createElement("div");
+  root.className = "cc-timeline-control";
+  root.setAttribute("role", "group");
+  root.setAttribute("aria-label", "Timeline scrub");
+
+  const dateRow = document.createElement("div");
+  dateRow.className = "cc-timeline-date";
+
+  const gapBadge = document.createElement("span");
+  gapBadge.className = "cc-timeline-gap";
+  gapBadge.textContent = "GAP -- no commits in this span";
+  gapBadge.style.display = "none";
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.className = "cc-timeline-slider";
+  slider.min = "0";
+  slider.max = String(Math.max(0, entries.length - 1));
+  slider.step = "0.01";
+  slider.value = String(params.initialPosition ?? 0);
+  slider.setAttribute("aria-label", "Timeline position");
+
+  const monthRow = document.createElement("div");
+  monthRow.className = "cc-timeline-months";
+  const firstLabel = document.createElement("span");
+  firstLabel.textContent = formatMonthLabel(entries[0]);
+  const lastLabel = document.createElement("span");
+  lastLabel.textContent = formatMonthLabel(entries[entries.length - 1]);
+  monthRow.appendChild(firstLabel);
+  monthRow.appendChild(lastLabel);
+
+  root.appendChild(dateRow);
+  root.appendChild(gapBadge);
+  root.appendChild(slider);
+  root.appendChild(monthRow);
+  container.appendChild(root);
+
+  function onInput(): void {
+    onScrub(Number(slider.value));
+  }
+  slider.addEventListener("input", onInput);
+
+  function setPosition(globalT: number): void {
+    slider.value = String(globalT);
+  }
+
+  function setReadout(dateISO: string, isGap: boolean): void {
+    const date = new Date(dateISO);
+    dateRow.textContent = Number.isNaN(date.getTime()) ? dateISO : date.toISOString().slice(0, 10);
+    gapBadge.style.display = isGap ? "block" : "none";
+  }
+
+  function dispose(): void {
+    slider.removeEventListener("input", onInput);
+    root.remove();
+  }
+
+  return { setPosition, setReadout, dispose };
+}

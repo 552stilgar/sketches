@@ -1,0 +1,8 @@
+{
+  "entries": [
+    { "month": "2026-01", "date": "2026-01-15T12:00:00.000Z", "cityFile": "mock-city-2026-01.json", "buildingCount": 12, "districtCount": 3, "gapBefore": false },
+    { "month": "2026-02", "date": "2026-02-14T09:30:00.000Z", "cityFile": "mock-city-2026-02.json", "buildingCount": 13, "districtCount": 3, "gapBefore": false },
+    { "month": "2026-03", "date": "2026-03-20T18:00:00.000Z", "cityFile": "mock-city-2026-03.json", "buildingCount": 12, "districtCount": 3, "gapBefore": false },
+    { "month": "2026-06", "date": "2026-06-05T08:00:00.000Z", "cityFile": "mock-city-2026-06.json", "buildingCount": 11, "districtCount": 3, "gapBefore": true }
+  ]
+}
