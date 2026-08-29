@@ -11,7 +11,8 @@ import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts
 import { buildRoads } from "./renderer/roads.ts";
 import { buildLandmarks } from "./renderer/landmarks.ts";
 import { buildTethers } from "./renderer/tethers.ts";
-import { setupUI } from "./renderer/ui.ts";
+import { setupUI, setupLensControl } from "./renderer/ui.ts";
+import { DEFAULT_LENS, type LensId } from "./renderer/lenses.ts";
 
 interface TestBridge {
   ready: boolean;
@@ -41,6 +42,10 @@ interface TestBridge {
    * depending on the city's own building-height distribution). Not recomputed on resize -- this
    * is the load-time framing, matching SceneHandle.framing's own doc. */
   cameraFraming(): { bounds: CityBounds; target: CameraFraming["target"]; position: CameraFraming["position"] };
+  /** City lenses (Phase 5.3) -- lets a headless check drive the same switch the on-screen lens
+   * control does, and read back which lens is currently active. */
+  setLens(lens: LensId): void;
+  currentLens(): LensId;
 }
 
 declare global {
@@ -154,6 +159,12 @@ async function main(): Promise<void> {
     buildingById: buildingsHandle.buildingById,
   });
 
+  const lensControl = setupLensControl({
+    container: app,
+    initialLens: DEFAULT_LENS,
+    onSelect: (lens) => buildingsHandle.setLens(lens),
+  });
+
   window.addEventListener("resize", () => sceneHandle.handleResize());
 
   // The renderer's own clock (PROJECT_IDEA.md 3.2/5.5): elapsed seconds since first frame, never
@@ -202,6 +213,13 @@ async function main(): Promise<void> {
         target: sceneHandle.framing.target,
         position: sceneHandle.framing.position,
       };
+    },
+    setLens(lens: LensId): void {
+      buildingsHandle.setLens(lens);
+      lensControl.setActiveLens(lens);
+    },
+    currentLens(): LensId {
+      return buildingsHandle.currentLens();
     },
   };
 }
