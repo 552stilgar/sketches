@@ -222,3 +222,56 @@ Final: 237/237 tests, build clean, smoke green. Two live tailnet views stood up 
 inspection — a static gallery (2D SVG plates + 3D screenshots) and a live orbit-able 3D viewer
 serving the real merged mgmt city. 13 commits local, not pushed pending Usul's push confirm at
 close. LOD district-vs-directory trade-off and the two tailnet serve teardowns are open.
+
+## 2026-08-29 — code-city V5: directory-LOD mode, git time-travel (snapshots + layout stability + timeline scrub), lens layer
+
+`/usul-orchestrate-task` ran a 6-leaf tree (2-wide par, matching this box's real concurrency cap
+of 2 — nproc=4) against the board's #2/#3/#4 picks: directory-granularity LOD as a selectable
+second mode, a lens layer over already-compiled complexity/churn data, and the git-time-travel
+spine (snapshot generation, cross-snapshot layout stability, timeline scrub). Cost ~$35 / 58.7 min
+wall against a 365-min inline estimate (11 lanes: 5 sonnet subagents + 3 opus merge/integration
+steps + 2 haiku gates + 1 opus integration).
+
+**LOD**: `compileCity(graph, { cloneLodScope: 'district' | 'directory' })`, defaulting to
+'district' — verified byte-identical to omitting the flag. Real numbers on the merged usul-mgmt
+trio (631 files, 31 clone groups): district mode 631 buildings (unchanged, the 21→625 blowup
+reproduces as 21→631), directory mode 262. All 81 clone-identity-link members resolve to a real
+building in both modes — directory mode loses no clone information, it only collapses the 382
+non-clone files sharing a directory with a clone. Comparison SVGs/JSON at
+`code-city/out/lod-compare/` for Usul's aesthetic call — no winner declared by the run.
+
+**Layout stability** (the highest-risk lane, authorized to report BLOCKED rather than weaken the
+invariant): path-keyed slot reservation in `compiler/layout.ts`, tolerance 0.3 (30% of a
+building's own district, not absolute canvas position — squarify district reflow stays unstable
+by contract). Measured independently at each checkpoint, not trusted from lane prose: max
+within-district drift on the real 631-file trio dropped from 0.81 to 0.19, 97%→11% of buildings
+moving >10%. Holds for incremental month-to-month change (0/621 over tolerance on real graphs);
+degrades in the high-growth regime — the actual 07→08 snapshot pair (repo triples, gains a
+district) hit max drift 0.47 with 4/40 buildings over tolerance. No test covers that regime yet.
+
+**Snapshots + scrub**: `bin/snapshots.ts` emits monthly repo.json anchored to each snapshot's own
+commit date (never wall-clock), via a temporary detached worktree per month, removed after. A
+scrubbable timeline (`dist/timeline.html`) interpolates buildings for display only — positions are
+never written back into a persisted CityModel. Driven end-to-end headlessly against 6 real months
+of this repo's own history (0→0→0→0→40→124 buildings); the DOM/WebGL half is not yet
+browser-verified.
+
+**Lenses**: Architecture (default) / Complexity / Activity / Quality, positions locked (proven by
+test), percentile-based color/height scales so long-tailed complexity/churn don't collapse to one
+color. Quality lens is deliberately rendered UNMEASURED — no coverage/TODO data exists yet, and the
+lane refused to fabricate a plausible-looking signal. An Age lens is blocked on a compiler change:
+`age` exists on RepoNode but `compileCity` never copies it into BuildingMetrics.
+
+**Real defects found and left open, not smoothed over**: `bin/snapshots.ts` throws a misleading
+`spawn git ENOENT` (not "git missing" — a per-month worktree subdirectory that postdates the
+window) instead of a clear error; `gapBefore` is unreachable from real generated data because git
+history is monotonic (only the handwritten fixture exercises the hard-cut gap path);
+`CONTRACTS.md`'s "Status" table is now actively wrong (still describes three modules as
+NotImplemented stubs); a 0-building snapshot month renders as an empty plain with no UNMEASURED
+disclosure. `selectBuildingSources`'s "directory" is the second path segment, not the immediate
+parent, on deep trees (reused the existing aggregation key rather than invent a second notion).
+
+Net: 237→330 tests (31 files, +93), build/smoke clean throughout, 12 commits, all local — pushed
+at this session's close per Usul's confirm. Two stale tailnet serve entries (:7500, :7600) from
+the prior session are still unaddressed; 11 stale lane worktrees remain registered under
+`.claude/worktrees/` from this run and the prior V4 run.

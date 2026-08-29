@@ -1,37 +1,36 @@
 ---
 project: sketches
-updated: 2026-08-28
-next: "Push 13 local commits (V3 flow + V4 datastores/clones) to origin — Usul's call, pending. Then judge the LOD trade-off (clone-bearing districts now bypass the 500-file threshold entirely) and either accept it or scope it to directory-level."
-phase: "code-city V3 (animated flow, shared flow.ts contract) and V4 (datastore landmarks + clone-identity tethers, camera fit-to-bounds, district/material craft) both shipped this session via orchestrated Workflow waves."
-campaign_ref: "2026-08-28 — code-city V3 + V4: flow contract, merge-stage dogfood, camera/craft/datastores/clones, live tailnet viewer"
+updated: 2026-08-29
+next: "Open code-city/out/lod-compare/city-district.svg vs city-directory.svg and pick district vs directory LOD (631 vs 262 buildings on the merged mgmt trio, no clone data lost either way). Then browser-verify dist/timeline.html."
+phase: "code-city V5 shipped via orchestrated Workflow: directory-LOD mode, git time-travel (snapshots + layout stability + timeline scrub), lens layer (Architecture/Complexity/Activity/Quality)."
+campaign_ref: "2026-08-29 — code-city V5: directory-LOD mode, git time-travel (snapshots + layout stability + timeline scrub), lens layer"
 gates:
-  - "code-city: 24 test files, 237/237 tests green, build clean, smoke green, browser-verify PASS on V3 flow (offsets wrap, weight-proportional rate, provenance visible on screen)."
+  - "code-city: 31 test files, 330/330 tests green, build clean, smoke green. Layout-stability holds for incremental snapshots (0/621 over 0.3 tolerance on real 631-file graph), degrades on high-growth pairs (4/40 over tolerance on an actual 07->08 pair)."
 ---
 
 # sketches — STATE
 
 ## Now
 
-V3: shared `src/renderer/flow.ts` gives roads animated, provenance-tagged flow. `bin/merge.ts`
-renders multiple repos as one city — usul-mgmt trio shows 0 cross-district roads, confirming the
-shared kernel is vendored not imported. V4: datastore landmarks (schema-derived only, never the
-live `.db`) + clone-identity tethers (exact content-hash, static/elevated, never confusable with
-a road). A merge-stage bug silently dropping datastores across repos was caught by verifying the
-real trio, not the suite, and fixed. Real trio: 3 vendored-kernel reservoirs (24/22/22 tables,
-vendors 2 behind), 31 identity links (19 span all three). Two live tailnet views up for Usul —
-see live-urls.md.
+code-city V5: `compileCity(graph, { cloneLodScope })` makes district-vs-directory LOD selectable,
+defaulting to today's district behavior (byte-identical when omitted). Git time-travel spine landed
+end to end — `bin/snapshots.ts` (monthly repo.json, anchored to snapshot commit date), path-keyed
+layout stability in `compiler/layout.ts`, and a timeline scrub UI (`dist/timeline.html`, driven
+headlessly against 6 real months, not yet browser-verified). Lens layer over already-compiled
+complexity/churn/architecture data, positions locked, percentile scales; Quality lens correctly
+renders UNMEASURED (no coverage data exists) rather than fabricate a signal. 12 local commits,
+pushed this close.
 
 ## Open
 
-- **13 local commits, not pushed** (V3 flow + merge-stage fix + full V4 wave) — Usul's call.
-- **LOD design trade-off, undecided.** Clone-aware LOD landed at *district* granularity, not the
-  *directory* granularity originally specced — any district containing even one duplicated file
-  pair now keeps full file-level detail past the 500-file threshold. This is what makes tethers
-  attachable at all, but the merged mgmt city went from 21 buildings to 625 as a result. Worth
-  judging by eye in the live viewer before it hardens.
-- **Two tailnet serve entries left running**, outlive this session only until reboot:
-  `:7500` (static screenshot/plate gallery) and `:7600` (live dev viewer proxy). Teardown:
-  `tailscale serve --https=7500 off` / `--https=7600 off`.
-- Vendor-sync drift in usul-mgmt-itba/frd-ops (3 kernel files stale) was handed to the concurrent
-  usul-mgmt session directly, not tracked here — see that project's own state.
-</content>
+- **LOD call is Usul's** — comparison artifacts at `code-city/out/lod-compare/` (district: 631
+  buildings / directory: 262, on the real merged mgmt trio; zero clone-identity data lost either way).
+- **Timeline UI not browser-verified** — data/morph path confirmed headlessly, DOM/WebGL half owed.
+- **Real defects found, not yet fixed**: misleading `spawn git ENOENT` in `bin/snapshots.ts` on a
+  pre-existence window; `gapBefore` path unreachable from real generated data (git history is
+  monotonic); `CONTRACTS.md` "Status" table is stale/wrong (says 3 modules are NotImplemented stubs);
+  0-building snapshot months render as an empty plain with no UNMEASURED disclosure.
+- **Two stale tailnet serve entries** from the prior (2026-08-28) session still up: `:7500`, `:7600`.
+  Teardown: `tailscale serve --https=7500 off` / `--https=7600 off`.
+- **11 stale lane worktrees** under `code-city/.claude/worktrees/` (6 from V4, 5 from V5) — pruning
+  not done this session.
