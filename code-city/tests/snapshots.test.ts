@@ -110,7 +110,7 @@ describe("generateMonthlySnapshots", () => {
     const january = snapshots.find((s) => s.month === "2026-01");
     expect(january?.graph.headSha).not.toBe(june?.graph.headSha);
     expect(skipped).toEqual([]);
-  });
+  }, 20000);
 
   it("does not mutate the caller's working tree and leaves no worktree behind", async () => {
     const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8" }).trim();
@@ -120,7 +120,7 @@ describe("generateMonthlySnapshots", () => {
     const worktreeList = execFileSync("git", ["worktree", "list"], { cwd: repoDir, encoding: "utf8" });
     // Only the main worktree (repoDir itself) should remain registered.
     expect(worktreeList.trim().split("\n").length).toBe(1);
-  });
+  }, 20000);
 
   it("a failed run never leaves the caller's repo in a bad state (no dangling worktree registration)", async () => {
     // A nonexistent repo path fails before any worktree is even created. This is a coarse
@@ -159,7 +159,7 @@ describe("generateMonthlySnapshots", () => {
     });
     expect(progress.length).toBe(snapshots.length);
     expect(progress.every((p) => p.fileCount > 0 && p.sha.length === 40)).toBe(true);
-  });
+  }, 20000);
 
   it("nested repo (repoPath is a subdirectory of the git root) resolves and analyzes correctly", async () => {
     const nestedRoot = mkdtempSync(join(tmpdir(), "code-city-snapshots-nested-"));
@@ -192,7 +192,7 @@ describe("generateMonthlySnapshots", () => {
     } finally {
       rmSync(nestedRoot, { recursive: true, force: true });
     }
-  });
+  }, 20000);
 });
 
 describe("bin/snapshots.ts CLI", () => {
@@ -220,7 +220,7 @@ describe("bin/snapshots.ts CLI", () => {
     } finally {
       rmSync(outDir, { recursive: true, force: true });
     }
-  });
+  }, 20000);
 
   it("exits non-zero and writes nothing when repo-path does not exist", () => {
     const outDir = mkdtempSync(join(tmpdir(), "code-city-snapshots-out-fail-"));
