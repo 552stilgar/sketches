@@ -11,6 +11,14 @@
 
 import * as THREE from "three";
 import type { Building, CityModel, District, Road } from "../types.ts";
+import {
+  computeCityLensRanks,
+  DEFAULT_LENS,
+  lensColorHSL,
+  lensHeightScale,
+  rankForLens,
+  type LensId,
+} from "./lenses.ts";
 
 export interface BuildingsHandle {
   /** One InstancedMesh per distinct architectural style profile. Add these to the scene. */
@@ -21,8 +29,21 @@ export interface BuildingsHandle {
   resolveBuildingId(mesh: THREE.Object3D, instanceId: number | undefined): string | null;
   /** All buildings keyed by id, for the UI overlay to read metrics from. */
   buildingById: Map<string, Building>;
-  /** World-space center (x, y=height/2 top, z) of a building, for camera framing / road endpoints. */
+  /** World-space center (x, y=height/2 top, z) of a building, for camera framing / road endpoints.
+   *  Always the ARCHITECTURE-lens (unscaled) center, regardless of the active lens — roads and
+   *  camera framing must not re-drape every time a viewer switches lenses (see "Lens scope" note
+   *  on setLens() below). */
   buildingCenter(id: string): THREE.Vector3 | null;
+  /**
+   * Switches the active city lens: recolors and rescales the ALREADY-BUILT instances in place
+   * (no geometry rebuild, no re-layout). Only Y (height) scale/position and per-instance color
+   * change — X/Z stay exactly what compileCity emitted, which is the property
+   * tests/lenses-position-lock.test.ts asserts directly: lens switching must never move a
+   * building's footprint (docs/PROJECT_IDEA.md §5.3).
+   */
+  setLens(lens: LensId): void;
+  /** The lens most recently applied via setLens() (DEFAULT_LENS until the first call). */
+  currentLens(): LensId;
 }
 
 // -------------------------------------------------------------------------------------------
@@ -492,6 +513,47 @@ export function updateDistrictLabelFade(group: THREE.Group, camera: THREE.Camera
   }
 }
 
+/**
+ * Sets one instance's transform + color for the given lens, in place. `dummy` is a caller-owned
+ * scratch Object3D (reused across every instance -- allocating a fresh one per building per lens
+ * switch would be wasteful on a large city). Only Y (height scale + center) and color depend on
+ * the lens; X/Z footprint is always the compiler-given b.x/b.y/b.width/b.depth, unscaled -- this
+ * is the actual mechanism behind the position-lock guarantee (docs/PROJECT_IDEA.md §5.3).
+ */
+function applyInstance(
+  dummy: THREE.Object3D,
+  mesh: THREE.InstancedMesh,
+  index: number,
+  b: Building,
+  lens: LensId,
+  rank: number,
+  lightnessBias: number,
+  fanIn: number,
+  hasOutgoing: boolean,
+  fanInRef: number,
+): void {
+  const cx = b.x + b.width / 2;
+  const cz = b.y + b.depth / 2;
+  const heightScale = lensHeightScale(lens, rank);
+  const scaledHeight = Math.max(0.1, b.height * heightScale);
+  const cy = scaledHeight / 2;
+  dummy.position.set(cx, cy, cz);
+  dummy.scale.set(Math.max(0.1, b.width), scaledHeight, Math.max(0.1, b.depth));
+  dummy.rotation.set(0, 0, 0);
+  dummy.updateMatrix();
+  mesh.setMatrixAt(index, dummy.matrix);
+
+  const hsl = lensColorHSL(lens, rank);
+  const base = hsl
+    ? new THREE.Color().setHSL(hsl.hue, hsl.sat, THREE.MathUtils.clamp(hsl.light + lightnessBias, 0.05, 0.92))
+    : buildingColor(b, lightnessBias);
+  const color =
+    classifyStructuralLiveness(fanIn, hasOutgoing) === "dead"
+      ? applyDeadTint(base)
+      : applyOccupancy(base, occupancyIntensity(fanIn, fanInRef));
+  mesh.setColorAt(index, color);
+}
+
 export function buildBuildings(city: CityModel): BuildingsHandle {
   const buildingById = new Map<string, Building>();
   const byProfile = new Map<ProfileName, Building[]>();
@@ -508,10 +570,17 @@ export function buildBuildings(city: CityModel): BuildingsHandle {
   const fanInById = computeFanIn(roads);
   const outgoing = computeOutgoing(roads);
   const fanInRef = p95(city.buildings.map((b) => fanInById.get(b.id) ?? 0));
+  const lensRanks = computeCityLensRanks(city.buildings as Building[]);
 
   const meshes: THREE.InstancedMesh[] = [];
   const meshOrder = new Map<THREE.InstancedMesh, Building[]>();
   const centers = new Map<string, THREE.Vector3>();
+  // (mesh, index, lightnessBias) per building id -- lets setLens() update every existing
+  // instance without rebuilding byProfile grouping or re-walking city.buildings each call.
+  const instanceIndex = new Map<string, { mesh: THREE.InstancedMesh; index: number; lightnessBias: number }>();
+  let activeLens: LensId = DEFAULT_LENS;
+
+  const dummy = new THREE.Object3D();
 
   for (const [profileName, list] of byProfile) {
     const profile = PROFILE_DEFS[profileName];
@@ -529,26 +598,18 @@ export function buildBuildings(city: CityModel): BuildingsHandle {
     mesh.receiveShadow = true;
     mesh.name = `buildings:${profileName}`;
 
-    const dummy = new THREE.Object3D();
     list.forEach((b, i) => {
-      const cx = b.x + b.width / 2;
-      const cz = b.y + b.depth / 2;
-      const cy = b.height / 2;
-      dummy.position.set(cx, cy, cz);
-      dummy.scale.set(Math.max(0.1, b.width), Math.max(0.1, b.height), Math.max(0.1, b.depth));
-      dummy.rotation.set(0, 0, 0);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-
       const fanIn = fanInById.get(b.id) ?? 0;
       const hasOutgoing = outgoing.has(b.id);
-      const base = buildingColor(b, profile.lightnessBias);
-      const color =
-        classifyStructuralLiveness(fanIn, hasOutgoing) === "dead"
-          ? applyDeadTint(base)
-          : applyOccupancy(base, occupancyIntensity(fanIn, fanInRef));
-      mesh.setColorAt(i, color);
+      applyInstance(dummy, mesh, i, b, activeLens, 0, profile.lightnessBias, fanIn, hasOutgoing, fanInRef);
+
+      // buildingCenter() is always the unscaled (architecture-lens) top-of-building, on purpose
+      // (see BuildingsHandle.buildingCenter doc) -- computed once here from the RAW height, never
+      // recomputed by setLens().
+      const cx = b.x + b.width / 2;
+      const cz = b.y + b.depth / 2;
       centers.set(b.id, new THREE.Vector3(cx, b.height, cz));
+      instanceIndex.set(b.id, { mesh, index: i, lightnessBias: profile.lightnessBias });
     });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -568,11 +629,38 @@ export function buildBuildings(city: CityModel): BuildingsHandle {
     return centers.get(id) ?? null;
   }
 
+  function setLens(lens: LensId): void {
+    activeLens = lens;
+    const touched = new Set<THREE.InstancedMesh>();
+    for (const b of city.buildings as Building[]) {
+      const entry = instanceIndex.get(b.id);
+      if (!entry) continue;
+      const fanIn = fanInById.get(b.id) ?? 0;
+      const hasOutgoing = outgoing.has(b.id);
+      const rank = rankForLens(lens, {
+        complexityRank: lensRanks.complexityRank.get(b.id) ?? 0,
+        churnRank: lensRanks.churnRank.get(b.id) ?? 0,
+      });
+      applyInstance(dummy, entry.mesh, entry.index, b, lens, rank, entry.lightnessBias, fanIn, hasOutgoing, fanInRef);
+      touched.add(entry.mesh);
+    }
+    for (const mesh of touched) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+  }
+
+  function currentLens(): LensId {
+    return activeLens;
+  }
+
   return {
     meshes,
     districtGroup: buildDistricts(city),
     resolveBuildingId,
     buildingById,
     buildingCenter,
+    setLens,
+    currentLens,
   };
 }
