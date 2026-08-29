@@ -71,8 +71,61 @@ export interface Slot extends Rect {
   maxSide: number;
 }
 
+// FNV-1a, 32-bit. Pure, seeded only by (salt, key) — no clock, no counter, no
+// iteration-order input. Used to derive a stable pseudo-random fraction in
+// [0, 1) from a node's full path so slot placement is a function of path
+// IDENTITY rather than the node's rank in whatever list happens to be
+// passed in this call (see "cross-snapshot stability" below).
+function fnv1a(str: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function hashFraction(key: string, salt: string): number {
+  return fnv1a(`${salt}:${key}`) / 0xffffffff;
+}
+
+/**
+ * Grid-cell shelf placement for buildings/landmarks within one district.
+ *
+ * CROSS-SNAPSHOT STABILITY (docs/CONTRACT-city-json.md "Layout algorithm":
+ * "slot positions derived from path identity — never insertion order"):
+ * each key's preferred (column, row) is `round(hash(key) * (columns/rows - 1))` —
+ * a function of the key's own path string and the CURRENT grid dimensions
+ * only, never of the key's rank among its siblings. The old design used
+ * `index % columns` on an alphabetically-sorted list: adding or removing one
+ * file ahead of a path in sort order shifted the index, hence the cell, of
+ * every path after it. Hashing removes that global shift — a change
+ * elsewhere in the district can only perturb the (bounded number of) paths
+ * whose preferred cell collides with the changed set.
+ *
+ * `columns`/`rows` still scale with the current item count (finer grid, more
+ * items), so a path's preferred cell index can shift by a column or two
+ * between snapshots even with no collision, purely from `columns` changing.
+ * That shift is bounded by construction: `round(hash*columns)/columns`
+ * approximates the continuous fraction `hash` with quantization error under
+ * half a cell width, and each cell is a shrinking fraction of the district as
+ * items grow. The grid is also deliberately oversampled (`GRID_OVERSCAN`
+ * below) so that collision-resolution displacement — empirically the bigger
+ * source of drift, see the constant's own comment — stays local too. See
+ * tests/compiler-layout-stability.test.ts for the concrete tolerance this
+ * yields and why it's justified.
+ *
+ * Collisions (two keys landing on the same preferred cell) are resolved by
+ * a deterministic outward search from the preferred cell, visiting free
+ * cells in a fixed ring order; which key "wins" its preferred cell over
+ * another is decided by a second, independent hash used purely as a total,
+ * key-intrinsic priority order (never by which key happened to be processed
+ * first in the input array) — so, like the preferred cell itself, priority
+ * between any two given paths never depends on which other paths are in the
+ * set.
+ */
 export function shelfSlots(paths: readonly string[], district: Rect, padding = 8, gap = 4): Map<string, Slot> {
-  const sorted = [...paths].sort(compareCodepoints);
+  const keys = [...paths].sort(compareCodepoints);
   // Clamp padding to a fraction of the district's own extent instead of
   // applying it unconditionally: a fixed padding can exceed a thin/narrow
   // district's width or depth outright, pushing every slot coordinate past
@@ -81,8 +134,18 @@ export function shelfSlots(paths: readonly string[], district: Rect, padding = 8
   const paddingY = Math.max(0, Math.min(padding, district.depth / 4));
   const innerWidth = Math.max(1e-6, district.width - paddingX * 2);
   const innerDepth = Math.max(1e-6, district.depth - paddingY * 2);
-  const columns = Math.max(1, Math.ceil(Math.sqrt(sorted.length * innerWidth / innerDepth)));
-  const rows = Math.max(1, Math.ceil(sorted.length / columns));
+  // A grid sized to EXACTLY fit `keys.length` cells (columns*rows just barely >= n) packs at
+  // near-100% occupancy by construction. At that density, hash-preferred cells collide constantly
+  // and the deterministic ring search has to walk far to find a free one -- a collision CASCADE
+  // whose length depends on the whole occupied set, which is exactly the kind of instability this
+  // rewrite exists to remove. Oversampling the grid (`GRID_OVERSCAN` more cells than items) keeps
+  // enough headroom that most preferred cells are free on the first try, so displacement stays
+  // local to genuine collisions instead of cascading — the tradeoff is a smaller `maxSide` cap per
+  // slot (the grid is coarser than the tightest possible fit), which only shrinks the CEILING
+  // `footprintSide` scales into, not the relative sizing between buildings in a district.
+  const GRID_OVERSCAN = 3;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(keys.length * GRID_OVERSCAN * innerWidth / innerDepth)));
+  const rows = Math.max(1, Math.ceil((keys.length * GRID_OVERSCAN) / columns));
   const cellWidth = innerWidth / columns;
   const cellDepth = innerDepth / rows;
   const maxSide = Math.max(0.25, Math.min(cellWidth, cellDepth) - gap);
@@ -93,17 +156,67 @@ export function shelfSlots(paths: readonly string[], district: Rect, padding = 8
   // enough to silently absorb the gap/2 offset on the far side.
   const cellInnerWidth = Math.max(0, cellWidth - gap);
   const cellInnerDepth = Math.max(0, cellDepth - gap);
+
+  // Total, key-intrinsic priority order: two keys always compare the same
+  // way regardless of what else is in `keys` (path-hash first, full path as
+  // a deterministic tiebreak for the — astronomically unlikely — hash tie).
+  const placementOrder = [...keys].sort(
+    (a, b) => hashFraction(a, "priority") - hashFraction(b, "priority") || compareCodepoints(a, b),
+  );
+
+  const occupied = new Set<number>(); // row * columns + column
+  const cellOf = new Map<string, { column: number; row: number }>();
+  for (const key of placementOrder) {
+    // Round (nearest cell), not floor, to the preferred continuous fraction: this halves the
+    // worst-case quantization error against the continuous position `hash(key)` represents (up to
+    // half a cell width instead of up to a full one), which is what bounds cross-snapshot drift
+    // when `columns`/`rows` themselves change between two snapshots of the same repo.
+    const preferredColumn = Math.min(columns - 1, Math.max(0, Math.round(hashFraction(key, "col") * (columns - 1))));
+    const preferredRow = Math.min(rows - 1, Math.max(0, Math.round(hashFraction(key, "row") * (rows - 1))));
+    let placed: { column: number; row: number } | undefined;
+    // Deterministic outward ring search (Chebyshev rings), fixed scan order
+    // within each ring (row-major) so ties never depend on input order.
+    for (let ring = 0; ring < columns + rows && !placed; ring++) {
+      for (let dRow = -ring; dRow <= ring && !placed; dRow++) {
+        for (let dCol = -ring; dCol <= ring && !placed; dCol++) {
+          if (Math.max(Math.abs(dRow), Math.abs(dCol)) !== ring) continue;
+          const column = preferredColumn + dCol;
+          const row = preferredRow + dRow;
+          if (column < 0 || column >= columns || row < 0 || row >= rows) continue;
+          const index = row * columns + column;
+          if (occupied.has(index)) continue;
+          occupied.add(index);
+          placed = { column, row };
+        }
+      }
+    }
+    // Totality fallback: with columns*rows >= keys.length by construction
+    // (rows = ceil(n/columns)), the ring search above always finds a free
+    // cell before exhausting the grid. This is defensive only.
+    if (!placed) {
+      for (let index = 0; index < columns * rows; index++) {
+        if (!occupied.has(index)) {
+          occupied.add(index);
+          placed = { column: index % columns, row: Math.floor(index / columns) };
+          break;
+        }
+      }
+    }
+    if (!placed) throw new Error(`shelfSlots: no free cell for ${key} (${columns}x${rows} grid, ${keys.length} keys)`);
+    cellOf.set(key, placed);
+  }
+
   const slots = new Map<string, Slot>();
-  sorted.forEach((path, index) => {
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    slots.set(path, {
-      x: district.x + paddingX + column * cellWidth + gap / 2,
-      y: district.y + paddingY + row * cellDepth + gap / 2,
+  for (const key of keys) {
+    const cell = cellOf.get(key);
+    if (!cell) throw new Error(`shelfSlots: no cell resolved for ${key}`);
+    slots.set(key, {
+      x: district.x + paddingX + cell.column * cellWidth + gap / 2,
+      y: district.y + paddingY + cell.row * cellDepth + gap / 2,
       width: cellInnerWidth,
       depth: cellInnerDepth,
       maxSide,
     });
-  });
+  }
   return slots;
 }
