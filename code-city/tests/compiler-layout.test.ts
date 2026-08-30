@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { compileCity } from "../src/compiler/index.ts";
 import { shelfSlots } from "../src/compiler/layout.ts";
-import { footprintSide, p95 } from "../src/compiler/grammar.ts";
+import { footprintSide, FOOTPRINT_FLOOR_DEFAULT, p95 } from "../src/compiler/grammar.ts";
 import { makeFixedRepoGraph, synthesizeGraph } from "./fixtures/repo-graph-fixture.ts";
 import type { Building, District, RepoGraph, RepoNode } from "../src/types.ts";
 
@@ -112,6 +112,72 @@ describe("footprintSide preserves the sqrt(loc) invariant (bug: clamp flattens t
     });
     const widths = compileCity(graph).buildings.map((building) => building.width);
     expect(Math.min(...widths) / Math.max(...widths)).toBeLessThan(0.6);
+  });
+});
+
+describe("footprintSide's footprintFloor parameter (Lane C v5.1 massing knob)", () => {
+  it("defaults to FOOTPRINT_FLOOR_DEFAULT — omitting the 4th arg is byte-identical to passing it explicitly", () => {
+    for (const [loc, maximum] of [
+      [0, 20],
+      [5, 0.6],
+      [60, 0.6],
+      [600, 0.6],
+      [10_000_000, 20],
+    ] as const) {
+      expect(footprintSide(loc, maximum)).toBe(footprintSide(loc, maximum, 200, FOOTPRINT_FLOOR_DEFAULT));
+    }
+  });
+
+  it("a raised floor widens the smallest (loc=0) building without changing large-loc buildings that already exceed it", () => {
+    const maximum = 20;
+    const smallAtDefault = footprintSide(0, maximum);
+    const smallAtRaisedFloor = footprintSide(0, maximum, 200, 0.5);
+    expect(smallAtRaisedFloor).toBeGreaterThan(smallAtDefault);
+    expect(smallAtRaisedFloor).toBeCloseTo(maximum * 0.5, 10);
+
+    // A building already scaled well above the raised floor is untouched by it.
+    const largeAtDefault = footprintSide(10_000_000, maximum);
+    const largeAtRaisedFloor = footprintSide(10_000_000, maximum, 200, 0.5);
+    expect(largeAtRaisedFloor).toBe(largeAtDefault);
+  });
+
+  it("never exceeds the slot maximum even when floorFactor is pushed past 1 or negative", () => {
+    expect(footprintSide(0, 20, 200, 5)).toBeLessThanOrEqual(20);
+    expect(footprintSide(0, 20, 200, -5)).toBeGreaterThan(0);
+    expect(footprintSide(0, 20, 200, -5)).toBeLessThanOrEqual(20);
+  });
+
+  it("stays pure/total on the degenerate inputs (loc=0, negative loc, negative maximum) at any floorFactor", () => {
+    for (const floorFactor of [0, FOOTPRINT_FLOOR_DEFAULT, 0.5, 1]) {
+      expect(footprintSide(0, 20, 200, floorFactor)).toBeGreaterThan(0);
+      expect(Number.isNaN(footprintSide(-100, 20, 200, floorFactor))).toBe(false);
+      expect(footprintSide(-100, 20, 200, floorFactor)).toBeGreaterThanOrEqual(0);
+      expect(footprintSide(50, -20, 200, floorFactor)).toBe(0);
+      expect(Number.isNaN(footprintSide(50, -20, 200, floorFactor))).toBe(false);
+    }
+  });
+
+  it("compileCity's footprintFloor option reproduces default output byte-for-byte when omitted, and widens the smallest building when raised", () => {
+    const graph = synthesizeGraph(20, 1);
+    graph.nodes.forEach((node, index) => {
+      node.loc = index === 0 ? 0 : 1_000 * 2 ** index;
+    });
+    const cityDefault = compileCity(graph);
+    const cityExplicitDefault = compileCity(graph, { footprintFloor: FOOTPRINT_FLOOR_DEFAULT });
+    expect(JSON.stringify(cityExplicitDefault)).toBe(JSON.stringify(cityDefault));
+
+    const cityRaisedFloor = compileCity(graph, { footprintFloor: 0.5 });
+    const smallestDefault = Math.min(...cityDefault.buildings.map((b) => b.width));
+    const smallestRaised = Math.min(...cityRaisedFloor.buildings.map((b) => b.width));
+    expect(smallestRaised).toBeGreaterThan(smallestDefault);
+
+    // No overlap/maximum-exceedance regression at the raised floor: every building still lands
+    // fully inside some district and no two overlap (same invariants the unparameterized suite
+    // above checks for the default floor).
+    expect(findOverlaps(cityRaisedFloor.buildings)).toEqual([]);
+    for (const b of cityRaisedFloor.buildings) {
+      expect(cityRaisedFloor.districts.some((d) => fullyInside(b, d))).toBe(true);
+    }
   });
 });
 

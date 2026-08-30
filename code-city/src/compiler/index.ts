@@ -31,6 +31,10 @@ export interface CompileCityOptions {
   /** D4 clone-aware LOD scope (CONTRACTS.md V4, docs/CONTRACT-city-json.md "D4"). Defaults to
    *  "district" (the original V4 behavior) so omitting this option is bit-for-bit unchanged. */
   cloneLodScope?: CloneLodScope;
+  /** Building-footprint floor as a fraction of the slot maximum (see FOOTPRINT_FLOOR_DEFAULT's
+   *  doc comment in grammar.ts for the trade-off and the current-curve caveat). Defaults to
+   *  FOOTPRINT_FLOOR_DEFAULT so omitting this option is bit-for-bit unchanged. */
+  footprintFloor?: number;
 }
 
 export function compileCity(graph: RepoGraph, options?: CompileCityOptions): CityModel {
@@ -95,7 +99,7 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
   const buildings = sources.map((source) => {
     const slot = slots.get(source.path);
     if (!slot) throw new Error(`No layout slot for ${source.path}`);
-    const side = footprintSide(source.loc, slot.maxSide, locRef);
+    const side = footprintSide(source.loc, slot.maxSide, locRef, options?.footprintFloor);
     return {
       id: source.id,
       x: slot.x,
