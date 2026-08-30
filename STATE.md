@@ -1,45 +1,42 @@
 ---
 project: sketches
 updated: 2026-08-30
-next: "Usul: pick district vs directory LOD via code-city/out/lod-compare/ (tailnet :7500, static server on 8099) — roads toggle off makes the two panes actually comparable. Then browser-verify dist/timeline.html."
-phase: "code-city V5 shipped and pushed. This session: built an interactive LOD compare viewer (out/lod-compare/index.html, gitignored) since the raw SVGs render solid black — render2d deliberately emits no colors (contract). Housekeeping done: stale tailnet serves + orphan procs killed."
-campaign_ref: "2026-08-29 — code-city V5: directory-LOD mode, git time-travel (snapshots + layout stability + timeline scrub), lens layer"
+next: "gapBefore judgment call: delete the unreachable-from-real-data path, or keep it with a synthetic-manifest test that documents why it can't fire from real generated history. Then: pick/wire a footprint-floor default (parameterized, no value chosen, no CLI flag), and browser-verify dist/timeline.html (low priority — Usul's read: 'ok, not really necessary for anything')."
+phase: "code-city V5.1: 3D viewer is now the compare surface (?city=, ?heightScale=, layer toggles). Two rulings made against rendered variants: district-weight default linear->log, height-scale default 1->0.5. 6-lane orchestrated Workflow shipped camera/weight/footprint/tethers/2 defects/CONTRACTS fix."
+campaign_ref: "2026-08-30 — code-city V5.1: 3D compare viewer + 3 rulings (weight/height), workflow-orchestrated"
 gates:
-  - "code-city: 31 test files, 330/330 tests green, build clean, smoke green. Layout-stability holds for incremental snapshots (0/621 over 0.3 tolerance on real 631-file graph), degrades on high-growth pairs (4/40 over tolerance on an actual 07->08 pair)."
+  - "code-city: 33 test files, 360/360 green, build clean. Determinism + no-swallowed-exceptions verified by execution (double-compile diff, sha256) after the 6-lane merge, not by code reading."
 ---
 
 # sketches — STATE
 
 ## Now
 
-LOD compare viewer live at tailnet `:7500` (proxies static server on `127.0.0.1:8099`,
-`code-city/out/lod-compare/`), browser-verified: buildings colored by language, height
-re-encoded as fill-opacity, roads/tethers toggleable, district labels. On the merged mgmt trio:
-district LOD 631 buildings/1479 roads, directory LOD 262 buildings/624 roads, identity links
-match (31/31) — no clone data lost either way. Visual read: `frdops` district dominates the
-canvas (~71%) so the compare is largely judging one district; roads read as dense haze at
-fitted zoom until toggled off.
+Compare surface moved from 2D SVG to the real 3D viewer: `?city=<path>` swaps the CityModel
+(root-relative, explicit-fails-loud), `?heightScale=<n>` overrides massing live, layer control
+is a pure view filter. Index at `dist/compare.html` (tailnet :7500, gitignored).
+
+Two defaults changed by Usul's ruling against rendered variants, reversible via explicit option:
+district weight `linear`→`log` (share 71.3%→40.9%), height scale `1`→`0.5` (aspect 7.4:1→3.7:1).
+Root cause was height, not footprint — footprint-floor tuning was nearly invisible.
 
 ## Open
 
-- **LOD call is Usul's** — see viewer above.
-- **Timeline UI not browser-verified** — data/morph path confirmed headlessly, DOM/WebGL half owed.
-- **Real defects found, not yet fixed**: misleading `spawn git ENOENT` in `bin/snapshots.ts` on a
-  pre-existence window; `gapBefore` path unreachable from real generated data (git history is
-  monotonic); `CONTRACTS.md` "Status" table is stale/wrong (says 3 modules are NotImplemented stubs);
-  0-building snapshot months render as an empty plain with no UNMEASURED disclosure.
-- **New this session**: `render2d`'s SVG output is unstyled by contract (`docs/CONTRACT-render-svg.md`
-  — presentation is deliberately excluded, only the road/tether structural distinction is
-  guaranteed to survive a bare view). In practice a bare view renders solid black. Worth deciding
-  whether `bin/render2d.ts` should ship a companion stylesheet/HTML wrapper for consumers, or
-  whether "bring your own CSS" stays the intended contract.
-- **11 stale lane worktrees** at `sketches/.claude/worktrees/` (not `code-city/.claude/worktrees/`
-  as previously noted) — all 11 branches provably merged into main, only untracked content is
-  `code-city/node_modules`. `git worktree remove` is denied by the permission classifier (tried
-  with and without `--force`); needs a permission rule or Usul's own hand.
+- **`gapBefore` judgment call** — unreachable from real generated data (git history is
+  monotonic); delete the path or keep it with a synthetic-manifest test. Deliberately not
+  delegated to a lane.
+- **Footprint-floor default unset** — parameterized correctly, documented as the weaker lever,
+  no CLI flag wired in `bin/compile.ts`, no value chosen.
+- **`dist/timeline.html` still not browser-verified** — Usul's read on the underlying data: "ok,
+  not really necessary for anything," so not prioritized this session.
+- **18 registered lane worktrees at `.claude/worktrees/`** (11 at last close + 7 new V5.1 lanes),
+  all provably merged. `git worktree remove` is denied by the permission classifier — needs a
+  rule or Usul's own hand.
 
 ## Do not
 
-- Don't add colors/fills into `src/renderer/svg.ts` to fix the black-render issue — the contract
-  deliberately keeps `render2d` presentation-free; paint belongs in the consumer (see the compare
-  viewer for the pattern).
+- Don't add colors/fills into `src/renderer/svg.ts` — the 2D SVG contract deliberately stays
+  presentation-free; the 3D viewer is now the compare surface, not the SVG path.
+- Don't hand-edit `bin/compile.ts`'s district-weight/footprint flags without also updating the
+  matching default-mode doc comments in `src/compiler/layout.ts` / `src/renderer/buildings.ts` —
+  both constants document WHY the default is what it is, not just what it is.

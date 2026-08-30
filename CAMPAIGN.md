@@ -275,3 +275,55 @@ Net: 237→330 tests (31 files, +93), build/smoke clean throughout, 12 commits, 
 at this session's close per Usul's confirm. Two stale tailnet serve entries (:7500, :7600) from
 the prior session are still unaddressed; 11 stale lane worktrees remain registered under
 `.claude/worktrees/` from this run and the prior V4 run.
+
+## 2026-08-30 — code-city V5.1: 3D compare viewer + 3 rulings (weight/height), workflow-orchestrated
+
+Session opened on last close's open item: pick district LOD vs directory LOD via the 2D compare
+viewer. Usul's first reaction — "roads overwhelming, I won't be impressed by anything 2D" —
+reframed the whole session: the 2D SVG compare tool was retired in favor of making the real 3D
+Three.js viewer (src/main.ts) itself the compare surface. Added `?city=` (root-relative only, an
+explicitly-named city that fails to load is a hard error, never a silent mock substitution),
+a Roads/Tethers/Landmarks layer-visibility control (view-only — never mutates the loaded
+CityModel or its test-bridge counts), and an always-visible source badge naming the loaded
+document + counts (53ad971).
+
+Ran `/usul-orchestrate-task` as a 6-lane Workflow (5 Sonnet + 1 Haiku, cap-bound at 2 concurrent
+on this 4-vCPU box) against the concrete backlog: box-fit camera framing (was sphere-fitting a
+flat plate, city occupied ~30% of frame), a tunable district-weighting curve
+(linear/sqrt/log, default unchanged), a tunable footprint-floor knob, selection-scoped tether
+emphasis, the two recorded git-ENOENT/empty-snapshot defects, and a CONTRACTS.md status-table
+correction. 360 tests green post-merge (was 330), determinism/no-swallowed-exceptions verified
+by execution not code-reading. Real dispatch defect: 2 of 6 lane worktrees were cut from a stale
+base (bc21543 vs the stated 53ad971 integration point) — lane D built a whole rival
+`setupLayerControl` because from its base the real one didn't exist yet; merge step caught it,
+kept the shipped panel, preserved D's genuinely new work, fixed a latent test-bridge bug in
+passing. Cost: ~$23 lane spend, 39 min wall (est. 147, cap-math over-corrected).
+
+Render step's own conclusion was wrong and got corrected inline: it reported the footprint-floor
+knob as "dead" (0.05/0.20/0.50 rendering identical). True but for the wrong reason attributed —
+direct measurement showed footprint floor DOES move geometry above ~0.08, it's just the WEAKER
+lever. The real needle cause is aspect ratio: median building on the merged mgmt trio stood
+7.4:1 (height:footprint-width) at heightScale=1, and no footprint change can fix a height
+problem. Wired `?heightScale=` as a second live viewer override (bad input fails loudly, same
+discipline as `?city=`).
+
+Two rulings made against rendered A/B/C/D variants, not code reading, each flipping a compiler/
+renderer default and preserving the old behavior as an explicit opt-out:
+- **District weight: linear → log** (`DEFAULT_DISTRICT_WEIGHT_MODE`, src/compiler/layout.ts).
+  Largest district's canvas share: 71.3% (linear) → 40.9% (log). `--district-weight=linear`
+  still reproduces every pre-ruling city byte-for-byte.
+- **Height scale: 1 → 0.5** (`BASE_HEIGHT_SCALE_DEFAULT`, src/renderer/buildings.ts). Median
+  aspect 7.4:1 → 3.7:1 — skyline survives, needle silhouette gone. Existing ratio-based tests
+  rewritten to assert against the constant rather than a hardcoded factor, so a future re-ruling
+  can't silently desync the suite from the default it's supposed to test.
+
+Net this session: 330→360 tests (33 files, +30), 17 local commits (unpushed pending this
+close's confirm), the `dist/compare.html` index page as the durable comparison surface (served
+at tailnet :7500, gitignored like the rest of dist/). Left open, unstarted: `gapBefore`'s
+unreachable-from-real-data status (delete vs keep-with-synthetic-test — a judgment call,
+deliberately not delegated to a lane); footprint-floor's own default value (parameterized,
+correctly documented as the weaker lever, no CLI flag wired, no value chosen); `dist/timeline.html`
+still not browser-verified (Usul's verdict on the data: "ok, not really necessary for anything" —
+so not prioritized). Worktree count grew 11→18 this session (7 new V5.1 lane worktrees, all
+merged) — `git worktree remove` is still denied by the permission classifier; needs a rule or
+Usul's own hand, worse now than at last close.
