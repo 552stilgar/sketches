@@ -248,6 +248,87 @@ export function setupLensControl(params: SetupLensControlParams): LensControlHan
 }
 
 // -------------------------------------------------------------------------------------------
+// Layer control — per-layer visibility toggles (roads / tethers / landmarks). Its own handle for
+// the same reason as the lens control: independent state, no overlap with lens or overlay. This
+// is a VIEW filter only -- hiding a layer never changes the loaded CityModel or any count the
+// test bridge reports, so a hidden layer can never be mistaken for absent data.
+// -------------------------------------------------------------------------------------------
+
+export interface LayerToggleDef {
+  id: string;
+  label: string;
+  /** Visible on load. */
+  initial: boolean;
+}
+
+export interface LayerControlHandle {
+  /** Whether the named layer is currently toggled visible (unknown id -> false). */
+  isVisible(id: string): boolean;
+  /** Programmatically sets a toggle (updates the button) AND invokes onToggle, so the scene and
+   *  the control can never disagree about what's on screen. */
+  setVisible(id: string, visible: boolean): void;
+  dispose(): void;
+}
+
+export interface SetupLayerControlParams {
+  container: HTMLElement;
+  layers: readonly LayerToggleDef[];
+  /** Called whenever a layer's visibility changes (click or setVisible), never for initial state. */
+  onToggle(id: string, visible: boolean): void;
+}
+
+export function setupLayerControl(params: SetupLayerControlParams): LayerControlHandle {
+  const { container, layers, onToggle } = params;
+
+  const state = new Map<string, boolean>();
+  const buttons = new Map<string, HTMLButtonElement>();
+
+  const root = document.createElement("div");
+  root.className = "cc-layer-control";
+  root.setAttribute("role", "group");
+  root.setAttribute("aria-label", "City layers");
+
+  for (const layer of layers) {
+    state.set(layer.id, layer.initial);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "cc-layer-button";
+    btn.textContent = layer.label;
+    btn.addEventListener("click", () => setVisible(layer.id, !state.get(layer.id)));
+    buttons.set(layer.id, btn);
+    root.appendChild(btn);
+  }
+  container.appendChild(root);
+
+  function render(): void {
+    for (const [id, btn] of buttons) {
+      const on = state.get(id) === true;
+      btn.setAttribute("aria-pressed", String(on));
+      btn.classList.toggle("cc-layer-button--active", on);
+    }
+  }
+  render();
+
+  function isVisible(id: string): boolean {
+    return state.get(id) === true;
+  }
+
+  function setVisible(id: string, visible: boolean): void {
+    if (!state.has(id)) return;
+    if (state.get(id) === visible) return;
+    state.set(id, visible);
+    render();
+    onToggle(id, visible);
+  }
+
+  function dispose(): void {
+    root.remove();
+  }
+
+  return { isVisible, setVisible, dispose };
+}
+
+// -------------------------------------------------------------------------------------------
 // Timeline scrub control (Phase 4, PROJECT_IDEA.md §5.2) -- a slider over the snapshot sequence
 // plus the always-visible date readout acceptance criterion 3 requires ("a user must never be
 // unsure which moment they are looking at") and a gap badge for criterion 6. Deliberately its own

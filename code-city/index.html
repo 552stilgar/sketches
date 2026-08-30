@@ -142,6 +142,56 @@
         font-weight: 600;
       }
 
+      .cc-layer-control {
+        position: absolute;
+        left: 12px;
+        bottom: 44px;
+        z-index: 10;
+        display: flex;
+        gap: 4px;
+        background: rgba(12, 16, 32, 0.78);
+        border: 1px solid rgba(140, 170, 255, 0.3);
+        border-radius: 6px;
+        padding: 4px;
+      }
+
+      .cc-layer-button {
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: #5d6a90;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-size: 12px;
+        padding: 5px 10px;
+        cursor: pointer;
+      }
+
+      .cc-layer-button:hover {
+        color: #e8ecff;
+      }
+
+      .cc-layer-button--active {
+        background: rgba(140, 170, 255, 0.28);
+        color: #ffffff;
+        font-weight: 600;
+      }
+
+      .cc-source-badge {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        z-index: 9;
+        padding: 5px 10px;
+        background: rgba(12, 16, 32, 0.78);
+        border: 1px solid rgba(140, 170, 255, 0.3);
+        border-radius: 4px;
+        color: #9fb0e0;
+        font-family: ui-monospace, "SFMono-Regular", monospace;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+      }
+
       .cc-lens-legend {
         max-width: 320px;
         padding: 5px 10px;

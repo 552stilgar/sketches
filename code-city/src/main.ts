@@ -11,7 +11,7 @@ import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts
 import { buildRoads } from "./renderer/roads.ts";
 import { buildLandmarks } from "./renderer/landmarks.ts";
 import { buildTethers } from "./renderer/tethers.ts";
-import { setupUI, setupLensControl } from "./renderer/ui.ts";
+import { setupUI, setupLensControl, setupLayerControl } from "./renderer/ui.ts";
 import { DEFAULT_LENS, type LensId } from "./renderer/lenses.ts";
 
 interface TestBridge {
@@ -46,6 +46,13 @@ interface TestBridge {
    * control does, and read back which lens is currently active. */
   setLens(lens: LensId): void;
   currentLens(): LensId;
+  /** Layer visibility (V5.1 layer control) -- drives the same toggles the on-screen buttons do.
+   * `layerVisible` reads the SCENE object's flag, not the control's, so a headless check can
+   * catch the control and the scene disagreeing. */
+  setLayerVisible(id: string, visible: boolean): void;
+  layerVisible(id: string): boolean;
+  /** The city document this frame loaded (default "/city.json", or the ?city= override). */
+  cityUrl(): string;
 }
 
 declare global {
@@ -54,10 +61,31 @@ declare global {
   }
 }
 
-async function loadCity(): Promise<{ city: CityModel; usedMock: boolean }> {
-  const primary = await fetch("/city.json").catch(() => null);
+/**
+ * Resolves which city document to load. Defaults to "/city.json"; `?city=<path>` overrides it so
+ * one build can be pointed at alternate compiler outputs (e.g. an A/B of two LOD settings) without
+ * shuffling files on disk. Restricted to same-origin root-relative paths -- an absolute URL or a
+ * traversal is rejected loudly rather than fetched.
+ */
+export function resolveCityUrl(search: string): string {
+  const raw = new URLSearchParams(search).get("city");
+  if (raw === null || raw === "") return "/city.json";
+  if (!raw.startsWith("/") || raw.startsWith("//") || raw.includes("..")) {
+    throw new Error(`invalid ?city= parameter: ${raw} (expected a root-relative path like /city-a.json)`);
+  }
+  return raw;
+}
+
+async function loadCity(cityUrl: string): Promise<{ city: CityModel; usedMock: boolean }> {
+  const primary = await fetch(cityUrl).catch(() => null);
   if (primary && primary.ok) {
     return { city: (await primary.json()) as CityModel, usedMock: false };
+  }
+
+  // An explicitly requested city that doesn't load is a hard error -- silently substituting the
+  // mock for a city the viewer NAMED would misattribute one repo's shape to another.
+  if (cityUrl !== "/city.json") {
+    throw new Error(`Failed to load requested city ${cityUrl} (status ${primary ? primary.status : "network error"})`);
   }
 
   // Disclosed fallback: city.json doesn't exist yet (real compiler output not built). Fall back
@@ -80,6 +108,16 @@ function showFatalError(container: HTMLElement, message: string): void {
   const el = document.createElement("div");
   el.className = "cc-fatal-error";
   el.textContent = `Code City failed to load: ${message}`;
+  container.appendChild(el);
+}
+
+// Persistent badge naming the loaded city document and its headline counts. With `?city=` able to
+// repoint the same build at different compiler outputs, "which city am I looking at" must be
+// readable off the screen, not inferred from the URL bar.
+function showSourceBadge(container: HTMLElement, cityUrl: string, city: CityModel): void {
+  const el = document.createElement("div");
+  el.className = "cc-source-badge";
+  el.textContent = `${cityUrl} — ${city.buildings.length} buildings · ${city.roads.length} roads · ${city.identityLinks?.length ?? 0} identity links`;
   container.appendChild(el);
 }
 
@@ -114,8 +152,10 @@ async function main(): Promise<void> {
 
   let city: CityModel;
   let usedMock: boolean;
+  let cityUrl: string;
   try {
-    ({ city, usedMock } = await loadCity());
+    cityUrl = resolveCityUrl(window.location.search);
+    ({ city, usedMock } = await loadCity(cityUrl));
   } catch (err) {
     showFatalError(app, err instanceof Error ? err.message : String(err));
     throw err;
@@ -147,8 +187,32 @@ async function main(): Promise<void> {
   // in flight; both landed, so the guard is gone -- a landmark or tether build failure now fails
   // loudly like every other stage in this pipeline (Failure Discipline law) instead of being
   // swallowed into a console line.
-  scene.add(buildLandmarks(city));
-  scene.add(buildTethers(city, buildingsHandle.buildingCenter));
+  const landmarksGroup = buildLandmarks(city);
+  const tethersGroup = buildTethers(city, buildingsHandle.buildingCenter);
+  scene.add(landmarksGroup);
+  scene.add(tethersGroup);
+
+  // Which document this frame is actually drawing. Always shown, not only under ?city= -- the
+  // whole point is that a viewer comparing two cities can never mis-attribute what's on screen.
+  showSourceBadge(app, cityUrl, city);
+
+  const layerGroups = new Map<string, { visible: boolean }>([
+    ["roads", roadsHandle.group],
+    ["tethers", tethersGroup],
+    ["landmarks", landmarksGroup],
+  ]);
+  const layerControl = setupLayerControl({
+    container: app,
+    layers: [
+      { id: "roads", label: "Roads", initial: true },
+      { id: "tethers", label: "Tethers", initial: true },
+      { id: "landmarks", label: "Landmarks", initial: true },
+    ],
+    onToggle: (id, visible) => {
+      const group = layerGroups.get(id);
+      if (group) group.visible = visible;
+    },
+  });
 
   const ui = setupUI({
     container: app,
@@ -220,6 +284,16 @@ async function main(): Promise<void> {
     },
     currentLens(): LensId {
       return buildingsHandle.currentLens();
+    },
+    setLayerVisible(id: string, visible: boolean): void {
+      layerControl.setVisible(id, visible);
+    },
+    layerVisible(id: string): boolean {
+      const group = layerGroups.get(id);
+      return group ? group.visible : false;
+    },
+    cityUrl(): string {
+      return cityUrl;
     },
   };
 }
