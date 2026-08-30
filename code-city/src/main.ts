@@ -76,6 +76,25 @@ export function resolveCityUrl(search: string): string {
   return raw;
 }
 
+/**
+ * Resolves the renderer-side massing knob (`buildings.ts` BASE_HEIGHT_SCALE_DEFAULT) from
+ * `?heightScale=<number>`. Exists because that knob is what actually controls the pin-vs-block
+ * silhouette -- measured on the merged mgmt trio, the median building has an aspect ratio
+ * (height / footprint side) of 7.4, so no footprint change can un-needle it while height stands.
+ * Omitted => the module default, unchanged. A present-but-unusable value is a loud error rather
+ * than a silent fall back to 1: a viewer who typed a number must never be shown a scene that
+ * quietly ignored it.
+ */
+export function resolveHeightScale(search: string): number | undefined {
+  const raw = new URLSearchParams(search).get("heightScale");
+  if (raw === null || raw === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0 || value > 10) {
+    throw new Error(`invalid ?heightScale= parameter: ${raw} (expected a number in (0, 10])`);
+  }
+  return value;
+}
+
 async function loadCity(cityUrl: string): Promise<{ city: CityModel; usedMock: boolean }> {
   const primary = await fetch(cityUrl).catch(() => null);
   if (primary && primary.ok) {
@@ -114,10 +133,21 @@ function showFatalError(container: HTMLElement, message: string): void {
 // Persistent badge naming the loaded city document and its headline counts. With `?city=` able to
 // repoint the same build at different compiler outputs, "which city am I looking at" must be
 // readable off the screen, not inferred from the URL bar.
-function showSourceBadge(container: HTMLElement, cityUrl: string, city: CityModel): void {
+function showSourceBadge(
+  container: HTMLElement,
+  cityUrl: string,
+  city: CityModel,
+  heightScale: number | undefined,
+): void {
   const el = document.createElement("div");
   el.className = "cc-source-badge";
-  el.textContent = `${cityUrl} — ${city.buildings.length} buildings · ${city.roads.length} roads · ${city.identityLinks?.length ?? 0} identity links`;
+  const parts = [
+    `${cityUrl} — ${city.buildings.length} buildings · ${city.roads.length} roads · ${city.identityLinks?.length ?? 0} identity links`,
+  ];
+  // Only shown when overridden: a badge that always printed "heightScale 1" would imply the knob
+  // was chosen when in fact nothing was passed.
+  if (heightScale !== undefined) parts.push(`heightScale ${heightScale}`);
+  el.textContent = parts.join(" · ");
   container.appendChild(el);
 }
 
@@ -153,8 +183,10 @@ async function main(): Promise<void> {
   let city: CityModel;
   let usedMock: boolean;
   let cityUrl: string;
+  let heightScale: number | undefined;
   try {
     cityUrl = resolveCityUrl(window.location.search);
+    heightScale = resolveHeightScale(window.location.search);
     ({ city, usedMock } = await loadCity(cityUrl));
   } catch (err) {
     showFatalError(app, err instanceof Error ? err.message : String(err));
@@ -174,7 +206,7 @@ async function main(): Promise<void> {
   const sceneHandle = createScene(app, city);
   const { scene, camera, renderer, controls } = sceneHandle;
 
-  const buildingsHandle = buildBuildings(city);
+  const buildingsHandle = buildBuildings(city, heightScale === undefined ? undefined : { heightScale });
   for (const mesh of buildingsHandle.meshes) scene.add(mesh);
   scene.add(buildingsHandle.districtGroup);
 
@@ -194,7 +226,7 @@ async function main(): Promise<void> {
 
   // Which document this frame is actually drawing. Always shown, not only under ?city= -- the
   // whole point is that a viewer comparing two cities can never mis-attribute what's on screen.
-  showSourceBadge(app, cityUrl, city);
+  showSourceBadge(app, cityUrl, city, heightScale);
 
   const layerGroups = new Map<string, { visible: boolean }>([
     ["roads", roadsHandle.group],
