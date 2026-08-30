@@ -18,7 +18,7 @@
 // empty or interpolated graph.
 
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -28,13 +28,47 @@ import { analyzeRepo } from "./index.ts";
 
 const execFileAsync = promisify(execFile);
 
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Failure Discipline LAW: node's ENOENT from a failed spawn is IDENTICAL (same code, same
+// `path`/`syscall` shape) whether the "git" binary itself is missing or `cwd` just doesn't exist
+// on disk -- Node cannot tell the two apart and neither can a caller reading the raw error. Left
+// unwrapped, that ambiguity surfaces as a misattributed "spawn git ENOENT", which reads as "git
+// isn't installed" even when the real condition is "this path was not present in the repo at
+// this point in history" (e.g. a project folded into a monorepo later, or a month before the
+// repo's first commit). Every git spawn in this module goes through this wrapper so the two
+// cases are told apart and each fails loudly with its own real cause -- never a silent skip.
+async function runGit(cwd: string, args: string[], maxBuffer = 64 * 1024 * 1024): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd, encoding: "utf8", maxBuffer });
+    return stdout.trim();
+  } catch (err) {
+    if (err && typeof err === "object" && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      if (!(await isDirectory(cwd))) {
+        throw new Error(
+          `cannot run "git ${args.join(" ")}": working directory "${cwd}" does not exist. ` +
+            `This is not a missing git installation -- this path was not present at this point ` +
+            `in the repo's history.`,
+        );
+      }
+      throw new Error(
+        `cannot run "git ${args.join(" ")}": the "git" executable was not found on PATH. ` +
+          `Install git or fix PATH -- "${cwd}" exists, so this is a genuinely missing binary, ` +
+          `not a history-window issue.`,
+      );
+    }
+    throw err;
+  }
+}
+
 async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return stdout.trim();
+  return runGit(cwd, args);
 }
 
 /** Repo-relative "YYYY-MM" key for each of the last `months` months, ending at `asOf`'s month
@@ -106,6 +140,25 @@ export async function resolveMonthlyCommits(
   return { resolved, skipped };
 }
 
+/** Thrown by withDetachedWorktree when `sha` resolves fine but the analyzed subdirectory has no
+ *  entry in that commit's tree -- e.g. a project folded into a monorepo later, being asked for a
+ *  month before the fold. Distinguished from a generic Error so generateMonthlySnapshots can
+ *  convert it to an accurately-worded skip instead of letting it read as an analyzer crash. */
+export class SubdirNotPresentAtCommitError extends Error {
+  subdir: string;
+  sha: string;
+
+  constructor(subdir: string, sha: string) {
+    super(
+      `"${subdir}" does not exist at commit ${sha} -- this path was not present in the repo at ` +
+        `this point in its history (predates its own creation/fold, not a git installation issue).`,
+    );
+    this.name = "SubdirNotPresentAtCommitError";
+    this.subdir = subdir;
+    this.sha = sha;
+  }
+}
+
 /** Runs `fn` against a temporary detached worktree checked out at `sha`, then always removes it
  *  -- including when `fn` throws. Never mutates the caller's actual working tree: `git worktree
  *  add --detach` creates an independent checkout sharing the same object store, it does not
@@ -115,24 +168,27 @@ async function withDetachedWorktree<T>(repoPath: string, sha: string, fn: (workt
   const worktreeParent = await mkdtemp(join(tmpdir(), "code-city-snapshot-"));
   const worktreePath = join(worktreeParent, "wt");
   try {
-    await execFileAsync("git", ["worktree", "add", "--detach", "--force", worktreePath, sha], {
-      cwd: gitRoot,
-      encoding: "utf8",
-    });
+    await runGit(gitRoot, ["worktree", "add", "--detach", "--force", worktreePath, sha]);
     try {
       const subdir = relative(gitRoot, resolve(repoPath));
       const analyzeTarget = subdir === "" ? worktreePath : join(worktreePath, subdir);
+      // Never-fabricate, applied to this analyzer boundary too: `sha` resolving successfully
+      // only proves the REPO had a commit by this cutoff, not that THIS subdirectory existed in
+      // it. Without this check, analyzeRepo's own git calls against a nonexistent cwd fail with
+      // node's raw, misattributed ENOENT (Defect 1) -- catch the real condition here instead,
+      // before it ever reaches analyzeRepo.
+      if (!(await isDirectory(analyzeTarget))) {
+        throw new SubdirNotPresentAtCommitError(subdir, sha);
+      }
       return await fn(analyzeTarget);
     } finally {
       // --force: the worktree is disposable and may still have the analyzer's own read handles
       // open under load; this is a controlled removal of a dir we own, not a caller path.
-      await execFileAsync("git", ["worktree", "remove", "--force", worktreePath], { cwd: gitRoot, encoding: "utf8" }).catch(
-        async () => {
-          // Worktree metadata can go stale if `add` partially failed; prune + best-effort rm so
-          // we never leak a registered worktree even when `remove` itself fails.
-          await execFileAsync("git", ["worktree", "prune"], { cwd: gitRoot, encoding: "utf8" }).catch(() => {});
-        },
-      );
+      await runGit(gitRoot, ["worktree", "remove", "--force", worktreePath]).catch(async () => {
+        // Worktree metadata can go stale if `add` partially failed; prune + best-effort rm so
+        // we never leak a registered worktree even when `remove` itself fails.
+        await runGit(gitRoot, ["worktree", "prune"]).catch(() => {});
+      });
     }
   } finally {
     await rm(worktreeParent, { recursive: true, force: true });
@@ -177,7 +233,20 @@ export async function generateMonthlySnapshots(
 
   const snapshots: MonthlySnapshot[] = [];
   for (const commit of resolved) {
-    const graph = await withDetachedWorktree(absoluteRepoPath, commit.sha, (worktreePath) => analyzeRepo(worktreePath));
+    let graph: RepoGraph;
+    try {
+      graph = await withDetachedWorktree(absoluteRepoPath, commit.sha, (worktreePath) => analyzeRepo(worktreePath));
+    } catch (err) {
+      if (err instanceof SubdirNotPresentAtCommitError) {
+        // The repo had a qualifying commit for this month, but this subdirectory had no entry
+        // in it -- same never-fabricate discipline as "no commit on or before this month's end"
+        // above: disclose it as a skip with its own accurate reason, don't fabricate a graph for
+        // a path that had no content yet, and don't let it abort the whole run.
+        skipped.push({ month: commit.month, reason: `path not present at this commit: ${err.message}` });
+        continue;
+      }
+      throw err;
+    }
     // analyzeRepo faithfully reports repoPath as "what it was invoked against" (the ephemeral
     // worktree, per docs/CONTRACT-repo-json.md), but that directory is deleted the moment this
     // loop iteration ends -- keeping it would (a) make repoPath meaningless to any later reader

@@ -71,6 +71,15 @@ export interface TimelineHandle {
    *  not calendar-consecutive -- i.e. inside a real gap in the underlying history. The renderer
    *  hard-cuts (never interpolates) across a gap; see setPosition's implementation doc. */
   isInGap(): boolean;
+  /**
+   * NEVER-FABRICATE (defect 2, Lane E): true when the snapshot nearest the current scrub
+   * position -- the same "from" / "to" side currentDate() reads off for its own halfway split --
+   * has zero buildings. An empty ground plane at that position is indistinguishable from "this
+   * repo genuinely had no tracked source yet" and "this snapshot failed to load / was never
+   * measured" unless the viewer is told explicitly; this is that disclosure's source of truth, so
+   * the UI can never render silence as a plausible-looking quiet city.
+   */
+  isEmptySnapshot(): boolean;
   /** The date a viewer should read as "what moment is this" (acceptance criterion 3) -- a smooth
    *  interpolated instant while morphing between two known snapshots, or the frozen boundary date
    *  while isInGap() is true (see implementation doc: gap dates never lie about precision). */
@@ -353,6 +362,16 @@ export function buildTimeline(snapshots: readonly TimelineSnapshot[], initialLen
     return new Date(lerp(fromMs, toMs, localT)).toISOString();
   }
 
+  function isEmptySnapshot(): boolean {
+    // Same halfway split currentDate() uses to pick which side's date is "closest" -- keeps the
+    // disclosure in sync with whatever date/month the HUD is already showing, rather than a
+    // second, independently-computed notion of "which snapshot is this".
+    const from = snapshots[pairIndex];
+    const to = snapshots[pairIndex + 1] ?? snapshots[pairIndex];
+    const nearest = localT < 0.5 ? from : to;
+    return nearest.city.buildings.length === 0;
+  }
+
   function buildingCenter(id: string): THREE.Vector3 | null {
     return pair ? pair.buildingCenter(id) : null;
   }
@@ -377,6 +396,7 @@ export function buildTimeline(snapshots: readonly TimelineSnapshot[], initialLen
     setLens,
     currentLens,
     isInGap,
+    isEmptySnapshot,
     currentDate,
     buildingCenter,
     resolveBuildingId,

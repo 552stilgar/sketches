@@ -20,6 +20,7 @@ interface TimelineTestBridge {
   setPosition(globalT: number): void;
   currentDate(): string;
   isInGap(): boolean;
+  isEmptySnapshot(): boolean;
   setLens(lens: LensId): void;
   currentLens(): LensId;
 }
@@ -113,14 +114,14 @@ async function main(): Promise<void> {
     entries: snapshots.map((s) => ({ month: s.month, date: s.date })),
     onScrub: (globalT) => {
       timelineHandle.setPosition(globalT);
-      timelineControl.setReadout(timelineHandle.currentDate(), timelineHandle.isInGap());
+      timelineControl.setReadout(timelineHandle.currentDate(), timelineHandle.isInGap(), timelineHandle.isEmptySnapshot());
     },
   });
   // Initial readout for position 0, matching the initial setPosition(0) buildTimeline() already
   // applied internally -- keeps the on-screen date in sync with what's rendered on first paint,
   // not just after the first drag.
   timelineHandle.setPosition(0);
-  timelineControl.setReadout(timelineHandle.currentDate(), timelineHandle.isInGap());
+  timelineControl.setReadout(timelineHandle.currentDate(), timelineHandle.isInGap(), timelineHandle.isEmptySnapshot());
 
   window.addEventListener("resize", () => sceneHandle.handleResize());
 
@@ -139,13 +140,16 @@ async function main(): Promise<void> {
     setPosition(globalT: number): void {
       timelineHandle.setPosition(globalT);
       timelineControl.setPosition(globalT);
-      timelineControl.setReadout(timelineHandle.currentDate(), timelineHandle.isInGap());
+      timelineControl.setReadout(timelineHandle.currentDate(), timelineHandle.isInGap(), timelineHandle.isEmptySnapshot());
     },
     currentDate(): string {
       return timelineHandle.currentDate();
     },
     isInGap(): boolean {
       return timelineHandle.isInGap();
+    },
+    isEmptySnapshot(): boolean {
+      return timelineHandle.isEmptySnapshot();
     },
     setLens(lens: LensId): void {
       timelineHandle.setLens(lens);
