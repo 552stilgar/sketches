@@ -353,7 +353,7 @@ describe("buildBuildings' base height-scale knob (Lane C v5.1 massing parameter)
 
   it("scales every building's rendered height by the given factor, without touching X/Z footprint", () => {
     const baseline = buildBuildings(city);
-    const doubled = buildBuildings(city, { heightScale: 2 });
+    const doubled = buildBuildings(city, { heightScale: BASE_HEIGHT_SCALE_DEFAULT * 2 });
     for (const b of city.buildings) {
       const base = findInstance(baseline, b.id)!;
       const scaled = findInstance(doubled, b.id)!;
@@ -364,7 +364,7 @@ describe("buildBuildings' base height-scale knob (Lane C v5.1 massing parameter)
   });
 
   it("survives a lens switch -- the base height scale composes with the lens height multiplier, not replaced by it", () => {
-    const doubled = buildBuildings(city, { heightScale: 2 });
+    const doubled = buildBuildings(city, { heightScale: BASE_HEIGHT_SCALE_DEFAULT * 2 });
     const baseline = buildBuildings(city);
     doubled.setLens("complexity");
     baseline.setLens("complexity");

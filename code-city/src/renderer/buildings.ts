@@ -443,9 +443,16 @@ function buildDistrictBoundary(d: District, visual: DistrictVisual): THREE.Mesh 
  * every building read as a taller, denser skyline (helping the pin-vs-block silhouette at high
  * building counts), at the cost of buildings clipping camera near-planes sooner and district
  * ground/road geometry (which does NOT scale with this knob) looking comparatively squat.
- * Defaults to 1 so omitting the option leaves today's rendered geometry byte-for-byte unchanged.
+ *
+ * 0.5 since 2026-08-30 (Usul's ruling, made against rendered variants at 1 / 0.5 / 0.25 / 0.12).
+ * At 1 the median building on the merged mgmt trio stood 7.4x taller than its footprint was wide
+ * -- measured, p25 4.6 / p75 11.2 / max 33.3 -- and the city read as a field of pins rather than a
+ * skyline. Footprint width cannot fix that ratio: the footprint floor only widens the smallest
+ * buildings, so 0.05/0.20/0.50 floors were visually indistinguishable. Halving height is what
+ * moves it. Below ~0.25 the massing flattens past the point of reading as buildings at all, so
+ * this knob has a usable floor as well as a ceiling.
  */
-export const BASE_HEIGHT_SCALE_DEFAULT = 1;
+export const BASE_HEIGHT_SCALE_DEFAULT = 0.5;
 
 export interface BuildBuildingsOptions {
   /** See BASE_HEIGHT_SCALE_DEFAULT's doc comment above. */
