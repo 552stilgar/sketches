@@ -188,9 +188,9 @@ async function main(): Promise<void> {
   // loudly like every other stage in this pipeline (Failure Discipline law) instead of being
   // swallowed into a console line.
   const landmarksGroup = buildLandmarks(city);
-  const tethersGroup = buildTethers(city, buildingsHandle.buildingCenter);
+  const tethersHandle = buildTethers(city, buildingsHandle.buildingCenter);
   scene.add(landmarksGroup);
-  scene.add(tethersGroup);
+  scene.add(tethersHandle.group);
 
   // Which document this frame is actually drawing. Always shown, not only under ?city= -- the
   // whole point is that a viewer comparing two cities can never mis-attribute what's on screen.
@@ -198,7 +198,9 @@ async function main(): Promise<void> {
 
   const layerGroups = new Map<string, { visible: boolean }>([
     ["roads", roadsHandle.group],
-    ["tethers", tethersGroup],
+    // Read path only for tethers: setLayerVisible below is what WRITES this group's visibility,
+    // so window.__test.layerVisible("tethers") still reports the real on-screen state.
+    ["tethers", tethersHandle.group],
     ["landmarks", landmarksGroup],
   ]);
   const layerControl = setupLayerControl({
@@ -209,6 +211,13 @@ async function main(): Promise<void> {
       { id: "landmarks", label: "Landmarks", initial: true },
     ],
     onToggle: (id, visible) => {
+      // Tethers own their visibility through the V5.1 Lane D handle rather than a raw
+      // Group.visible flip, so the layer toggle and the selection-scoped emphasis stay in
+      // agreement about what is on screen instead of fighting over the same property.
+      if (id === "tethers") {
+        tethersHandle.setLayerVisible(visible);
+        return;
+      }
       const group = layerGroups.get(id);
       if (group) group.visible = visible;
     },
@@ -221,6 +230,11 @@ async function main(): Promise<void> {
     raycastTargets: buildingsHandle.meshes,
     resolveBuildingId: buildingsHandle.resolveBuildingId,
     buildingById: buildingsHandle.buildingById,
+    // V5.1 Lane D: the click-to-inspect selection IS the tether selection scope -- no separate
+    // raycast, no separate notion of "selected building". Deselecting (null) restores the
+    // pre-Lane-D all-emphasized default; selecting a building with no clone group is a no-op
+    // inside setSelectedBuilding itself (tethers.ts), not handled here.
+    onSelectionChange: (buildingId) => tethersHandle.setSelectedBuilding(buildingId),
   });
 
   const lensControl = setupLensControl({
@@ -228,6 +242,13 @@ async function main(): Promise<void> {
     initialLens: DEFAULT_LENS,
     onSelect: (lens) => buildingsHandle.setLens(lens),
   });
+
+  // V5.1 Lane D's "Tethers" layer toggle is NOT a second panel: lane D branched from bc21543,
+  // before 53ad971 shipped the roads/tethers/landmarks layer control, so it built its own. The
+  // shipped panel above is the surviving one and already carries the Tethers row -- it routes
+  // that row through tethersHandle.setLayerVisible, keeping the toggle independent of the
+  // selection-scoped emphasis exactly as lane D specified (hiding the layer never resets which
+  // building is selected).
 
   window.addEventListener("resize", () => sceneHandle.handleResize());
 

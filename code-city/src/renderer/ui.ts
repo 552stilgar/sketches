@@ -25,6 +25,13 @@ export interface SetupUIParams {
   raycastTargets: THREE.Object3D[];
   resolveBuildingId: (mesh: THREE.Object3D, instanceId: number | undefined) => string | null;
   buildingById: Map<string, Building>;
+  /** V5.1 (Lane D, "tether readability"): fired with the newly-selected building id whenever the
+   *  overlay opens, and with `null` whenever it closes (ESC, click-away, or the close button) --
+   *  the same click-to-inspect gesture the overlay already tracks, exposed as a selection signal
+   *  for anything else in the scene (currently: tethers.ts's setSelectedBuilding) that wants to
+   *  react to "what building is the viewer looking at" without owning its own raycast. Optional so
+   *  every existing caller of setupUI keeps compiling unchanged. */
+  onSelectionChange?: (buildingId: string | null) => void;
 }
 
 function formatOverlay(id: string, b: Building): string {
@@ -38,7 +45,8 @@ function formatOverlay(id: string, b: Building): string {
 }
 
 export function setupUI(params: SetupUIParams): UIHandle {
-  const { container, domElement, camera, raycastTargets, resolveBuildingId, buildingById } = params;
+  const { container, domElement, camera, raycastTargets, resolveBuildingId, buildingById, onSelectionChange } =
+    params;
 
   const overlay = document.createElement("div");
   overlay.className = "cc-overlay";
@@ -67,11 +75,14 @@ export function setupUI(params: SetupUIParams): UIHandle {
     openId = buildingId;
     body.textContent = formatOverlay(buildingId, b);
     overlay.style.display = "flex";
+    onSelectionChange?.(buildingId);
   }
 
   function closeOverlay(): void {
+    const wasOpen = openId !== null;
     openId = null;
     overlay.style.display = "none";
+    if (wasOpen) onSelectionChange?.(null);
   }
 
   function overlayText(): string | null {
