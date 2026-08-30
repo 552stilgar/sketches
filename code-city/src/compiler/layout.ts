@@ -12,6 +12,52 @@ export interface WeightedPath {
   weight: number;
 }
 
+/**
+ * District area-weighting curve (V5.1, sketches/CAMPAIGN.md district-weighting task). Raw file
+ * COUNT is the input signal; this is the curve applied to it before `squarify` turns weight into
+ * area. "linear" is the original V4 behavior (raw count, unmodified) and stays the default so
+ * omitting the option reproduces V4 output bit-for-bit -- see compiler/index.ts CompileCityOptions.
+ *
+ * This is an explicit, caller-chosen mode -- never auto-selected from how skewed a given repo's
+ * district sizes happen to be. Auto-detection would make `compileCity`'s output depend on the
+ * DATA (how lopsided this particular graph is) in a way the caller can't predict or reproduce from
+ * the option alone, which breaks the determinism contract just as surely as a clock read would:
+ * the same (graph, options) pair must always compile to the same CityModel, and "same options,
+ * different curve because the data looked different" violates that even though no field on the
+ * options object changed.
+ */
+export type DistrictWeightMode = "linear" | "sqrt" | "log";
+
+export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "sqrt", "log"];
+
+/**
+ * Apply the named curve to a district's raw file count. `sqrt` and `log` both compress the gap
+ * between a large district and a small one relative to `linear` (log more aggressively than
+ * sqrt), which is the whole point: one oversized repo's file count shouldn't be allowed to swamp
+ * every other district's visible area in a merged city. `count` can be 0 (a datastore-only
+ * district with no analyzed source files) -- `log1p` (`Math.log(1 + count)`) keeps that finite
+ * instead of `Math.log(0) === -Infinity`, and `squarify` itself still clamps every weight to a
+ * minimum of 1 downstream, so a 0-file district never vanishes from the canvas either way.
+ */
+export function districtWeight(count: number, mode: DistrictWeightMode = "linear"): number {
+  switch (mode) {
+    case "linear":
+      return count;
+    case "sqrt":
+      return Math.sqrt(count);
+    case "log":
+      return Math.log1p(count);
+    default: {
+      // Exhaustiveness guard: TypeScript proves `mode` is `never` here as long as
+      // DistrictWeightMode's members are all handled above. If a new mode is added to the type
+      // without a case here, this becomes a compile error instead of a silent runtime fallback --
+      // "fail loudly" applies to the compiler's own contract surface, not just CLI input.
+      const exhaustive: never = mode;
+      throw new Error(`districtWeight: unhandled mode ${String(exhaustive)}`);
+    }
+  }
+}
+
 function worst(row: readonly WeightedPath[], shortSide: number): number {
   if (row.length === 0 || shortSide <= 0) return Number.POSITIVE_INFINITY;
   const weights = row.map((item) => item.weight);
