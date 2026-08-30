@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import * as THREE from "three";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
+  BASE_HEIGHT_SCALE_DEFAULT,
+  buildBuildings,
   buildProfileGeometry,
   classifyStructuralLiveness,
   computeFanIn,
@@ -11,7 +15,8 @@ import {
   PROFILE_NAMES,
   styleProfile,
 } from "../src/renderer/buildings.ts";
-import type { District, Road } from "../src/types.ts";
+import { validateCity } from "../src/types.ts";
+import type { CityModel, District, Road } from "../src/types.ts";
 
 function road(from: string, to: string, weight?: number): Road {
   return weight === undefined ? { from, to } : { from, to, weight };
@@ -274,5 +279,99 @@ describe("districtVisual -- territory identity is pure, id-derived, never positi
     const { elevation } = districtVisual(district("district:x", "typescript"));
     expect(elevation).toBeGreaterThanOrEqual(0.15);
     expect(elevation).toBeLessThan(3);
+  });
+});
+
+// buildBuildings() draws district label sprites via a real <canvas> -- irrelevant to the
+// height-scale knob this checks, but a DOM stand-in is required for buildBuildings() to run at
+// all in this plain-node test env. Same minimal stub as tests/lenses-position-lock.test.ts.
+function installMinimalCanvasStub(): void {
+  if (typeof (globalThis as any).document !== "undefined") return;
+  const ctx2d = {
+    clearRect() {},
+    fillRect() {},
+    fillText() {},
+    font: "",
+    textAlign: "",
+    textBaseline: "",
+    fillStyle: "",
+  };
+  const fakeCanvas = { width: 0, height: 0, getContext: () => ctx2d };
+  (globalThis as any).document = {
+    createElement(tag: string) {
+      if (tag === "canvas") return fakeCanvas;
+      throw new Error(`installMinimalCanvasStub: unsupported tag "${tag}"`);
+    },
+  };
+}
+
+const MOCK_CITY_PATH = fileURLToPath(new URL("../fixtures/mock-city.json", import.meta.url));
+
+function loadCity(): CityModel {
+  const city = JSON.parse(readFileSync(MOCK_CITY_PATH, "utf-8")) as CityModel;
+  const check = validateCity(city);
+  if (!check.ok) throw new Error(`fixtures/mock-city.json is not a valid CityModel: ${check.errors.join("; ")}`);
+  return city;
+}
+
+function readScaleY(mesh: THREE.InstancedMesh, index: number): number {
+  const m = new THREE.Matrix4();
+  mesh.getMatrixAt(index, m);
+  const pos = new THREE.Vector3();
+  const quat = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  m.decompose(pos, quat, scale);
+  return scale.y;
+}
+
+function findInstance(
+  handle: ReturnType<typeof buildBuildings>,
+  id: string,
+): { mesh: THREE.InstancedMesh; index: number } | null {
+  for (const mesh of handle.meshes) {
+    for (let i = 0; i < mesh.count; i++) {
+      if (handle.resolveBuildingId(mesh, i) === id) return { mesh, index: i };
+    }
+  }
+  return null;
+}
+
+describe("buildBuildings' base height-scale knob (Lane C v5.1 massing parameter)", () => {
+  beforeAll(() => installMinimalCanvasStub());
+
+  const city = loadCity();
+
+  it("defaults to BASE_HEIGHT_SCALE_DEFAULT -- omitting opts renders identical scaleY to passing it explicitly", () => {
+    const implicit = buildBuildings(city);
+    const explicit = buildBuildings(city, { heightScale: BASE_HEIGHT_SCALE_DEFAULT });
+    for (const b of city.buildings) {
+      const a = findInstance(implicit, b.id)!;
+      const c = findInstance(explicit, b.id)!;
+      expect(readScaleY(a.mesh, a.index)).toBe(readScaleY(c.mesh, c.index));
+    }
+  });
+
+  it("scales every building's rendered height by the given factor, without touching X/Z footprint", () => {
+    const baseline = buildBuildings(city);
+    const doubled = buildBuildings(city, { heightScale: 2 });
+    for (const b of city.buildings) {
+      const base = findInstance(baseline, b.id)!;
+      const scaled = findInstance(doubled, b.id)!;
+      const baseScaleY = readScaleY(base.mesh, base.index);
+      const scaledScaleY = readScaleY(scaled.mesh, scaled.index);
+      expect(scaledScaleY).toBeCloseTo(baseScaleY * 2, 10);
+    }
+  });
+
+  it("survives a lens switch -- the base height scale composes with the lens height multiplier, not replaced by it", () => {
+    const doubled = buildBuildings(city, { heightScale: 2 });
+    const baseline = buildBuildings(city);
+    doubled.setLens("complexity");
+    baseline.setLens("complexity");
+    for (const b of city.buildings) {
+      const base = findInstance(baseline, b.id)!;
+      const scaled = findInstance(doubled, b.id)!;
+      expect(readScaleY(scaled.mesh, scaled.index)).toBeCloseTo(readScaleY(base.mesh, base.index) * 2, 10);
+    }
   });
 });

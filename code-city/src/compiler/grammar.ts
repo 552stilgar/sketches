@@ -134,10 +134,29 @@ export function p95(values: readonly number[]): number {
   return Math.max(1, sorted[rank - 1]);
 }
 
-export function footprintSide(loc: number, maximum: number, locRef = 200): number {
+/**
+ * Minimum footprint side, as a fraction of the slot maximum, that ANY building can render at
+ * (loc=0 included). Trade-off: raising this makes the smallest buildings read as visible blocks
+ * instead of needle-thin spikes at high building density, at the cost of shrinking the visual
+ * *range* between the smallest and largest buildings in a district (a district full of tiny files
+ * next to one huge one looks flatter as this rises toward 1).
+ *
+ * NOTE ON CURRENT BEHAVIOR: the sqrt scale curve below already has its own effective floor of
+ * `0.08 * maximum` (the additive term in `0.08 + 0.92 * ...`, hit at loc=0). At the shipped
+ * default of 0.05 this constant is strictly dominated by that curve floor and never binds --
+ * `Math.max(floor, scaled)` always picks `scaled`. That is a pre-existing tension in the V4
+ * formula, not something this change fixes (out of Lane C's scope: it owns exposing the knob, not
+ * rebalancing the curve) -- but it does mean the "pin" look observed in the field comes from the
+ * 0.08 curve floor, not this constant, and raising THIS constant only starts to visibly widen the
+ * smallest buildings once it exceeds 0.08.
+ */
+export const FOOTPRINT_FLOOR_DEFAULT = 0.05;
+
+export function footprintSide(loc: number, maximum: number, locRef = 200, floorFactor = FOOTPRINT_FLOOR_DEFAULT): number {
   const safeLoc = Math.max(0, loc);
   const safeMax = Math.max(0, maximum);
-  const floor = safeMax * 0.05;
+  const safeFloorFactor = Math.min(1, Math.max(0, floorFactor));
+  const floor = safeMax * safeFloorFactor;
   const safeRef = Math.max(1, locRef);
   const scaled = safeMax * (0.08 + 0.92 * Math.min(1, Math.sqrt(safeLoc) / Math.sqrt(safeRef)));
   return Math.min(safeMax, Math.max(floor, scaled));

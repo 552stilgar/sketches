@@ -435,6 +435,23 @@ function buildDistrictBoundary(d: District, visual: DistrictVisual): THREE.Mesh 
   return mesh;
 }
 
+/**
+ * Base height multiplier applied to every building's compiler-given `height`, BEFORE the
+ * per-lens multiplier from lensHeightScale() (see lenses.ts). This is the renderer-side massing
+ * knob: it does not touch city.json (buildBuildings/setLens still consume the same CityModel
+ * unchanged), so it can be tuned per-viewer without recompiling. Trade-off: raising it makes
+ * every building read as a taller, denser skyline (helping the pin-vs-block silhouette at high
+ * building counts), at the cost of buildings clipping camera near-planes sooner and district
+ * ground/road geometry (which does NOT scale with this knob) looking comparatively squat.
+ * Defaults to 1 so omitting the option leaves today's rendered geometry byte-for-byte unchanged.
+ */
+export const BASE_HEIGHT_SCALE_DEFAULT = 1;
+
+export interface BuildBuildingsOptions {
+  /** See BASE_HEIGHT_SCALE_DEFAULT's doc comment above. */
+  heightScale?: number;
+}
+
 // Warm-white "lit window" target that occupancy brightening mixes toward. Per-instance color is
 // the only lever available for this -- InstancedMesh shares one material per group, so
 // material.emissiveIntensity can't vary per building (PROJECT_IDEA §5.5 "Occupancy").
@@ -544,11 +561,12 @@ function applyInstance(
   fanIn: number,
   hasOutgoing: boolean,
   fanInRef: number,
+  baseHeightScale: number,
 ): void {
   const cx = b.x + b.width / 2;
   const cz = b.y + b.depth / 2;
-  const heightScale = lensHeightScale(lens, rank);
-  const scaledHeight = Math.max(0.1, b.height * heightScale);
+  const lensScale = lensHeightScale(lens, rank);
+  const scaledHeight = Math.max(0.1, b.height * baseHeightScale * lensScale);
   const cy = scaledHeight / 2;
   dummy.position.set(cx, cy, cz);
   dummy.scale.set(Math.max(0.1, b.width), scaledHeight, Math.max(0.1, b.depth));
@@ -567,7 +585,8 @@ function applyInstance(
   mesh.setColorAt(index, color);
 }
 
-export function buildBuildings(city: CityModel): BuildingsHandle {
+export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): BuildingsHandle {
+  const baseHeightScale = opts?.heightScale ?? BASE_HEIGHT_SCALE_DEFAULT;
   const buildingById = new Map<string, Building>();
   const byProfile = new Map<ProfileName, Building[]>();
 
@@ -614,7 +633,7 @@ export function buildBuildings(city: CityModel): BuildingsHandle {
     list.forEach((b, i) => {
       const fanIn = fanInById.get(b.id) ?? 0;
       const hasOutgoing = outgoing.has(b.id);
-      applyInstance(dummy, mesh, i, b, activeLens, 0, profile.lightnessBias, fanIn, hasOutgoing, fanInRef);
+      applyInstance(dummy, mesh, i, b, activeLens, 0, profile.lightnessBias, fanIn, hasOutgoing, fanInRef, baseHeightScale);
 
       // buildingCenter() is always the unscaled (architecture-lens) top-of-building, on purpose
       // (see BuildingsHandle.buildingCenter doc) -- computed once here from the RAW height, never
@@ -654,7 +673,7 @@ export function buildBuildings(city: CityModel): BuildingsHandle {
         complexityRank: lensRanks.complexityRank.get(b.id) ?? 0,
         churnRank: lensRanks.churnRank.get(b.id) ?? 0,
       });
-      applyInstance(dummy, entry.mesh, entry.index, b, lens, rank, entry.lightnessBias, fanIn, hasOutgoing, fanInRef);
+      applyInstance(dummy, entry.mesh, entry.index, b, lens, rank, entry.lightnessBias, fanIn, hasOutgoing, fanInRef, baseHeightScale);
       touched.add(entry.mesh);
     }
     for (const mesh of touched) {
