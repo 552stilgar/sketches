@@ -31,6 +31,20 @@ export type DistrictWeightMode = "linear" | "sqrt" | "log";
 export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "sqrt", "log"];
 
 /**
+ * The curve used when a caller names none. `log` since 2026-08-30 (Usul's ruling, made against
+ * rendered A/B variants of the merged mgmt trio): under `linear` the largest district took 71.3%
+ * of the canvas and the two smaller repos collapsed into edge slivers, so the view could not show
+ * what it exists to show -- the relative shape of several codebases at once. `log` puts that at
+ * 40.9% / 32.7% / 26.3%, and the density difference between districts becomes legible.
+ *
+ * This is a DEFAULT, not a constraint: `linear` remains available and reproduces every city
+ * compiled before this date. Determinism is unaffected -- the default is a fixed constant, so the
+ * same (graph, options) pair still yields a byte-identical CityModel; it is the constant that
+ * moved, once, deliberately.
+ */
+export const DEFAULT_DISTRICT_WEIGHT_MODE: DistrictWeightMode = "log";
+
+/**
  * Apply the named curve to a district's raw file count. `sqrt` and `log` both compress the gap
  * between a large district and a small one relative to `linear` (log more aggressively than
  * sqrt), which is the whole point: one oversized repo's file count shouldn't be allowed to swamp
@@ -39,7 +53,7 @@ export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "
  * instead of `Math.log(0) === -Infinity`, and `squarify` itself still clamps every weight to a
  * minimum of 1 downstream, so a 0-file district never vanishes from the canvas either way.
  */
-export function districtWeight(count: number, mode: DistrictWeightMode = "linear"): number {
+export function districtWeight(count: number, mode: DistrictWeightMode = DEFAULT_DISTRICT_WEIGHT_MODE): number {
   switch (mode) {
     case "linear":
       return count;

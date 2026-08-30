@@ -33,8 +33,9 @@ export interface CompileCityOptions {
    *  "district" (the original V4 behavior) so omitting this option is bit-for-bit unchanged. */
   cloneLodScope?: CloneLodScope;
   /** V5.1 district area-weighting curve (src/compiler/layout.ts DistrictWeightMode). Defaults to
-   *  "linear" -- raw file count, the original V4 behavior -- so omitting this option is
-   *  bit-for-bit unchanged. See layout.ts's districtWeight() doc comment for why this is a named,
+   *  DEFAULT_DISTRICT_WEIGHT_MODE, which is "log" as of 2026-08-30 (Usul's ruling on rendered
+   *  variants -- see that constant's doc comment). Pass "linear" to reproduce any city compiled
+   *  before that date. See layout.ts's districtWeight() doc comment for why this is a named,
    *  caller-chosen input rather than data-driven auto-selection. */
   districtWeightMode?: DistrictWeightMode;
   /** Building-footprint floor as a fraction of the slot maximum (see FOOTPRINT_FLOOR_DEFAULT's

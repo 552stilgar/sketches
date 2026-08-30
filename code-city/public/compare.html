@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Code City — variants</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 32px 20px;
+        background: #0b1020;
+        color: #e8ecff;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { max-width: 640px; margin: 0 auto; }
+      h1 { font-size: 18px; letter-spacing: 0.02em; margin: 0 0 4px; }
+      p.sub { color: #7d8bb5; font-size: 13px; margin: 0 0 24px; }
+      h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.1em;
+           color: #7d8bb5; margin: 28px 0 10px; font-weight: 600; }
+      a.card {
+        display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+        padding: 12px 14px; margin-bottom: 8px;
+        background: rgba(20, 26, 48, 0.9);
+        border: 1px solid rgba(140, 170, 255, 0.22);
+        border-radius: 8px; color: #e8ecff; text-decoration: none;
+      }
+      a.card:hover { border-color: rgba(140, 170, 255, 0.6); background: rgba(28, 36, 64, 0.95); }
+      .name { font-weight: 600; font-size: 14px; }
+      .meta { color: #7d8bb5; font-family: ui-monospace, "SFMono-Regular", monospace; font-size: 12px; }
+      code { font-family: ui-monospace, "SFMono-Regular", monospace; font-size: 12px; color: #b9c6ee; }
+      .note { color: #9fb0e0; font-size: 13px; line-height: 1.6;
+              border-left: 2px solid rgba(140, 170, 255, 0.35); padding-left: 12px; margin: 8px 0 0; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Code City — V5.1 variants</h1>
+      <p class="sub">Merged mgmt trio · 631 buildings · 31 identity links. Toggle Roads and Tethers OFF (bottom left) for a fair read.</p>
+
+      <h2>District weight — settled 2026-08-30: log is the default</h2>
+      <a class="card" href="/">
+        <span class="name">log — now the default</span>
+        <span class="meta">frdops 40.9% · itba 32.7% · kernel 26.3%</span>
+      </a>
+      <a class="card" href="/?city=/city-weight-sqrt.json">
+        <span class="name">sqrt</span>
+        <span class="meta">frdops 53.4% · itba 28.8% · kernel 17.8%</span>
+      </a>
+      <a class="card" href="/?city=/city-linear.json">
+        <span class="name">linear — the old default</span>
+        <span class="meta">frdops 71.3% · itba 20.8% · kernel 7.9%</span>
+      </a>
+      <p class="note">All three compile from the same graph. <code>linear</code> stays reachable via
+      <code>--district-weight=linear</code> and reproduces every city compiled before the ruling.</p>
+
+      <h2>Footprint floor — the needle question, still open</h2>
+      <a class="card" href="/?city=/city-footprint-005.json">
+        <span class="name">floor 0.05 — current default</span>
+        <span class="meta">smallest footprint 2.3 area units</span>
+      </a>
+      <a class="card" href="/?city=/city-footprint-020.json">
+        <span class="name">floor 0.20</span>
+        <span class="meta">smallest 6.4 · only 18 of 631 widened</span>
+      </a>
+      <a class="card" href="/?city=/city-footprint-050.json">
+        <span class="name">floor 0.50</span>
+        <span class="meta">smallest 40.2 · 247 of 631 widened</span>
+      </a>
+      <p class="note">Below 0.08 the floor is inert — the curve's additive 0.08 term dominates it —
+      so the 0.05 default is indistinguishable from 0. Above 0.08 it binds and thickens the thinnest
+      buildings. Two gaps remain: <code>bin/compile.ts</code> does not expose the knob (these three
+      were driven through <code>compileCity</code> directly), and no value is chosen.</p>
+
+      <h2>Other surfaces</h2>
+      <a class="card" href="/timeline.html">
+        <span class="name">timeline</span>
+        <span class="meta">real sketches history, 2026-03 → 2026-08</span>
+      </a>
+      <a class="card" href="/?city=/city-district.json">
+        <span class="name">LOD: district</span><span class="meta">631 buildings</span>
+      </a>
+      <a class="card" href="/?city=/city-directory.json">
+        <span class="name">LOD: directory</span><span class="meta">262 buildings</span>
+      </a>
+    </main>
+  </body>
+</html>

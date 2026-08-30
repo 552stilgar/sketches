@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from "vitest";
 import { compileCity } from "../src/compiler/index.ts";
-import { districtWeight } from "../src/compiler/layout.ts";
+import { districtWeight, DEFAULT_DISTRICT_WEIGHT_MODE } from "../src/compiler/layout.ts";
 import type { DistrictWeightMode } from "../src/compiler/layout.ts";
 import { makeFixedRepoGraph } from "./fixtures/repo-graph-fixture.ts";
 import type { RepoGraph, RepoNode } from "../src/types.ts";
@@ -72,8 +72,13 @@ describe("districtWeight() pure curve", () => {
     expect(Number.isFinite(districtWeight(0, "log"))).toBe(true);
   });
 
-  it("defaults to linear when mode is omitted", () => {
-    expect(districtWeight(42)).toBe(districtWeight(42, "linear"));
+  // The default moved linear -> log on 2026-08-30 (Usul's ruling; see DEFAULT_DISTRICT_WEIGHT_MODE).
+  // Asserted against the exported constant AND against the concrete curve, so a future re-ruling
+  // has to change the constant deliberately rather than silently drifting the omitted-option path.
+  it("defaults to DEFAULT_DISTRICT_WEIGHT_MODE, which is log", () => {
+    expect(DEFAULT_DISTRICT_WEIGHT_MODE).toBe("log");
+    expect(districtWeight(42)).toBe(districtWeight(42, DEFAULT_DISTRICT_WEIGHT_MODE));
+    expect(districtWeight(42)).toBe(districtWeight(42, "log"));
   });
 
   it("throws loudly on an unrecognized mode (never silently falls back)", () => {
@@ -82,12 +87,24 @@ describe("districtWeight() pure curve", () => {
 });
 
 describe("compileCity({ districtWeightMode }) — V5.1", () => {
-  it("(a) omitting the option reproduces today's (linear) output exactly, on both a balanced and a skewed graph", () => {
+  it("(a) omitting the option is identical to naming the default mode explicitly, on both a balanced and a skewed graph", () => {
     for (const g of [makeFixedRepoGraph(), makeSkewedRepoGraph()]) {
       const omitted = JSON.stringify(compileCity(structuredClone(g)));
-      const explicitLinear = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "linear" }));
-      expect(omitted).toBe(explicitLinear);
+      const explicitDefault = JSON.stringify(
+        compileCity(structuredClone(g), { districtWeightMode: DEFAULT_DISTRICT_WEIGHT_MODE }),
+      );
+      expect(omitted).toBe(explicitDefault);
     }
+  });
+
+  // The pre-2026-08-30 behavior must stay reachable byte-for-byte: any city compiled before the
+  // default moved is reproducible by naming "linear", which is the only thing that makes the
+  // default a preference rather than a one-way door.
+  it("(a2) `linear` still reproduces the pre-ruling output, and the new default differs from it on a skewed graph", () => {
+    const g = makeSkewedRepoGraph();
+    const linear = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "linear" }));
+    const omitted = JSON.stringify(compileCity(structuredClone(g)));
+    expect(omitted).not.toBe(linear);
   });
 
   it("(b) sqrt and log both compress the largest district's canvas share relative to linear on a skewed fixture", () => {
