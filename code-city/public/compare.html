@@ -53,7 +53,25 @@
       <p class="note">All three compile from the same graph. <code>linear</code> stays reachable via
       <code>--district-weight=linear</code> and reproduces every city compiled before the ruling.</p>
 
-      <h2>Footprint floor — the needle question, still open</h2>
+      <h2>Height scale — this is the needle lever</h2>
+      <a class="card" href="/?heightScale=1">
+        <span class="name">1.0 — current default</span>
+        <span class="meta">median aspect 7.4 : 1</span>
+      </a>
+      <a class="card" href="/?heightScale=0.5">
+        <span class="name">0.5</span><span class="meta">median 3.7 : 1 — skyline survives</span>
+      </a>
+      <a class="card" href="/?heightScale=0.25">
+        <span class="name">0.25</span><span class="meta">median 1.8 : 1 — blocks, flatter</span>
+      </a>
+      <a class="card" href="/?heightScale=0.12">
+        <span class="name">0.12</span><span class="meta">median 0.9 : 1 — too flat, reads as gravel</span>
+      </a>
+      <p class="note">The median building is 7.4× taller than it is wide — that ratio, not footprint
+      area, is what makes the city read as pins. This override is renderer-side and live: edit the
+      number in the URL. It does not touch <code>city.json</code>.</p>
+
+      <h2>Footprint floor — the weaker lever</h2>
       <a class="card" href="/?city=/city-footprint-005.json">
         <span class="name">floor 0.05 — current default</span>
         <span class="meta">smallest footprint 2.3 area units</span>
