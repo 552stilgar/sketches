@@ -345,10 +345,11 @@ export interface TimelineControlHandle {
   /** Programmatically sets the slider's displayed value (e.g. to reflect a position set some
    *  other way) without re-invoking onScrub. */
   setPosition(globalT: number): void;
-  /** Updates the date/gap readout -- called after every setPosition on the underlying
+  /** Updates the date/gap/empty readout -- called after every setPosition on the underlying
    *  TimelineHandle so the HUD always reflects what's actually rendered, never a value computed
-   *  independently of it. */
-  setReadout(dateISO: string, isGap: boolean): void;
+   *  independently of it. `isEmpty` mirrors TimelineHandle.isEmptySnapshot() (defect 2, Lane E):
+   *  a 0-building month must never render as a silent, plausible-looking-quiet ground plane. */
+  setReadout(dateISO: string, isGap: boolean, isEmpty: boolean): void;
   dispose(): void;
 }
 
@@ -389,6 +390,16 @@ export function setupTimelineControl(params: SetupTimelineControlParams): Timeli
   gapBadge.textContent = "GAP -- no commits in this span";
   gapBadge.style.display = "none";
 
+  // Defect 2 (Lane E), never-fabricate: same disclosure discipline as the Quality lens's
+  // "UNMEASURED" legend (src/renderer/lenses.ts) -- an empty ground plane at a 0-building month
+  // must never read as "the repo was genuinely quiet here". UNMEASURED is the honest word:
+  // whether the repo truly had no tracked source yet, or this snapshot failed/was never
+  // measured, are indistinguishable from here, so the badge asserts only what's actually known.
+  const emptyBadge = document.createElement("span");
+  emptyBadge.className = "cc-timeline-empty";
+  emptyBadge.textContent = "UNMEASURED -- 0 buildings this month (no tracked source, or an unmeasured/failed snapshot)";
+  emptyBadge.style.display = "none";
+
   const slider = document.createElement("input");
   slider.type = "range";
   slider.className = "cc-timeline-slider";
@@ -409,6 +420,7 @@ export function setupTimelineControl(params: SetupTimelineControlParams): Timeli
 
   root.appendChild(dateRow);
   root.appendChild(gapBadge);
+  root.appendChild(emptyBadge);
   root.appendChild(slider);
   root.appendChild(monthRow);
   container.appendChild(root);
@@ -422,10 +434,11 @@ export function setupTimelineControl(params: SetupTimelineControlParams): Timeli
     slider.value = String(globalT);
   }
 
-  function setReadout(dateISO: string, isGap: boolean): void {
+  function setReadout(dateISO: string, isGap: boolean, isEmpty: boolean): void {
     const date = new Date(dateISO);
     dateRow.textContent = Number.isNaN(date.getTime()) ? dateISO : date.toISOString().slice(0, 10);
     gapBadge.style.display = isGap ? "block" : "none";
+    emptyBadge.style.display = isEmpty ? "block" : "none";
   }
 
   function dispose(): void {

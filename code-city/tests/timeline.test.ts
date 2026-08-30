@@ -5,7 +5,8 @@
 // date interpolation) all depends on.
 
 import { describe, expect, it } from "vitest";
-import { resolveScrubPosition } from "../src/renderer/timeline.ts";
+import { buildTimeline, resolveScrubPosition, type TimelineSnapshot } from "../src/renderer/timeline.ts";
+import type { Building, CityModel } from "../src/types.ts";
 
 describe("resolveScrubPosition", () => {
   it("a single snapshot always resolves to pairIndex 0, localT 0, never a gap", () => {
@@ -38,5 +39,57 @@ describe("resolveScrubPosition", () => {
 
   it("is a pure function -- same inputs always produce the same output", () => {
     expect(resolveScrubPosition(1.7, 5)).toEqual(resolveScrubPosition(1.7, 5));
+  });
+});
+
+function building(id: string): Building {
+  return { id, x: 0, y: 0, width: 1, depth: 1, height: 1, style: "ts", metrics: { loc: 10, complexity: 1, churn: 1 } };
+}
+
+function city(buildings: Building[]): CityModel {
+  return { districts: [], buildings, roads: [], landmarks: [], identityLinks: [] };
+}
+
+function snapshot(month: string, date: string, buildings: Building[], gapBefore = false): TimelineSnapshot {
+  return { month, date, city: city(buildings), gapBefore };
+}
+
+describe("Lane E defect 2 -- buildTimeline.isEmptySnapshot() (never-fabricate a 0-building month as quiet)", () => {
+  it("is false for a snapshot sequence where every month has buildings", () => {
+    const handle = buildTimeline([
+      snapshot("2026-01", "2026-01-15T00:00:00Z", [building("a")]),
+      snapshot("2026-02", "2026-02-15T00:00:00Z", [building("a"), building("b")]),
+    ]);
+    handle.setPosition(0);
+    expect(handle.isEmptySnapshot()).toBe(false);
+    handle.setPosition(1);
+    expect(handle.isEmptySnapshot()).toBe(false);
+  });
+
+  it("is true when scrubbed onto a resolved month whose snapshot has zero buildings", () => {
+    // A real qualifying commit was found for 2026-03 (gapBefore stays false -- this is NOT a
+    // history gap), but that month's RepoGraph had no tracked source files, so its CityModel
+    // legitimately has zero buildings. The empty ground plane must be disclosed, not silent.
+    const handle = buildTimeline([
+      snapshot("2026-01", "2026-01-15T00:00:00Z", [building("a")]),
+      snapshot("2026-02", "2026-02-15T00:00:00Z", []),
+      snapshot("2026-03", "2026-03-15T00:00:00Z", [building("a")]),
+    ]);
+    // pairIndex 0 (2026-01 -> 2026-02), localT=1 lands exactly on the empty 2026-02 snapshot.
+    handle.setPosition(1);
+    expect(handle.isEmptySnapshot()).toBe(true);
+
+    // pairIndex 1 (2026-02 -> 2026-03), localT=0 is still the same empty 2026-02 snapshot.
+    handle.setPosition(1.001);
+    expect(handle.isEmptySnapshot()).toBe(true);
+
+    // Moving well into the 2026-02 -> 2026-03 pair leaves the empty month behind.
+    handle.setPosition(1.9);
+    expect(handle.isEmptySnapshot()).toBe(false);
+  });
+
+  it("a single-snapshot sequence with zero buildings is disclosed from the start", () => {
+    const handle = buildTimeline([snapshot("2026-01", "2026-01-15T00:00:00Z", [])]);
+    expect(handle.isEmptySnapshot()).toBe(true);
   });
 });

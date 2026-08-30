@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import {
   monthEndCutoff,
   monthKeysEndingAt,
   resolveMonthlyCommits,
+  type SkippedMonth,
 } from "../src/analyzer/snapshots.ts";
 import { validateRepoGraph } from "../src/types.ts";
 
@@ -191,6 +192,83 @@ describe("generateMonthlySnapshots", () => {
       expect(ledger?.churn).toBeGreaterThan(0);
     } finally {
       rmSync(nestedRoot, { recursive: true, force: true });
+    }
+  }, 20000);
+});
+
+describe("Lane E defect 1 -- accurate error when a subpath predates its own creation in history", () => {
+  // Reproduces the code-city dogfood shape for real: a wrapper repo whose root commit does NOT
+  // yet contain the analyzed subdirectory (mirrors a project folded into a monorepo later, e.g.
+  // via the git-migration RECIPE) -- an EARLIER month resolves to a real commit (the repo has
+  // history), but that commit predates the subdir's own first appearance. Before the fix, the
+  // detached-worktree checkout for that month has no such directory on disk, and analyzeRepo's
+  // internal git calls fail with a raw, misattributed "spawn git ENOENT" (reads as "git isn't
+  // installed") instead of naming the real condition.
+  let wrapperDir: string;
+  let projectDir: string;
+
+  beforeAll(() => {
+    wrapperDir = mkdtempSync(join(tmpdir(), "code-city-subpath-history-"));
+    execFileSync("git", ["init", "-q"], { cwd: wrapperDir });
+    execFileSync("git", ["config", "user.name", "Fixture Bot"], { cwd: wrapperDir });
+    execFileSync("git", ["config", "user.email", "fixture@example.com"], { cwd: wrapperDir });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: wrapperDir });
+
+    writeFileSync(join(wrapperDir, "README.md"), "wrapper root, no project/ yet\n");
+    execFileSync("git", ["add", "README.md"], { cwd: wrapperDir });
+    execFileSync("git", ["commit", "-m", "initial: root only"], {
+      cwd: wrapperDir,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "2024-01-01T12:00:00+00:00",
+        GIT_COMMITTER_DATE: "2024-01-01T12:00:00+00:00",
+      },
+    });
+
+    projectDir = join(wrapperDir, "project");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(join(projectDir, "index.ts"), "export const x = 1;\n");
+    execFileSync("git", ["add", "project"], { cwd: wrapperDir });
+    execFileSync("git", ["commit", "-m", "add project subdir"], {
+      cwd: wrapperDir,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "2024-03-01T12:00:00+00:00",
+        GIT_COMMITTER_DATE: "2024-03-01T12:00:00+00:00",
+      },
+    });
+  });
+
+  afterAll(() => {
+    if (wrapperDir) rmSync(wrapperDir, { recursive: true, force: true });
+  });
+
+  it("names the real condition instead of surfacing a raw spawn-git-ENOENT for a month before the subdir existed", async () => {
+    // Window covers 2024-01 and 2024-02 -- both resolve to the "root only" commit (2024-01-01),
+    // months before "project/" was ever committed.
+    let caught: unknown;
+    let result: { snapshots: unknown[]; skipped: SkippedMonth[] } | undefined;
+    try {
+      result = await generateMonthlySnapshots(projectDir, { months: 2, asOf: new Date("2024-02-15T00:00:00Z") });
+    } catch (err) {
+      caught = err;
+    }
+
+    if (caught) {
+      // Failing loudly is acceptable per the fix contract, but the message must name the real
+      // condition -- never the raw, misattributed node ENOENT text.
+      const message = caught instanceof Error ? caught.message : String(caught);
+      expect(message).not.toMatch(/^spawn git ENOENT$/);
+      expect(message.toLowerCase()).not.toMatch(/git is not installed/);
+      expect(message.toLowerCase()).toMatch(/exist|predate|present/);
+    } else {
+      expect(result).toBeDefined();
+      // Never-fabricate: neither month can be silently dropped without a disclosed reason, and
+      // neither can be emitted as a fabricated graph for a path that had no content yet.
+      expect(result!.snapshots.length + result!.skipped.length).toBe(2);
+      for (const s of result!.skipped) {
+        expect(s.reason.toLowerCase()).toMatch(/exist|predate|present/);
+      }
     }
   }, 20000);
 });
