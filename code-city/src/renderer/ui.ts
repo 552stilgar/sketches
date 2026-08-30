@@ -25,6 +25,13 @@ export interface SetupUIParams {
   raycastTargets: THREE.Object3D[];
   resolveBuildingId: (mesh: THREE.Object3D, instanceId: number | undefined) => string | null;
   buildingById: Map<string, Building>;
+  /** V5.1 (Lane D, "tether readability"): fired with the newly-selected building id whenever the
+   *  overlay opens, and with `null` whenever it closes (ESC, click-away, or the close button) --
+   *  the same click-to-inspect gesture the overlay already tracks, exposed as a selection signal
+   *  for anything else in the scene (currently: tethers.ts's setSelectedBuilding) that wants to
+   *  react to "what building is the viewer looking at" without owning its own raycast. Optional so
+   *  every existing caller of setupUI keeps compiling unchanged. */
+  onSelectionChange?: (buildingId: string | null) => void;
 }
 
 function formatOverlay(id: string, b: Building): string {
@@ -38,7 +45,8 @@ function formatOverlay(id: string, b: Building): string {
 }
 
 export function setupUI(params: SetupUIParams): UIHandle {
-  const { container, domElement, camera, raycastTargets, resolveBuildingId, buildingById } = params;
+  const { container, domElement, camera, raycastTargets, resolveBuildingId, buildingById, onSelectionChange } =
+    params;
 
   const overlay = document.createElement("div");
   overlay.className = "cc-overlay";
@@ -67,11 +75,14 @@ export function setupUI(params: SetupUIParams): UIHandle {
     openId = buildingId;
     body.textContent = formatOverlay(buildingId, b);
     overlay.style.display = "flex";
+    onSelectionChange?.(buildingId);
   }
 
   function closeOverlay(): void {
+    const wasOpen = openId !== null;
     openId = null;
     overlay.style.display = "none";
+    if (wasOpen) onSelectionChange?.(null);
   }
 
   function overlayText(): string | null {
@@ -245,6 +256,88 @@ export function setupLensControl(params: SetupLensControlParams): LensControlHan
   }
 
   return { activeLens, setActiveLens, dispose };
+}
+
+// -------------------------------------------------------------------------------------------
+// Layer control (V5.1 Lane D, "tether readability") -- a small fixed panel of independent
+// on/off checkboxes, one per optional rendering layer. Deliberately generic (a list of
+// {id, label, onToggle} rather than a "TetherLayerControl") because layer.ts's `Tethers`
+// checkbox exists to solve one specific problem (V4's clone-identity tethers reading as
+// always-on noise at fitted zoom on a merged multi-repo city, PROJECT_IDEA.md), but nothing
+// about a checkbox that flips a layer's THREE.Group.visible is tether-specific -- landmarks or
+// roads could grow the same control later without a second implementation of this panel.
+// Independent state from the lens control and the click-overlay above: a layer toggle never
+// changes what a lens colors buildings by, and never touches which building is selected.
+// -------------------------------------------------------------------------------------------
+
+export interface LayerToggleDef {
+  /** Stable id for this row -- not currently read back by the control itself, but keeps a caller
+   *  from having to match rows by label text if it ever needs to. */
+  id: string;
+  label: string;
+  /** Checkbox's initial checked state. Defaults to true (every layer starts on) so adding a new
+   *  layer to the panel never silently hides something a viewer previously always saw. */
+  initiallyOn?: boolean;
+  /** Called with the checkbox's new checked state on every toggle -- never on construction, same
+   *  "never re-invoked for the initial value" discipline as setupLensControl's onSelect. */
+  onToggle(on: boolean): void;
+}
+
+export interface LayerControlHandle {
+  dispose(): void;
+}
+
+export interface SetupLayerControlParams {
+  container: HTMLElement;
+  layers: readonly LayerToggleDef[];
+}
+
+/**
+ * Builds the layer panel: one labeled checkbox per entry in `layers`, in the given order.
+ * Throws on an empty `layers` array -- same "a control with nothing in it is a caller bug, not a
+ * legitimate empty state" discipline setupTimelineControl already applies to `entries`.
+ */
+export function setupLayerControl(params: SetupLayerControlParams): LayerControlHandle {
+  const { container, layers } = params;
+  if (layers.length === 0) throw new Error("setupLayerControl requires at least one layer");
+
+  const root = document.createElement("div");
+  root.className = "cc-layer-control";
+  root.setAttribute("role", "group");
+  root.setAttribute("aria-label", "City layers");
+
+  const listeners: Array<{ el: HTMLInputElement; handler: () => void }> = [];
+
+  for (const layer of layers) {
+    const row = document.createElement("label");
+    row.className = "cc-layer-row";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "cc-layer-checkbox";
+    checkbox.checked = layer.initiallyOn ?? true;
+
+    const handler = () => layer.onToggle(checkbox.checked);
+    checkbox.addEventListener("change", handler);
+    listeners.push({ el: checkbox, handler });
+
+    const text = document.createElement("span");
+    text.className = "cc-layer-label";
+    text.textContent = layer.label;
+
+    row.appendChild(checkbox);
+    row.appendChild(text);
+    root.appendChild(row);
+  }
+
+  container.appendChild(root);
+
+  function dispose(): void {
+    for (const { el, handler } of listeners) el.removeEventListener("change", handler);
+    root.remove();
+  }
+
+  return { dispose };
 }
 
 // -------------------------------------------------------------------------------------------

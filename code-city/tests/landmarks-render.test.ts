@@ -93,14 +93,14 @@ describe("buildTethers (RED until the V4 renderer lane lands)", () => {
   }
 
   it("returns an empty group for a city with no identityLinks", () => {
-    const group = buildTethers(emptyCity(), () => null);
+    const { group } = buildTethers(emptyCity(), () => null);
     expect(group).toBeInstanceOf(THREE.Group);
     expect(group.children.length).toBe(0);
   });
 
   it("produces a discoverable object per identityLink, tagged with userData.identityHash", () => {
     const city = loadMockCityV4();
-    const group = buildTethers(city, centerFor(city));
+    const { group } = buildTethers(city, centerFor(city));
     expect(city.identityLinks.length).toBeGreaterThan(0);
     for (const link of city.identityLinks) {
       const found = findByUserData(group, "identityHash", link.hash);
@@ -110,7 +110,7 @@ describe("buildTethers (RED until the V4 renderer lane lands)", () => {
 
   it("D2: never reuses roads.ts's animated-flow vertex attributes (aOffset/aDashPeriod) -- tethers are static", () => {
     const city = loadMockCityV4();
-    const group = buildTethers(city, centerFor(city));
+    const { group } = buildTethers(city, centerFor(city));
     const attrs = collectAttributeNames(group);
     expect(attrs.has("aOffset")).toBe(false);
     expect(attrs.has("aDashPeriod")).toBe(false);
@@ -122,5 +122,107 @@ describe("buildTethers (RED until the V4 renderer lane lands)", () => {
       identityLinks: [{ hash: "b3f18e5c4d81d174d23a50d2b899c018af158709b1303d7613d676fb045c781e", members: ["a", "b"] }],
     };
     expect(() => buildTethers(city, () => null)).not.toThrow();
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // V5.1 Lane D ("tether readability"): setLayerVisible + setSelectedBuilding view filters.
+  // -----------------------------------------------------------------------------------------
+
+  function allLineMaterials(group: THREE.Group): THREE.LineBasicMaterial[] {
+    const mats: THREE.LineBasicMaterial[] = [];
+    group.traverse((obj) => {
+      if (obj instanceof THREE.LineSegments) mats.push(obj.material as THREE.LineBasicMaterial);
+    });
+    return mats;
+  }
+
+  function linkGroupFor(group: THREE.Group, hash: string): THREE.Object3D {
+    const found = findByUserData(group, "identityHash", hash);
+    if (!found) throw new Error(`no linkGroup for hash ${hash}`);
+    return found;
+  }
+
+  function lineOpacityOf(linkGroup: THREE.Object3D): number {
+    const line = linkGroup.children.find((c) => c instanceof THREE.LineSegments) as
+      | THREE.LineSegments
+      | undefined;
+    if (!line) throw new Error("linkGroup has no line");
+    return (line.material as THREE.LineBasicMaterial).opacity;
+  }
+
+  it("setLayerVisible toggles the whole group's visibility without touching city.identityLinks", () => {
+    const city = loadMockCityV4();
+    const linkCountBefore = city.identityLinks.length;
+    const handle = buildTethers(city, centerFor(city));
+
+    expect(handle.group.visible).toBe(true); // default on
+    handle.setLayerVisible(false);
+    expect(handle.group.visible).toBe(false);
+    handle.setLayerVisible(true);
+    expect(handle.group.visible).toBe(true);
+
+    expect(city.identityLinks.length).toBe(linkCountBefore); // data untouched by any view state
+  });
+
+  it("setSelectedBuilding emphasizes only tethers touching that building, dims the rest", () => {
+    const city = loadMockCityV4();
+    expect(city.identityLinks.length).toBeGreaterThanOrEqual(2); // fixture must have >=2 groups
+    const handle = buildTethers(city, centerFor(city));
+
+    const targetLink = city.identityLinks[0];
+    const otherLink = city.identityLinks.find((l) => l.hash !== targetLink.hash);
+    if (!otherLink) throw new Error("fixture needs at least two distinct identityLinks");
+
+    handle.setSelectedBuilding(targetLink.members[0]);
+
+    const targetOpacity = lineOpacityOf(linkGroupFor(handle.group, targetLink.hash));
+    const otherOpacity = lineOpacityOf(linkGroupFor(handle.group, otherLink.hash));
+    expect(targetOpacity).toBeGreaterThan(otherOpacity);
+  });
+
+  it("setSelectedBuilding(null) restores every tether to the default all-emphasized opacity", () => {
+    const city = loadMockCityV4();
+    const handle = buildTethers(city, centerFor(city));
+    const before = allLineMaterials(handle.group).map((m) => m.opacity);
+
+    handle.setSelectedBuilding(city.identityLinks[0].members[0]);
+    handle.setSelectedBuilding(null);
+
+    const after = allLineMaterials(handle.group).map((m) => m.opacity);
+    expect(after).toEqual(before);
+  });
+
+  it("selecting a building with no clone group is a no-op, not an error, and leaves emphasis unchanged", () => {
+    const city = loadMockCityV4();
+    const handle = buildTethers(city, centerFor(city));
+    const baseline = allLineMaterials(handle.group).map((m) => m.opacity);
+
+    expect(() => handle.setSelectedBuilding("no-such-building-id")).not.toThrow();
+    expect(allLineMaterials(handle.group).map((m) => m.opacity)).toEqual(baseline);
+
+    // And it must not clear an EXISTING selection either -- selecting an uncloned building while
+    // a clone-group building is already selected leaves the prior emphasis exactly as it was.
+    const targetLink = city.identityLinks[0];
+    handle.setSelectedBuilding(targetLink.members[0]);
+    const afterRealSelection = allLineMaterials(handle.group).map((m) => m.opacity);
+
+    expect(() => handle.setSelectedBuilding("still-no-such-building")).not.toThrow();
+    expect(allLineMaterials(handle.group).map((m) => m.opacity)).toEqual(afterRealSelection);
+  });
+
+  it("identityLinkCount is invariant across every selection/visibility state (view filters never touch data)", () => {
+    const city = loadMockCityV4();
+    const handle = buildTethers(city, centerFor(city));
+    const count = () => city.identityLinks.length;
+    const baseline = count();
+
+    handle.setSelectedBuilding(city.identityLinks[0].members[0]);
+    expect(count()).toBe(baseline);
+    handle.setLayerVisible(false);
+    expect(count()).toBe(baseline);
+    handle.setSelectedBuilding(null);
+    expect(count()).toBe(baseline);
+    handle.setLayerVisible(true);
+    expect(count()).toBe(baseline);
   });
 });

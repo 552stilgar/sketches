@@ -11,7 +11,7 @@ import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts
 import { buildRoads } from "./renderer/roads.ts";
 import { buildLandmarks } from "./renderer/landmarks.ts";
 import { buildTethers } from "./renderer/tethers.ts";
-import { setupUI, setupLensControl } from "./renderer/ui.ts";
+import { setupUI, setupLensControl, setupLayerControl } from "./renderer/ui.ts";
 import { DEFAULT_LENS, type LensId } from "./renderer/lenses.ts";
 
 interface TestBridge {
@@ -148,7 +148,8 @@ async function main(): Promise<void> {
   // loudly like every other stage in this pipeline (Failure Discipline law) instead of being
   // swallowed into a console line.
   scene.add(buildLandmarks(city));
-  scene.add(buildTethers(city, buildingsHandle.buildingCenter));
+  const tethersHandle = buildTethers(city, buildingsHandle.buildingCenter);
+  scene.add(tethersHandle.group);
 
   const ui = setupUI({
     container: app,
@@ -157,12 +158,32 @@ async function main(): Promise<void> {
     raycastTargets: buildingsHandle.meshes,
     resolveBuildingId: buildingsHandle.resolveBuildingId,
     buildingById: buildingsHandle.buildingById,
+    // V5.1 Lane D: the click-to-inspect selection IS the tether selection scope -- no separate
+    // raycast, no separate notion of "selected building". Deselecting (null) restores the
+    // pre-Lane-D all-emphasized default; selecting a building with no clone group is a no-op
+    // inside setSelectedBuilding itself (tethers.ts), not handled here.
+    onSelectionChange: (buildingId) => tethersHandle.setSelectedBuilding(buildingId),
   });
 
   const lensControl = setupLensControl({
     container: app,
     initialLens: DEFAULT_LENS,
     onSelect: (lens) => buildingsHandle.setLens(lens),
+  });
+
+  // V5.1 Lane D: the "Tethers" layer toggle -- independent of selection-scoped emphasis above.
+  // Flipping it off hides the whole layer regardless of any active selection; flipping it back on
+  // restores whatever emphasis state was already set, it does not reset selection.
+  setupLayerControl({
+    container: app,
+    layers: [
+      {
+        id: "tethers",
+        label: "Tethers",
+        initiallyOn: true,
+        onToggle: (on) => tethersHandle.setLayerVisible(on),
+      },
+    ],
   });
 
   window.addEventListener("resize", () => sceneHandle.handleResize());

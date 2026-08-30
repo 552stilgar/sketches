@@ -181,7 +181,10 @@ function buildPairState(fromCity: CityModel, toCity: CityModel): PairState {
   staticGroup.add(buildDistricts(toCity));
   staticGroup.add(buildRoads(toCity, toBuildingCenter).group);
   staticGroup.add(buildLandmarks(toCity));
-  staticGroup.add(buildTethers(toCity, toBuildingCenter));
+  // Timeline snapshots are a read-only scrub, not the interactive view -- no selection state to
+  // wire, so only the rendered .group is taken (V5.1 Lane D wraps buildTethers in a TethersHandle;
+  // wiring-only change, mirrors src/main.ts).
+  staticGroup.add(buildTethers(toCity, toBuildingCenter).group);
 
   return {
     fromCity,
