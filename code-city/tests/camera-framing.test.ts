@@ -152,6 +152,42 @@ describe("computeCameraFraming", () => {
     expect(a).toEqual(b);
   });
 
+  it("fits a wide-flat city (large footprint, short buildings) materially tighter than the old bounding-sphere fit would", () => {
+    // Regression for the measured defect (2026-08-30): sizing distance off the bounding SPHERE of
+    // a wide/shallow slab put the city at ~30% of the frame, since the sphere's radius (half the
+    // 3D diagonal) is dominated by the huge flat footprint even though the sphere's volume is
+    // mostly empty air above/below the slab. Box-fit should size off what the city actually
+    // occupies from this oblique angle instead.
+    const wideFlat: CityBounds = { minX: 0, maxX: 1000, minY: 0, maxY: 20, minZ: 0, maxZ: 1000 };
+    const aspect = 16 / 9;
+    const fovDegrees = 55;
+    const framing = computeCameraFraming(wideFlat, aspect, fovDegrees);
+    const boxFitDistance = Math.hypot(
+      framing.position.x - framing.target.x,
+      framing.position.y - framing.target.y,
+      framing.position.z - framing.target.z,
+    );
+
+    // Independently reproduce the OLD sphere-fit distance formula (radius / sin(fov/2) * margin)
+    // this lane replaces, so the assertion checks the actual relationship rather than a magic
+    // number that could drift with unrelated constant tuning.
+    const vFov = (fovDegrees * Math.PI) / 180;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+    const sizeX = wideFlat.maxX - wideFlat.minX;
+    const sizeY = wideFlat.maxY - wideFlat.minY;
+    const sizeZ = wideFlat.maxZ - wideFlat.minZ;
+    const diagonal = Math.sqrt(sizeX * sizeX + sizeY * sizeY + sizeZ * sizeZ);
+    const sphereRadius = Math.max(12, diagonal / 2);
+    const distanceForFov = (fovRad: number) => sphereRadius / Math.max(0.01, Math.sin(fovRad / 2));
+    const sphereFitDistance = Math.max(distanceForFov(vFov), distanceForFov(hFov)) * 1.25;
+
+    expect(boxFitDistance).toBeLessThan(sphereFitDistance);
+    // "Materially" smaller, not a rounding difference -- even fixed to this oblique angle (where
+    // a wide box's horizontal spread still costs some vertical frustum room), the exact box fit
+    // measurably undercuts the sphere fit (~0.85x for these dimensions).
+    expect(boxFitDistance).toBeLessThan(sphereFitDistance * 0.9);
+  });
+
   it("a tall, narrow city (many stacked stories, tiny footprint) still frames without collapsing", () => {
     const tall: CityBounds = { minX: 0, maxX: 5, minY: 0, maxY: 500, minZ: 0, maxZ: 5 };
     const framing = computeCameraFraming(tall, 16 / 9);

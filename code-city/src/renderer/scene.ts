@@ -120,6 +120,22 @@ function normalizeVec3(v: Vec3): Vec3 {
   return { x: v.x / len, y: v.y / len, z: v.z / len };
 }
 
+function dotVec3(a: Vec3, b: Vec3): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function crossVec3(a: Vec3, b: Vec3): Vec3 {
+  return {
+    x: a.y * b.z - a.z * b.y,
+    y: a.z * b.x - a.x * b.z,
+    z: a.x * b.y - a.y * b.x,
+  };
+}
+
+/** World-up reference used to build the camera's right/up basis for OBLIQUE_DIRECTION -- not a
+ *  framing decision, just the axis "up" means before the oblique tilt is applied. */
+const WORLD_UP: Vec3 = { x: 0, y: 1, z: 0 };
+
 export interface CameraFraming {
   /** Orbit target -- the bounds' true center (x/y/z), so orbiting pivots around the city, not the
    *  world origin. */
@@ -133,17 +149,32 @@ export interface CameraFraming {
 
 /**
  * Places a camera so `bounds` is fully framed at `fovDegrees` (vertical) / the derived horizontal
- * FOV (from `aspect`), at a fixed oblique angle. Uses the bounding SPHERE of `bounds` (radius =
- * half the box diagonal, floored at MIN_FIT_RADIUS) rather than projecting the box onto the view
- * plane: a sphere fits inside the frustum from ANY direction once distance >= radius / sin(fov/2)
- * for both the vertical and horizontal FOV, which sidesteps degenerate-box projection math
- * entirely (a city far wider than deep, or a single point, both "just work" through the same
- * formula) at the cost of a slightly more generous fit than a tight box projection -- acceptable,
- * since FIT_MARGIN already asks for breathing room on top.
+ * FOV (from `aspect`), at a fixed oblique angle (OBLIQUE_DIRECTION). Fits the bounding BOX, not an
+ * enclosing sphere: a code-city is a wide, shallow slab (~1000x1000 ground plate, short buildings),
+ * so its bounding sphere has a radius on the order of the ground diagonal even though almost none
+ * of that sphere's volume is occupied -- sizing distance off the sphere put the city at ~30% of
+ * the frame with empty background filling the rest (measured in-browser, 2026-08-30). Projecting
+ * the box's own extent onto the camera's view axes instead means distance tracks what the city
+ * actually occupies.
  *
- * Degenerate-safe by construction: `aspect` <= 0 or non-finite falls back to 1 (square), and the
- * radius floor means distance is always > 0 -- no NaN, no divide-by-zero, for any bounds input
- * including a zero-size box (city.buildings all at one point) or an empty city.
+ * Method: build an orthonormal camera basis (forward = -OBLIQUE_DIRECTION, right, up) via
+ * WORLD_UP; project each of the box's 8 corners (relative to center) onto that basis to get a
+ * horizontal offset, vertical offset, and depth-along-forward for each corner; for a corner to
+ * land inside the frustum at a given camera distance D, its depth-from-camera (D + itsForwardOffset)
+ * must be >= |itsHorizontalOffset| / tan(hFov/2) and >= |itsVerticalOffset| / tan(vFov/2) -- solve
+ * each corner/axis pair for the minimum D that satisfies it, take the max over all 8 corners and
+ * both axes, then apply FIT_MARGIN for breathing room. This is exact for a box (unlike the sphere
+ * approximation) and degrades gracefully to the same "corner at the center" case for a zero-size
+ * box.
+ *
+ * `radius` (half the box diagonal, floored at MIN_FIT_RADIUS) is kept as an output -- callers use
+ * it to size the shadow frustum, ground plane, and fog independently of the box-fit distance -- and
+ * the same floor doubles as the minimum camera distance, so a zero-size or single-point box still
+ * produces a sane, non-zero distance instead of "fit a point" collapsing toward zero.
+ *
+ * Degenerate-safe by construction: `aspect` <= 0 or non-finite falls back to 1 (square); the
+ * MIN_FIT_RADIUS floor on distance means it is always > 0 -- no NaN, no divide-by-zero, for any
+ * bounds input including a zero-size box (city.buildings all at one point) or an empty city.
  */
 export function computeCameraFraming(
   bounds: CityBounds,
@@ -164,12 +195,42 @@ export function computeCameraFraming(
   const safeAspect = Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
   const vFov = (THREE.MathUtils.clamp(fovDegrees, 1, 179) * Math.PI) / 180;
   const hFov = 2 * Math.atan(Math.tan(vFov / 2) * safeAspect);
+  const tanH = Math.max(1e-4, Math.tan(hFov / 2));
+  const tanV = Math.max(1e-4, Math.tan(vFov / 2));
 
-  const distanceForFov = (fovRad: number): number => {
-    const s = Math.max(0.01, Math.sin(fovRad / 2));
-    return radius / s;
-  };
-  const distance = Math.max(distanceForFov(vFov), distanceForFov(hFov)) * FIT_MARGIN;
+  // Camera basis for the fixed oblique direction: forward looks FROM the camera TOWARD the city
+  // (opposite OBLIQUE_DIRECTION, since the camera sits at center + OBLIQUE_DIRECTION * distance).
+  const forward = normalizeVec3({
+    x: -OBLIQUE_DIRECTION.x,
+    y: -OBLIQUE_DIRECTION.y,
+    z: -OBLIQUE_DIRECTION.z,
+  });
+  // WORLD_UP is never parallel to `forward` for the fixed OBLIQUE_DIRECTION (it has nonzero X/Z),
+  // so `right` never degenerates to zero here -- no fallback basis needed for this fixed direction.
+  const right = normalizeVec3(crossVec3(forward, WORLD_UP));
+  const up = crossVec3(right, forward); // already unit length: right and forward are orthonormal
+
+  const halfX = sizeX / 2;
+  const halfY = sizeY / 2;
+  const halfZ = sizeZ / 2;
+
+  let rawDistance = 0;
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const corner: Vec3 = { x: sx * halfX, y: sy * halfY, z: sz * halfZ };
+        const horizontalOffset = dotVec3(corner, right);
+        const verticalOffset = dotVec3(corner, up);
+        const forwardOffset = dotVec3(corner, forward);
+        // distance D such that (D + forwardOffset) == |offset| / tan(halfFov) -- the depth at
+        // which this corner sits exactly on the frustum edge for that axis.
+        const neededByH = Math.abs(horizontalOffset) / tanH - forwardOffset;
+        const neededByV = Math.abs(verticalOffset) / tanV - forwardOffset;
+        rawDistance = Math.max(rawDistance, neededByH, neededByV);
+      }
+    }
+  }
+  const distance = Math.max(MIN_FIT_RADIUS, rawDistance) * FIT_MARGIN;
 
   const position: Vec3 = {
     x: center.x + OBLIQUE_DIRECTION.x * distance,
