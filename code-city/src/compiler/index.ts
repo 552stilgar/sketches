@@ -12,7 +12,8 @@
 import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark, DatastoreSpec } from "../types.ts";
 import { dominantLanguage, footprintSide, normalizePath, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
 import type { CloneLodScope } from "./grammar.ts";
-import { shelfSlots, squarify } from "./layout.ts";
+import { districtWeight, shelfSlots, squarify } from "./layout.ts";
+import type { DistrictWeightMode } from "./layout.ts";
 import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
 
 // A bare directory string (no filename component) has different "first segment" semantics than
@@ -31,6 +32,11 @@ export interface CompileCityOptions {
   /** D4 clone-aware LOD scope (CONTRACTS.md V4, docs/CONTRACT-city-json.md "D4"). Defaults to
    *  "district" (the original V4 behavior) so omitting this option is bit-for-bit unchanged. */
   cloneLodScope?: CloneLodScope;
+  /** V5.1 district area-weighting curve (src/compiler/layout.ts DistrictWeightMode). Defaults to
+   *  "linear" -- raw file count, the original V4 behavior -- so omitting this option is
+   *  bit-for-bit unchanged. See layout.ts's districtWeight() doc comment for why this is a named,
+   *  caller-chosen input rather than data-driven auto-selection. */
+  districtWeightMode?: DistrictWeightMode;
 }
 
 export function compileCity(graph: RepoGraph, options?: CompileCityOptions): CityModel {
@@ -54,7 +60,10 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
   }
   const districtPaths = [...districtMembers.keys()].sort(compareCodepoints);
   const rectangles = squarify(
-    districtPaths.map((path) => ({ path, weight: districtMembers.get(path)?.length ?? 1 })),
+    districtPaths.map((path) => ({
+      path,
+      weight: districtWeight(districtMembers.get(path)?.length ?? 1, options?.districtWeightMode),
+    })),
     { x: 0, y: 0, width: 1000, depth: 1000 },
   );
   const districts = districtPaths.map((path) => {
