@@ -148,6 +148,27 @@ export interface BuildingMetrics {
   loc: number;
   complexity: number;
   churn: number;
+  /**
+   * Days from the building's YOUNGEST member file's first commit to `RepoGraph.headDate` --
+   * `compileCity`'s aggregate of `RepoNode.age` (src/compiler/grammar.ts `aggregate`/
+   * `toFileSource`; min across `members`, not sum, because what a "recently added" overlay
+   * (src/renderer/props.ts scaffolding, V5.4) needs from a multi-file building is "does this
+   * location contain a newly-created file", not a blended average age that a single old sibling
+   * file would immediately wash out).
+   *
+   * Optional in the TYPE so a `city.json` compiled before this field shipped stays valid --
+   * exactly the `Road.weight` precedent above ("Optional in the TYPE so the field can land ahead
+   * of the compiler that emits it, but the compiler MUST emit it"): `compileCity` always emits a
+   * real value for every building (`RepoNode.age` is a required, always-measured field --
+   * src/analyzer/git.ts `readFileGitMetrics` computes it from git history alone, independent of
+   * language support, so no "unsupported language" absence case exists for it the way it does for
+   * `todoCount`). A renderer reading an OLDER, pre-migration `city.json` off disk sees `age`
+   * missing and MUST treat that as UNMEASURED, never as age `0` -- a missing value reading as
+   * "brand new" is exactly the fabricated-zero failure PROJECT_IDEA.md §5.5 constraint 2 (and the
+   * deleted commit-prefix churn heuristic, `318773d`) already ruled out for every other signal in
+   * this pipeline.
+   */
+  age?: number;
 }
 
 export interface Building {
@@ -492,6 +513,12 @@ export function validateCity(x: unknown): ValidationResult {
       const m = b.metrics;
       for (const f of ["loc", "complexity", "churn"] as const) {
         if (!isFiniteNumber(m[f])) errors.push(`${label}: metrics.${f} must be a number`);
+      }
+      // age is OPTIONAL (see BuildingMetrics.age doc comment) -- absence is legal (a
+      // pre-migration city.json), but a PRESENT value must still be a real, non-negative
+      // measurement, same discipline every other numeric metric here gets.
+      if (m.age !== undefined && (!isFiniteNumber(m.age) || m.age < 0)) {
+        errors.push(`${label}: metrics.age must be a non-negative number when present`);
       }
     }
   });

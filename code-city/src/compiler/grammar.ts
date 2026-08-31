@@ -9,6 +9,10 @@ export interface BuildingSource {
   loc: number;
   complexity: number;
   churn: number;
+  /** Youngest member's age (min, not sum) -- see BuildingMetrics.age's doc comment in
+   *  src/types.ts for why "does this building contain a newly-created file" wants a min, not a
+   *  blended average or a total the way loc/complexity/churn do. */
+  age: number;
   members: RepoNode[];
 }
 
@@ -37,6 +41,7 @@ function aggregate(id: string, path: string, districtPath: string, members: Repo
     loc: members.reduce((sum, node) => sum + node.loc, 0),
     complexity: members.reduce((sum, node) => sum + node.complexity, 0),
     churn: members.reduce((sum, node) => sum + node.churn, 0),
+    age: Math.min(...members.map((node) => node.age)),
     members,
   };
 }
@@ -78,6 +83,7 @@ export function selectBuildingSources(
     loc: node.loc,
     complexity: node.complexity,
     churn: node.churn,
+    age: node.age,
     members: [node],
   });
   if (files.length <= 500) {
