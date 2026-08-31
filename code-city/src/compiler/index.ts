@@ -12,7 +12,7 @@
 import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark, DatastoreSpec } from "../types.ts";
 import { dominantLanguage, footprintSide, normalizePath, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
 import type { CloneLodScope } from "./grammar.ts";
-import { districtWeight, shelfSlots, squarify } from "./layout.ts";
+import { districtWeights, shelfSlots, squarify } from "./layout.ts";
 import type { DistrictWeightMode } from "./layout.ts";
 import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
 
@@ -33,10 +33,16 @@ export interface CompileCityOptions {
    *  "district" (the original V4 behavior) so omitting this option is bit-for-bit unchanged. */
   cloneLodScope?: CloneLodScope;
   /** V5.1 district area-weighting curve (src/compiler/layout.ts DistrictWeightMode). Defaults to
-   *  DEFAULT_DISTRICT_WEIGHT_MODE, which is "log" as of 2026-08-30 (Usul's ruling on rendered
-   *  variants -- see that constant's doc comment). Pass "linear" to reproduce any city compiled
-   *  before that date. See layout.ts's districtWeight() doc comment for why this is a named,
-   *  caller-chosen input rather than data-driven auto-selection. */
+   *  DEFAULT_DISTRICT_WEIGHT_MODE, which is "derived" as of 2026-08-31: the exponent of a
+   *  count**p curve is SOLVED per-compile from the actual district counts (see
+   *  deriveDistrictWeightExponent), least distortion that still keeps every district legible,
+   *  rather than a fixed curve ruled on one repo's shape and silently wrong on the next one's --
+   *  see DEFAULT_DISTRICT_WEIGHT_MODE's doc comment for the usul-mgmt distribution that motivated
+   *  retiring the fixed "log" default. Pass "linear", "sqrt", or "log" to reproduce any city
+   *  compiled before that date byte-for-byte -- all three remain explicit, named opt-outs. See
+   *  layout.ts's districtWeight() doc comment for why the curve must stay a named, caller-chosen
+   *  (or, for "derived", caller-chosen-and-then-data-solved) input rather than a hidden
+   *  auto-selected mode. */
   districtWeightMode?: DistrictWeightMode;
   /** Building-footprint floor as a fraction of the slot maximum (see FOOTPRINT_FLOOR_DEFAULT's
    *  doc comment in grammar.ts for the trade-off and the current-curve caveat). Defaults to
@@ -64,11 +70,15 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
     if (!districtMembers.has(path)) districtMembers.set(path, []);
   }
   const districtPaths = [...districtMembers.keys()].sort(compareCodepoints);
+  // districtWeights() computes the whole distribution's weights in one call rather than per-path
+  // districtWeight(count) calls: "derived" mode (the default) needs every district's count at once
+  // to solve one shared exponent (layout.ts deriveDistrictWeightExponent) -- a per-count call has
+  // no way to see its siblings. "linear"/"sqrt"/"log" are unaffected: districtWeights() for those
+  // three modes is exactly a per-count map, so this is not a behavior change for explicit opt-outs.
+  const districtCounts = districtPaths.map((path) => districtMembers.get(path)?.length ?? 1);
+  const districtWeightValues = districtWeights(districtCounts, options?.districtWeightMode);
   const rectangles = squarify(
-    districtPaths.map((path) => ({
-      path,
-      weight: districtWeight(districtMembers.get(path)?.length ?? 1, options?.districtWeightMode),
-    })),
+    districtPaths.map((path, i) => ({ path, weight: districtWeightValues[i] })),
     { x: 0, y: 0, width: 1000, depth: 1000 },
   );
   const districts = districtPaths.map((path) => {

@@ -43,15 +43,16 @@ describe("bin/compile.ts CLI — --district-weight", () => {
     }
     expect(threw).toBe(true);
     expect(stderr).toMatch(/invalid --district-weight value "cube"/);
-    // The failure names all three legal values, not just one, so the caller doesn't have to guess.
+    // The failure names all four legal values, not just one, so the caller doesn't have to guess.
     expect(stderr).toMatch(/linear/);
     expect(stderr).toMatch(/sqrt/);
     expect(stderr).toMatch(/log/);
+    expect(stderr).toMatch(/derived/);
     expect(existsSync(outPath)).toBe(false);
   });
 
   it("accepts each legal --district-weight value and writes a validated city.json", () => {
-    for (const mode of ["linear", "sqrt", "log"]) {
+    for (const mode of ["linear", "sqrt", "log", "derived"]) {
       const outPath = join(workDir, `city-${mode}.json`);
       const result = execFileSync(
         "node",
@@ -64,7 +65,7 @@ describe("bin/compile.ts CLI — --district-weight", () => {
     }
   });
 
-  it("omitting --district-weight still compiles (defaults to linear, unchanged CLI behavior)", () => {
+  it("omitting --district-weight still compiles (defaults to derived, unchanged CLI behavior)", () => {
     const outPath = join(workDir, "city-default.json");
     const result = execFileSync("node", ["--experimental-strip-types", SCRIPT, repoJsonPath, outPath], {
       encoding: "utf8",

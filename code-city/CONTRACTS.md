@@ -123,6 +123,26 @@ silently dropped it because it only carries typed fields through. `todoCount` is
 it automatically; `tests/merge.test.ts`'s "V5 scar test" `describe` block asserts this directly
 rather than trusting the spread.
 
+## V5.1: district area-weighting
+
+Motivation: districts are squarified by weight, originally a district's raw file count (linear).
+A fixed compression curve (`"log"`, ruled in 2026-08-30 against a 3-district city where every
+district had hundreds of files) turned out to be exactly the class of defect
+`normalizedHeightScale` (`src/renderer/massing.ts`) exists to fix for building height: a curve
+ruled on one repo shape is wrong on another. On the folded usul-mgmt repo
+(`modules 1103 / test 36 / src 23 / bin 4 / lib 1 / scripts 1`), `"log"` gave five districts
+holding 65 files between them 59.6% of the canvas against the 1103-file district's 40.3%.
+
+`CompileCityOptions.districtWeightMode` gains a `"derived"` mode (`src/compiler/layout.ts`
+`deriveDistrictWeightExponent`) that solves the exponent of a `count ** p` curve per compile from
+the graph's own district counts — least distortion (largest `p`, `p = 1` is exact linear) that
+still keeps the smallest district above a legibility floor (`MIN_DISTRICT_SHARE_DEFAULT`, derived
+from the district label sprite's fixed world-space size in `src/renderer/buildings.ts`). `"derived"`
+is now the compiler default; `"linear"`, `"sqrt"`, and `"log"` remain explicit, named opt-outs that
+reproduce their exact prior output. Full contract: `docs/CONTRACT-city-json.md` §
+"District area-weighting (`districtWeightMode`, V5.1)". RED gate:
+`tests/compiler-district-weight.test.ts`.
+
 ## Phase 4: git time-travel (timeline scrub)
 
 Motivation (PROJECT_IDEA.md §5.2/Phase 4): a repo's history is a fourth navigable dimension.
@@ -184,10 +204,16 @@ April/May, `gapBefore: true` on the `-06` entry).
 ```ts
 analyzeRepo(repoPath: string): Promise<RepoGraph>   // src/analyzer/index.ts
 mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph  // src/analyzer/merge.ts — pure, sync
-compileCity(graph: RepoGraph, options?: { cloneLodScope?: "district" | "directory" }): CityModel
+compileCity(graph: RepoGraph, options?: {
+  cloneLodScope?: "district" | "directory";
+  districtWeightMode?: "linear" | "sqrt" | "log" | "derived";
+}): CityModel
                                                      // src/compiler/index.ts — pure, sync. cloneLodScope
                                                      // defaults to "district" (bit-for-bit unchanged if
                                                      // omitted) — see "D4" in docs/CONTRACT-city-json.md.
+                                                     // districtWeightMode defaults to "derived" (see
+                                                     // "V5.1: district area-weighting" below and
+                                                     // docs/CONTRACT-city-json.md § "District area-weighting").
 render2d(city: CityModel): string                   // src/renderer/svg.ts — pure, sync
 
 // V4 (see "V4: datastores + clone identity" above)
