@@ -13,6 +13,7 @@ import { buildLandmarks } from "./renderer/landmarks.ts";
 import { buildTethers } from "./renderer/tethers.ts";
 import { setupUI, setupLensControl, setupLayerControl } from "./renderer/ui.ts";
 import { DEFAULT_LENS, type LensId } from "./renderer/lenses.ts";
+import { resolveMassingScale } from "./massing-resolution.ts";
 
 interface TestBridge {
   ready: boolean;
@@ -137,16 +138,17 @@ function showSourceBadge(
   container: HTMLElement,
   cityUrl: string,
   city: CityModel,
-  heightScale: number | undefined,
+  massing: { scale: number; source: "explicit" | "normalized" },
 ): void {
   const el = document.createElement("div");
   el.className = "cc-source-badge";
   const parts = [
     `${cityUrl} — ${city.buildings.length} buildings · ${city.roads.length} roads · ${city.identityLinks?.length ?? 0} identity links`,
   ];
-  // Only shown when overridden: a badge that always printed "heightScale 1" would imply the knob
-  // was chosen when in fact nothing was passed.
-  if (heightScale !== undefined) parts.push(`heightScale ${heightScale}`);
+  // Always shown, and always names WHICH path produced the scale -- ?heightScale= override vs.
+  // normalizedHeightScale() solve (src/renderer/massing.ts). A viewer must never be unable to
+  // tell whether the number on screen is what they typed or what the module computed for them.
+  parts.push(`heightScale ${massing.scale} (${massing.source})`);
   el.textContent = parts.join(" · ");
   container.appendChild(el);
 }
@@ -183,10 +185,10 @@ async function main(): Promise<void> {
   let city: CityModel;
   let usedMock: boolean;
   let cityUrl: string;
-  let heightScale: number | undefined;
+  let heightScaleOverride: number | undefined;
   try {
     cityUrl = resolveCityUrl(window.location.search);
-    heightScale = resolveHeightScale(window.location.search);
+    heightScaleOverride = resolveHeightScale(window.location.search);
     ({ city, usedMock } = await loadCity(cityUrl));
   } catch (err) {
     showFatalError(app, err instanceof Error ? err.message : String(err));
@@ -203,10 +205,21 @@ async function main(): Promise<void> {
 
   if (usedMock) showMockBadge(app);
 
+  // Resolved AFTER validation -- normalizedHeightScale (src/renderer/massing.ts) reads
+  // city.buildings and fails loudly on degenerate input, so it needs a CityModel already known
+  // to be well-formed. resolveMassingScale itself decides override-vs-normalized.
+  let massing: { scale: number; source: "explicit" | "normalized" };
+  try {
+    massing = resolveMassingScale(city, heightScaleOverride);
+  } catch (err) {
+    showFatalError(app, err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+
   const sceneHandle = createScene(app, city);
   const { scene, camera, renderer, controls } = sceneHandle;
 
-  const buildingsHandle = buildBuildings(city, heightScale === undefined ? undefined : { heightScale });
+  const buildingsHandle = buildBuildings(city, { heightScale: massing.scale });
   for (const mesh of buildingsHandle.meshes) scene.add(mesh);
   scene.add(buildingsHandle.districtGroup);
 
@@ -226,7 +239,7 @@ async function main(): Promise<void> {
 
   // Which document this frame is actually drawing. Always shown, not only under ?city= -- the
   // whole point is that a viewer comparing two cities can never mis-attribute what's on screen.
-  showSourceBadge(app, cityUrl, city, heightScale);
+  showSourceBadge(app, cityUrl, city, massing);
 
   const layerGroups = new Map<string, { visible: boolean }>([
     ["roads", roadsHandle.group],
