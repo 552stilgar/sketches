@@ -4,3 +4,7 @@ out/
 public/repo.json
 public/city.json
 public/city.svg
+# Compiled comparison artifacts: every one is regenerable from bin/analyze.ts + bin/compile.ts,
+# and each is ~0.8-1.1 MB. compare.html names them; the commands that make them are in CAMPAIGN.md.
+public/repo-*.json
+public/city-*.json
