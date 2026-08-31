@@ -444,13 +444,35 @@ function buildDistrictBoundary(d: District, visual: DistrictVisual): THREE.Mesh 
  * building counts), at the cost of buildings clipping camera near-planes sooner and district
  * ground/road geometry (which does NOT scale with this knob) looking comparatively squat.
  *
+ * THIS CONSTANT IS THE OPT-OUT PATH, not the default in effect. As of the massing.ts module
+ * (normalizedHeightScale / medianAspect), the viewer (src/main.ts, via
+ * src/massing-resolution.ts) normalizes to TARGET_MEDIAN_ASPECT_DEFAULT by default and only
+ * falls back to a fixed scale when a viewer passes an explicit `?heightScale=` override --
+ * BASE_HEIGHT_SCALE_DEFAULT itself is consumed only when buildBuildings is called with no
+ * `opts.heightScale` at all (i.e. by a caller that bypasses main.ts's resolution, such as a test
+ * or a future consumer), so it stays live as the reversibility lever, not because it is what a
+ * normal viewer session sees.
+ *
+ * A FIXED constant cannot hold a fixed aspect ratio across city sizes: height is absolute
+ * (LOC-derived) while footprint is a share of a fixed 1000x1000 canvas, so footprint shrinks as
+ * building count grows and the same heightScale gets WORSE (taller-relative) on a bigger city.
+ * Measured on two real cities:
+ *   merged-trio (631 buildings):  median footprint 8.08, median height 52.4, median aspect  6.5
+ *   usul-mgmt   (1108 buildings): median footprint 3.69, median height 52.4, median aspect 14.2
+ * Median height is identical; median footprint halved. At this constant's own value (0.5),
+ * usul-mgmt's median silhouette comes out to 8.8:1 -- worse than the 7.4:1 that triggered the
+ * 2026-08-30 ruling below in the first place. That ruling is preserved (TARGET_MEDIAN_ASPECT_DEFAULT
+ * in massing.ts is the 3.7:1 ratio 0.5 actually produced on the 631-building city), normalization
+ * only makes it hold on cities of a different size than the one it was tuned on.
+ *
  * 0.5 since 2026-08-30 (Usul's ruling, made against rendered variants at 1 / 0.5 / 0.25 / 0.12).
  * At 1 the median building on the merged mgmt trio stood 7.4x taller than its footprint was wide
  * -- measured, p25 4.6 / p75 11.2 / max 33.3 -- and the city read as a field of pins rather than a
  * skyline. Footprint width cannot fix that ratio: the footprint floor only widens the smallest
  * buildings, so 0.05/0.20/0.50 floors were visually indistinguishable. Halving height is what
  * moves it. Below ~0.25 the massing flattens past the point of reading as buildings at all, so
- * this knob has a usable floor as well as a ceiling.
+ * this knob has a usable floor as well as a ceiling -- the same [0.25, 2.0] band
+ * normalizedHeightScale() clamps to.
  */
 export const BASE_HEIGHT_SCALE_DEFAULT = 0.5;
 
