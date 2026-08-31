@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// usage: node --experimental-strip-types bin/compile.ts <repo.json> <city.json> [--clone-lod-scope=district|directory] [--district-weight=linear|sqrt|log]
+// usage: node --experimental-strip-types bin/compile.ts <repo.json> <city.json> [--clone-lod-scope=district|directory] [--district-weight=linear|sqrt|log|derived]
 import { readFileSync, writeFileSync } from "node:fs";
 import { compileCity } from "../src/compiler/index.ts";
 import type { CloneLodScope } from "../src/compiler/grammar.ts";
@@ -10,7 +10,7 @@ import type { RepoGraph } from "../src/types.ts";
 
 const CLONE_LOD_SCOPES: readonly CloneLodScope[] = ["district", "directory"];
 const USAGE =
-  "usage: node bin/compile.ts <repo.json> <city.json> [--clone-lod-scope=district|directory] [--district-weight=linear|sqrt|log]";
+  "usage: node bin/compile.ts <repo.json> <city.json> [--clone-lod-scope=district|directory] [--district-weight=linear|sqrt|log|derived]";
 
 function main(): void {
   const args = process.argv.slice(2);

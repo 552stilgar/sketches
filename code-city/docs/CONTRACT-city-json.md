@@ -220,6 +220,44 @@ failing loudly (non-zero exit, listing the valid set) on anything else. Which mo
 long-term default is Usul's aesthetic call, made by eye against a real repo — this option makes
 that call deferrable rather than baked in.
 
+## District area-weighting (`districtWeightMode`, V5.1)
+
+Districts are squarified into the fixed 1000x1000 layout canvas by WEIGHT
+(`src/compiler/layout.ts` `squarify`); the weight fed in for one district was originally its raw
+file count (a straight linear map). `CompileCityOptions.districtWeightMode` makes the curve
+applied to that count an explicit, named option:
+
+```ts
+compileCity(graph: RepoGraph, options?: { districtWeightMode?: "linear" | "sqrt" | "log" | "derived" }): CityModel
+```
+
+- `"linear"`: raw count, unmodified — the original behavior, still reachable byte-for-byte.
+- `"sqrt"` / `"log"`: fixed compression curves (`Math.sqrt`, `Math.log1p`) that dampen the gap
+  between a large district and a small one. `"log"` was the default from 2026-08-30–2026-08-31.
+- `"derived"` (default since 2026-08-31): the exponent `p` of a `count ** p` curve is SOLVED per
+  compile from the actual district counts (`deriveDistrictWeightExponent`), not fixed. It picks the
+  LARGEST `p` (least distortion — `p = 1` is exact linear) such that the smallest district's canvas
+  share still clears `MIN_DISTRICT_SHARE_DEFAULT` (a legibility floor derived from the district
+  label sprite's fixed world-space size, `src/renderer/buildings.ts`). A well-balanced repo is left
+  at `p = 1`, untouched; only a genuinely lopsided one gets compressed, and only as far as
+  legibility demands.
+
+Why: a FIXED curve (`"log"`) was ruled in on one repo's shape (a 3-district city, hundreds of
+files per district) and turned out to be wrong on another (the folded usul-mgmt repo,
+`modules 1103 / test 36 / src 23 / bin 4 / lib 1 / scripts 1`) — under `"log"`, five districts
+holding 65 files between them took 59.6% of the canvas while the 1103-file district got 40.3%,
+worse than the imbalance `"log"` was chosen to fix. `"derived"` generalizes across repo shapes
+instead of re-litigating the ruling per repo.
+
+This does **not** violate the determinism contract above: `"derived"` is a pure function of the
+graph's own district counts (no clock, no randomness, fixed-iteration bisection — see
+`deriveDistrictWeightExponent`'s doc comment) — the same `(graph, options)` pair always compiles to
+the same `CityModel`. `"linear"`, `"sqrt"`, and `"log"` all remain explicit, named opt-outs: any
+city compiled under any of the three curves (including every city compiled before 2026-08-31)
+reproduces byte-for-byte by naming that mode on `bin/compile.ts` (`--district-weight=<value>`),
+which fails loudly (non-zero exit, listing the valid set) on anything else — same posture as
+`--clone-lod-scope` above.
+
 ## Validation
 
 `validateCity` checks: `districts`/`buildings`/`roads`/`landmarks` are present; every

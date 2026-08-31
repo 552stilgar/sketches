@@ -26,23 +26,173 @@ export interface WeightedPath {
  * different curve because the data looked different" violates that even though no field on the
  * options object changed.
  */
-export type DistrictWeightMode = "linear" | "sqrt" | "log";
+export type DistrictWeightMode = "linear" | "sqrt" | "log" | "derived";
 
-export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "sqrt", "log"];
+export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "sqrt", "log", "derived"];
 
 /**
- * The curve used when a caller names none. `log` since 2026-08-30 (Usul's ruling, made against
- * rendered A/B variants of the merged mgmt trio): under `linear` the largest district took 71.3%
- * of the canvas and the two smaller repos collapsed into edge slivers, so the view could not show
- * what it exists to show -- the relative shape of several codebases at once. `log` puts that at
- * 40.9% / 32.7% / 26.3%, and the density difference between districts becomes legible.
+ * The curve used when a caller names none. `derived` since 2026-08-31 (superseding the `log`
+ * ruling of 2026-08-30 below), because `log` turned out to be exactly the class of defect
+ * `normalizedHeightScale` (src/renderer/massing.ts) was written to fix for building height: a
+ * curve ruled on one repo shape is wrong on another. `log`'s 2026-08-30 ruling was made on a
+ * 3-district city where all three districts held hundreds of files each; on the folded usul-mgmt
+ * repo (`modules 1103 / test 36 / src 23 / bin 4 / lib 1 / scripts 1`) that same fixed curve gives
+ * five districts holding 65 files between them 59.6% of the canvas while the 1103-file district
+ * gets 40.3% -- worse than the problem `log` was ruled in to fix. `derived` replaces the fixed
+ * curve with one SOLVED per-compile from the actual distribution (see
+ * `deriveDistrictWeightExponent` below): least distortion that still keeps every district legible,
+ * i.e. `p = 1` (exact linear) whenever the smallest district already clears the legibility floor
+ * unaided, compressing only as far as that floor demands.
  *
- * This is a DEFAULT, not a constraint: `linear` remains available and reproduces every city
- * compiled before this date. Determinism is unaffected -- the default is a fixed constant, so the
- * same (graph, options) pair still yields a byte-identical CityModel; it is the constant that
- * moved, once, deliberately.
+ * `log`, `sqrt`, and `linear` all remain available as explicit, named opt-outs -- a city compiled
+ * under any of them (including every city compiled before 2026-08-31) reproduces byte-for-byte by
+ * naming that mode. Determinism is unaffected: the default is still a fixed constant, and
+ * `derived` itself is a pure function of the graph's district counts (no clock, no randomness) --
+ * "same options, different curve because the data looked different" is exactly what `derived`
+ * IS, but that's a documented, deterministic function of `(graph, options)`, not a hidden input;
+ * see districtWeight()'s own doc comment above for why AUTO-SELECTING a mode from data skew would
+ * have violated the determinism contract -- `derived` doesn't select a mode, it solves one curve
+ * parameter within one mode, from data that's already part of the compile's own input.
+ *
+ * --- 2026-08-30 ruling this supersedes, kept for history ---
+ * `log` was chosen against rendered A/B variants of the merged mgmt trio: under `linear` the
+ * largest district took 71.3% of the canvas and the two smaller repos collapsed into edge
+ * slivers, so the view could not show what it exists to show -- the relative shape of several
+ * codebases at once. `log` put that at 40.9% / 32.7% / 26.3%, and the density difference between
+ * districts became legible on THAT city. It was never re-validated against a differently-shaped
+ * repo before shipping as the default -- `derived` is that missing generalization.
  */
-export const DEFAULT_DISTRICT_WEIGHT_MODE: DistrictWeightMode = "log";
+export const DEFAULT_DISTRICT_WEIGHT_MODE: DistrictWeightMode = "derived";
+
+/**
+ * Minimum canvas share (fraction of the 1000x1000 layout canvas -- compiler/index.ts squarifies
+ * districts into that fixed bounds) a district must clear for `deriveDistrictWeightExponent` to
+ * accept an exponent, translated from a LEGIBILITY floor rather than chosen by taste: district
+ * name labels are fixed-size world-space sprites regardless of district size
+ * (`src/renderer/buildings.ts` `makeLabelSprite`, `sprite.scale.set(90, 22.5, 1)`) -- a district
+ * whose own footprint is smaller than the label overflows it into a neighboring district and
+ * stops reading as that district's name. The binding dimension is the label's WIDTH (90 world
+ * units, 4x its height), so the floor is a square of that side: 90 * 90 = 8100 canvas units^2,
+ * i.e. 8100 / 1000^2 = 0.0081 of the canvas -- rounded down to 0.008 (0.8%).
+ *
+ * Treating this as an AREA share (rather than solving for each district's actual
+ * `min(width, depth)` directly, which `deriveDistrictWeightExponent` cannot see -- it only sees
+ * counts, not the treemap `squarify` will eventually produce from them) is an approximation,
+ * justified by `squarify`'s own optimization target: `worst()` minimizes each row's aspect ratio,
+ * so squarify already pushes every district toward square-ish, and area share is a reasonable
+ * proxy for "smallest side" on a near-square rect. It is not exact for a district squarify is
+ * forced to render as a sliver (extreme count skew can still produce one even with a well-chosen
+ * exponent), but that residual failure mode belongs to `squarify`'s own row-balancing, not to this
+ * constant.
+ *
+ * A named, trivially-changeable constant, same posture as `TARGET_MEDIAN_ASPECT_DEFAULT`
+ * (massing.ts): Usul rules the final number against rendered variants; this is the measurement
+ * that motivates the starting value, not the final word.
+ */
+export const MIN_DISTRICT_SHARE_DEFAULT = 0.008;
+
+/**
+ * Lower bound on the exponent `deriveDistrictWeightExponent` will ever return. `count ** p` is
+ * monotonically increasing in `count` for any `p > 0` -- size ordering (bigger district, more
+ * weight) survives all the way down to `p` approaching 0. At `p = 0` every district gets weight 1
+ * regardless of size and the curve carries no size signal at all, which is a worse loss of
+ * information than `log` ever produces (`log1p` still strictly increases, however slowly). 0.05
+ * keeps a small but real slope: even on a distribution skewed enough to need the floor, count=1000
+ * vs count=1 still differs by `1000 ** 0.05 ≈ 1.4x` rather than collapsing to parity. If a real
+ * distribution's smallest district still can't clear `MIN_DISTRICT_SHARE_DEFAULT` at this floor,
+ * `deriveDistrictWeightExponent` returns `clamped: true` and reports the floor honestly rather
+ * than silently searching past it (massing.ts `normalizedHeightScale` clamp precedent) -- FAIL
+ * LOUDLY applies to a returned flag here, not a thrown error, because a clamped-but-still-finite
+ * result is not a degenerate input; it's supposed to be surfaced to the caller, not to a rejection.
+ */
+export const DISTRICT_WEIGHT_EXPONENT_FLOOR = 0.05;
+
+/**
+ * Solve for the largest exponent `p` (least distortion -- `p = 1` is exact linear, area tracks
+ * file count exactly) such that the SMALLEST weighted share among `counts` still clears `minShare`
+ * (default `MIN_DISTRICT_SHARE_DEFAULT`). Weight for one district is `count ** p`.
+ *
+ * This targets the SMALLEST district's share, not the largest district's. The rejected
+ * alternative was solving for the largest district's share to land near some target (e.g. the
+ * ~41% the 2026-08-30 `log` ruling produced on its 3-district city) -- on the real usul-mgmt
+ * distribution that target would force heavy compression on a `[1103,36,23,4,1,1]` split, and
+ * five districts holding 65 files between them would swell to ~59% of the canvas: the exact
+ * defect this function exists to fix, re-derived under a different name. Targeting the smallest
+ * share instead means well-balanced cities (see the "near-linear on 3 balanced districts" test)
+ * are never touched at all -- distortion is applied only when, and only as much as, legibility
+ * actually demands.
+ *
+ * Well-posed because `minShareAt(p)` (the smallest resulting share, as a function of `p`) is
+ * monotonically non-increasing as `p` increases: compressing harder (lower `p`) can only raise or
+ * hold the smallest share, never lower it (see tests/compiler-district-weight.test.ts
+ * "monotonicity"). That makes a bisection search well-defined and gives it a single answer.
+ *
+ * PURE + DETERMINISTIC: same `counts` (and `minShare`) always produce the same exponent. The
+ * search below runs a FIXED 50 iterations regardless of input -- never a convergence-on-float
+ * loop whose step count could vary run to run, which would violate the no-clock/no-randomness
+ * determinism contract just as surely as reading `Date.now()` would (see districtWeight()'s own
+ * doc comment on why compileCity's output must depend only on its declared inputs). 50 halvings of
+ * a `[DISTRICT_WEIGHT_EXPONENT_FLOOR, 1]` interval land the exponent far below float64 precision;
+ * this is a precision BUDGET, not a "run until close enough" test.
+ *
+ * FAILS LOUDLY (throws) on degenerate input, per Failure Discipline LAW -- never fabricate a
+ * plausible-looking exponent from bad data: an empty `counts` array, any non-finite or non-positive
+ * count (a district with 0 files can never be given non-zero weight by any power curve --
+ * `0 ** p === 0` for every `p > 0` -- so it is a caller error to pass one in here rather than this
+ * function's problem to paper over; `districtWeight(count, "log")`'s `log1p` zero-handling is a
+ * property of that DIFFERENT, single-count curve and does not carry over), or a `minShare` that
+ * isn't a finite fraction in `(0, 1)`.
+ */
+export function deriveDistrictWeightExponent(
+  counts: readonly number[],
+  minShare: number = MIN_DISTRICT_SHARE_DEFAULT,
+): { exponent: number; clamped: boolean; minResultingShare: number } {
+  if (counts.length === 0) {
+    throw new Error("deriveDistrictWeightExponent: counts must not be empty");
+  }
+  if (!Number.isFinite(minShare) || minShare <= 0 || minShare >= 1) {
+    throw new Error(`deriveDistrictWeightExponent: minShare must be a finite fraction in (0, 1), got ${minShare}`);
+  }
+  for (const count of counts) {
+    if (!Number.isFinite(count) || count <= 0) {
+      throw new Error(`deriveDistrictWeightExponent: every count must be a positive, finite number, got ${count}`);
+    }
+  }
+
+  const minShareAt = (p: number): number => {
+    const weights = counts.map((count) => Math.pow(count, p));
+    const sum = weights.reduce((a, b) => a + b, 0);
+    return Math.min(...weights) / sum;
+  };
+
+  // p = 1 is exact linear -- zero distortion. If linear already clears the floor, that IS the
+  // answer: least distortion means never compressing further than legibility demands, and no
+  // search is needed (also sidesteps ever evaluating minShareAt at a p > 1, which is out of scope
+  // -- this function only ever compresses, never exaggerates beyond raw counts).
+  const linearShare = minShareAt(1);
+  if (linearShare >= minShare) {
+    return { exponent: 1, clamped: false, minResultingShare: linearShare };
+  }
+
+  // If even the floor exponent can't clear minShare, there is no p in-band that can (monotonicity
+  // above) -- report the floor and clamped:true rather than pretending a lower p would help.
+  const floorShare = minShareAt(DISTRICT_WEIGHT_EXPONENT_FLOOR);
+  if (floorShare < minShare) {
+    return { exponent: DISTRICT_WEIGHT_EXPONENT_FLOOR, clamped: true, minResultingShare: floorShare };
+  }
+
+  let lo = DISTRICT_WEIGHT_EXPONENT_FLOOR;
+  let hi = 1;
+  for (let i = 0; i < 50; i++) {
+    const mid = (lo + hi) / 2;
+    if (minShareAt(mid) >= minShare) {
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return { exponent: lo, clamped: false, minResultingShare: minShareAt(lo) };
+}
 
 /**
  * Apply the named curve to a district's raw file count. `sqrt` and `log` both compress the gap
@@ -61,6 +211,18 @@ export function districtWeight(count: number, mode: DistrictWeightMode = DEFAULT
       return Math.sqrt(count);
     case "log":
       return Math.log1p(count);
+    case "derived":
+      // `derived` solves ONE exponent from the WHOLE distribution's counts (see
+      // deriveDistrictWeightExponent above) -- there is no such thing as "the derived weight of a
+      // single count" in isolation, so unlike the three curves above this mode cannot be answered
+      // here. Fail loudly and point at the function that can, rather than silently falling back to
+      // some other curve (which would violate determinism: the SAME count would get a DIFFERENT
+      // weight depending on which sibling counts happened to be compiled alongside it, exactly the
+      // kind of hidden, uncontrolled input this module's determinism doc comments warn against).
+      throw new Error(
+        "districtWeight: 'derived' needs the whole distribution, not one count -- call districtWeights() " +
+          "or deriveDistrictWeightExponent() instead.",
+      );
     default: {
       // Exhaustiveness guard: TypeScript proves `mode` is `never` here as long as
       // DistrictWeightMode's members are all handled above. If a new mode is added to the type
@@ -70,6 +232,44 @@ export function districtWeight(count: number, mode: DistrictWeightMode = DEFAULT
       throw new Error(`districtWeight: unhandled mode ${String(exhaustive)}`);
     }
   }
+}
+
+/**
+ * Weight a whole distribution of district file counts under `mode` (default
+ * DEFAULT_DISTRICT_WEIGHT_MODE), in `counts` order. This is the entry point `compiler/index.ts`
+ * uses -- it is the only mode-aware caller that has all districts' counts available at once, which
+ * `derived` requires and the single-count `districtWeight()` cannot provide.
+ *
+ * For "linear"/"sqrt"/"log" this is exactly `counts.map((c) => districtWeight(c, mode))` -- same
+ * per-count curve, unchanged, so a caller passing one of those three explicit modes gets
+ * byte-identical output to calling districtWeight() directly (the opt-out guarantee).
+ * `deriveDistrictWeightExponent`'s own PURE/DETERMINISTIC/FAIL-LOUDLY contract passes through
+ * unchanged for "derived".
+ */
+export function districtWeights(
+  counts: readonly number[],
+  mode: DistrictWeightMode = DEFAULT_DISTRICT_WEIGHT_MODE,
+  minShare?: number,
+): number[] {
+  if (mode !== "derived") {
+    return counts.map((count) => districtWeight(count, mode));
+  }
+  // `deriveDistrictWeightExponent` fails loudly on a count <= 0 (see its own doc comment: a power
+  // curve can never give a 0-file district non-zero weight regardless of exponent, so it's
+  // meaningless input to a legibility search). Zero-file districts are a real, valid shape though
+  // -- a datastore-only directory with no analyzed source files (docs/CONTRACT-city-json.md V4) --
+  // and every curve above ("linear"/"sqrt"/"log") already gives them weight 0 before `squarify`'s
+  // own `Math.max(1, weight)` floor takes over downstream. So they're excluded from the exponent
+  // SEARCH (a district that's always floored to the same area regardless of exponent contributes
+  // nothing to "does the smallest REAL district read") but still get a weight from the resulting
+  // exponent like every other count -- `0 ** exponent === 0`, same as the other three curves.
+  const positiveCounts = counts.filter((count) => count > 0);
+  // All-districts-zero is the degenerate edge of that edge case (a graph with datastores but zero
+  // analyzed source files anywhere) -- there is nothing to search over, and every weight is 0
+  // regardless of exponent, so `exponent` is a don't-care; 1 keeps the choice inert and documented
+  // rather than picking a curve for a distribution that has none.
+  const exponent = positiveCounts.length > 0 ? deriveDistrictWeightExponent(positiveCounts, minShare).exponent : 1;
+  return counts.map((count) => Math.pow(count, exponent));
 }
 
 function worst(row: readonly WeightedPath[], shortSide: number): number {
