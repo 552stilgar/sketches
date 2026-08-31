@@ -1,42 +1,46 @@
 ---
 project: sketches
-updated: 2026-08-30
-next: "gapBefore judgment call: delete the unreachable-from-real-data path, or keep it with a synthetic-manifest test that documents why it can't fire from real generated history. Then: pick/wire a footprint-floor default (parameterized, no value chosen, no CLI flag), and browser-verify dist/timeline.html (low priority — Usul's read: 'ok, not really necessary for anything')."
-phase: "code-city V5.1: 3D viewer is now the compare surface (?city=, ?heightScale=, layer toggles). Two rulings made against rendered variants: district-weight default linear->log, height-scale default 1->0.5. 6-lane orchestrated Workflow shipped camera/weight/footprint/tethers/2 defects/CONTRACTS fix."
-campaign_ref: "2026-08-30 — code-city V5.1: 3D compare viewer + 3 rulings (weight/height), workflow-orchestrated"
+updated: 2026-08-31
+next: "Rendered-variant review (blocked on Usul): compile district-weight (derived/log/linear), patina, scaffolding, ruins variants and look via dist/compare.html — four defaults/overlays shipped and none seen except cranes."
+phase: "code-city V5.2b: derived district-weight exponent merged (default log->derived); 3 new temporal overlays landed OFF by default (age->patina, new-file->scaffolding, deleted-file->ruins). 11-lane orchestrated Workflow; browser-verify confirmed cranes read as intended."
+campaign_ref: "2026-08-31 — code-city V5.2b: derived district-weight + 3 temporal overlays (patina/scaffolding/ruins), workflow-orchestrated, all overlays off by default"
 gates:
-  - "code-city: 33 test files, 360/360 green, build clean. Determinism + no-swallowed-exceptions verified by execution (double-compile diff, sha256) after the 6-lane merge, not by code reading."
+  - "code-city: 43 test files, 494/494 green. --district-weight=log/linear/sqrt byte-identity vs pre-session proven by recompile+diff. Default-render-unchanged with all 3 new overlays off proven by scene-digest diff."
 ---
 
 # sketches — STATE
 
 ## Now
 
-Compare surface moved from 2D SVG to the real 3D viewer: `?city=<path>` swaps the CityModel
-(root-relative, explicit-fails-loud), `?heightScale=<n>` overrides massing live, layer control
-is a pure view filter. Index at `dist/compare.html` (tailnet :7500, gitignored).
+code-city V5.2b: 11-lane orchestrated Workflow merged derived district-weight (default
+log->derived), landed 3 temporal overlays OFF by default (age->patina, new-file->scaffolding,
+deleted-file->ruins), rendered compare variants, browser-verified cranes (works — reads as
+"under construction", not noise), pruned 43 merged branches (55->12).
 
-Two defaults changed by Usul's ruling against rendered variants, reversible via explicit option:
-district weight `linear`→`log` (share 71.3%→40.9%), height scale `1`→`0.5` (aspect 7.4:1→3.7:1).
-Root cause was height, not footprint — footprint-floor tuning was nearly invisible.
+Merge step caught+fixed a live never-fabricate violation: 2 lanes independently defined
+`Building.metrics.age` (MAX vs MIN); the unfiltered MIN would've rendered 42/1108 real buildings
+as "brand new." Split into `age`/`newestAge`, both gated by `ageMeasured`.
 
 ## Open
 
-- **`gapBefore` judgment call** — unreachable from real generated data (git history is
-  monotonic); delete the path or keep it with a synthetic-manifest test. Deliberately not
-  delegated to a lane.
-- **Footprint-floor default unset** — parameterized correctly, documented as the weaker lever,
-  no CLI flag wired in `bin/compile.ts`, no value chosen.
-- **`dist/timeline.html` still not browser-verified** — Usul's read on the underlying data: "ok,
-  not really necessary for anything," so not prioritized this session.
-- **18 registered lane worktrees at `.claude/worktrees/`** (11 at last close + 7 new V5.1 lanes),
-  all provably merged. `git worktree remove` is denied by the permission classifier — needs a
-  rule or Usul's own hand.
+- **Rendered-variant review — nothing past cranes has been looked at.** `dist/compare.html`
+  (:7500) has district-weight + patina + scaffolding + ruins variants wired, code/tests-only.
+- **District-legibility floor may target wrong geometry** — 0.008 assumes a square proxy;
+  district layout only emits full-canvas-width strips, so the floor renders a sliver not a
+  patch. Fix-floor vs fix-layout is Usul's call (Structural Workaround LAW).
+- **`clamped` (floor-hit flag) computed, documented, then discarded** before `city.json`/stderr —
+  `massing.ts`'s `normalizedHeightScale` has the same shape; worth one shared fix, not two.
+- **No independent review of the 10-commit diff yet** — the one violation above was caught by
+  lane collision, not a structural check.
+- **`gapBefore` is RESOLVED, not open** — prior open-item was wrong. `SubdirNotPresentAtCommitError`
+  produces a genuine mid-sequence gap from real history; pinned by a real-git fixture, 2/2 passing.
+- Footprint-floor default still unset (carried, unchanged). `dist/timeline.html` now
+  browser-verified — loads, scrubber moves, Usul's "not really necessary" verdict stands.
+- 12 active worktrees (2 dead/stale + 9 merged lanes). `git worktree remove` still permission-denied.
 
 ## Do not
 
-- Don't add colors/fills into `src/renderer/svg.ts` — the 2D SVG contract deliberately stays
-  presentation-free; the 3D viewer is now the compare surface, not the SVG path.
-- Don't hand-edit `bin/compile.ts`'s district-weight/footprint flags without also updating the
-  matching default-mode doc comments in `src/compiler/layout.ts` / `src/renderer/buildings.ts` —
-  both constants document WHY the default is what it is, not just what it is.
+- Don't add colors/fills into `src/renderer/svg.ts` — stays presentation-free.
+- Don't hand-edit `bin/compile.ts`'s weight/footprint flags without updating the matching default
+  doc comments in `layout.ts`/`buildings.ts`.
+- Don't flip any of the 3 new overlays ON by default without the rendered review above.

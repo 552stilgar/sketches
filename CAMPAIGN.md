@@ -327,3 +327,43 @@ still not browser-verified (Usul's verdict on the data: "ok, not really necessar
 so not prioritized). Worktree count grew 11→18 this session (7 new V5.1 lane worktrees, all
 merged) — `git worktree remove` is still denied by the permission classifier; needs a rule or
 Usul's own hand, worse now than at last close.
+
+##  — code-city V5.2b: derived district-weight + 3 temporal overlays, workflow-orchestrated
+
+Board picked "merge the completed derived-district-weight lane, render+browser-verify pending
+visual changes for Usul's ruling" over pushing further temporal overlays on an unjudged crane
+overlay (V5.2 shipped last close, never rendered). Overrode with the fuller scope (Usul: "1,2,3,4,5")
+— orchestrated all 9 leaves as one 11-lane Workflow (2 inherit, 5 Sonnet, 1 Haiku).
+
+A1 merged the derived-district-weight lane (`af669e8`) into main, widening the byte-identity proof
+to log/linear/sqrt across 2 fixtures (6/6 `cmp` identical) and confirming a second worktree
+(`worktree-agent-aea4508fd7a18b5fd`) was dead — 16 files behind main, zero pending work.
+
+P2 ran render-variants, browser-verify, and the ruins analyzer+contract signal in parallel.
+Browser-verify PASS on the one thing that had shipped-but-never-been-seen: V5.2 cranes (93–cranes
+city, orange wireframe vs solid massing) read as "under construction," not noise — clearing C1/C2
+to build on that vocabulary rather than a vocabulary about to be revised. Render-variants also
+found the 0.008 district-legibility floor answers the wrong geometry: districts lay out as
+full-canvas-width strips, not the square the floor's derivation assumes — at the floor a district
+renders as a `1000×8` sliver holding a 0.136×0.136 building, not a legible patch.
+
+P3 landed two renderer-only overlays (age→patina, new-file→scaffolding), both OFF by default.
+The merge caught a live never-fabricate violation neither lane's own tests surfaced: C1 and C2
+independently defined `Building.metrics.age` with contradictory aggregation (MAX-with-history vs
+unfiltered MIN); C2's doc comment asserted the field is "always measured," which `git.ts:89`
+contradicts — a never-committed file gets `age: 0`. On the real usul-mgmt snapshot, 42/1108
+buildings are unmeasured and every one had `newestAge == 0`, i.e. would have rendered as "brand
+new, scaffolding up." Split into `age` (MAX) / `newestAge` (MIN), both gated by `ageMeasured`.
+
+P4 landed deleted-file→ruins (compiler+renderer), also OFF by default, deliberately kept OUT of
+the crane/scaffold `PropSpec` vocabulary (a ruin has no anchor building) and refusing to size a
+ruin from its historical `lastLoc` (a different instant than every other live measurement).
+
+P5 pruned 43 fully-merged branches (55→12); `git worktree remove` remains permission-denied so
+8 lane worktrees + 1 stale + 1 dead survive.
+
+Net: 403→494 tests (38→43 files), 10 commits, all local. ROI: $44.36 lane spend (Sonnet $25.40
+· Opus $18.75 · Haiku $0.20), 80.7min wall vs 295min estimated inline (3.7×). Open: the
+rendered-variant review this run existed to enable hasn't happened yet (district-weight/patina/
+scaffolding/ruins all unjudged); the 0.008-floor fix-vs-fix-layout call and the discarded
+`clamped` flag both wait on it; no independent review of the 10-commit diff has run.
