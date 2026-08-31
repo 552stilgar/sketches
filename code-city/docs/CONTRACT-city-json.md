@@ -25,7 +25,13 @@ interface Building {
                        // this is what lets a renderer/UI join a building back to its metrics.
   x: number; y: number; width: number; depth: number; height: number;  // canvas coords + height
   style: string;
-  metrics: { loc: number; complexity: number; churn: number };
+  metrics: {
+    loc: number; complexity: number; churn: number;
+    age?: number;          // V6 — see "Age weathering (V6)" below. Optional: absent on any
+                            // city.json compiled before V6, never a fabricated 0.
+    ageMeasured?: boolean;  // V6 — true iff `age` reflects a real git history, not the
+                             // analyzer's no-commits fallback. Absent must be treated as false.
+  };
 }
 
 interface Road {
@@ -149,6 +155,40 @@ motion on roads and stillness on tethers learns the difference in one glance.
 the full rule; it applies identically here — `compileCity` must never widen exact-hash grouping
 into any form of near-duplicate clustering.
 
+## Age weathering (V6)
+
+- Producer: `compileCity` (`src/compiler/index.ts`), sourcing `RepoNode.age` /
+  `RepoNode.contributors` (`docs/CONTRACT-repo-json.md` "Determinism rule: age")
+- Consumer: `buildBuildings` / `applyWeathering` (`src/renderer/buildings.ts`) — an OFF-by-default
+  layer-control toggle ("Weathering"), never applied unless the viewer turns it on
+- Validator: `validateCity` checks `metrics.age` (non-negative number, when present) and
+  `metrics.ageMeasured` (boolean, when present)
+
+`Building.metrics.age` = **MAX** of `age` across the building's members that have a real git
+history (`RepoNode.contributors.length > 0`); `ageMeasured` = true iff at least one member
+qualifies. MAX, not sum or average: a directory-aggregate building (LOD collapse, see "LOD"
+below) should read as weathered the moment it contains one old file, the same way a real
+building's oldest wing shows through — summing would make a building of many young files read
+older than its oldest member actually is, and averaging would hide a single ancient file inside a
+pile of new ones.
+
+**Never-fabricate applies to absence, not just to values (PROJECT_IDEA §5.5 constraint 2).** A
+file's `age` reaching `analyzeRepo`'s no-commits fallback (`age: 0`, `src/analyzer/git.ts`) is
+NOT the same claim as "this file is brand new" — a genuinely week-old file and a file with no
+git history at all can both surface here with `age: 0`. `ageMeasured` is the only signal that
+disambiguates them, and it is derived from `contributors.length > 0`, never from `age` itself
+being nonzero. A renderer MUST treat `ageMeasured === false` (or the field being absent — a
+pre-V6 city.json, or a building with zero measured members) identically: as UNMEASURED, visually
+distinct from both "clean/new" and "weathered/old". Both fields are optional in the TYPE for the
+same reason `contentHash`/`todoCount` are: they land ahead of every existing `Building` fixture
+in this repo and every already-committed `public/*.json` city, none of which carry them — absence
+means NOT MEASURED (or simply pre-V6), never a fabricated 0/false.
+
+Normalization is against the CITY'S OWN age distribution, not a hardcoded day count (`p95` over
+this city's `ageMeasured` buildings only, mirroring the `loc`/`complexity` reference pattern
+already in `compileCity`) — a 3-month-old repo and a 10-year-old repo each produce a legible
+weathering spread instead of one reading as uniformly "new" against the other's scale.
+
 ## Layout algorithm (fixed — do not redesign)
 
 1. Hierarchical spatial allocation first — treemap/Voronoi subdivision for districts.
@@ -224,7 +264,8 @@ that call deferrable rather than baked in.
 
 `validateCity` checks: `districts`/`buildings`/`roads`/`landmarks` are present; every
 district/building has the required fields with correct types (`metrics.loc`/`.complexity`/
-`.churn` included); every district id is unique among districts and every building id is unique
+`.churn` included, plus `metrics.age`/`.ageMeasured` type-checked only when present — see "Age
+weathering (V6)"); every district id is unique among districts and every building id is unique
 among buildings; every road's `from`/`to` resolves to a real building id (dangling road refs are a
 hard validation failure); a landmark's `label`/`weight`, when present, are a non-empty string /
 non-negative number respectively. It does **not** check the geometric invariants above (no-overlap,

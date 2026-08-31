@@ -103,6 +103,20 @@ export interface BuildingMetrics {
   loc: number;
   complexity: number;
   churn: number;
+  /** V6 — days from this building's oldest measured member's first commit to the repo's
+   *  headDate (RepoNode.age, docs/CONTRACT-repo-json.md "Determinism rule: age"), aggregated by
+   *  MAX across the building's members (a directory-aggregate building reads as weathered the
+   *  moment it contains one old file, the same way a real building's oldest wing shows through).
+   *  Optional: absent on any city.json compiled before V6 (docs/CONTRACT-city-json.md, "Age
+   *  weathering (V6)") -- never a fabricated 0. Renderers must pair this with `ageMeasured`
+   *  before drawing anything from it. */
+  age?: number;
+  /** V6 — true iff at least one of this building's members has a real git history
+   *  (RepoNode.contributors.length > 0), i.e. `age` above reflects a genuine measurement rather
+   *  than the analyzer's no-commits fallback of 0. Optional for the same pre-V6 reason as `age`;
+   *  absent must be treated identically to `false` (UNMEASURED), never as "brand new" —
+   *  never-fabricate (docs/PROJECT_IDEA.md §5.5 constraint 2). */
+  ageMeasured?: boolean;
 }
 
 export interface Building {
@@ -407,6 +421,12 @@ export function validateCity(x: unknown): ValidationResult {
       const m = b.metrics;
       for (const f of ["loc", "complexity", "churn"] as const) {
         if (!isFiniteNumber(m[f])) errors.push(`${label}: metrics.${f} must be a number`);
+      }
+      if (m.age !== undefined && (!isFiniteNumber(m.age) || m.age < 0)) {
+        errors.push(`${label}: metrics.age must be a non-negative number when present`);
+      }
+      if (m.ageMeasured !== undefined && typeof m.ageMeasured !== "boolean") {
+        errors.push(`${label}: metrics.ageMeasured must be a boolean when present`);
       }
     }
   });

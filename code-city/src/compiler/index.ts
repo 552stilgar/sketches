@@ -118,7 +118,13 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
       depth: side,
       height: 4 + (180 - 4) * Math.min(1, Math.sqrt(Math.max(0, source.complexity)) / Math.sqrt(complexityRef)),
       style: source.language,
-      metrics: { loc: source.loc, complexity: source.complexity, churn: source.churn },
+      metrics: {
+        loc: source.loc,
+        complexity: source.complexity,
+        churn: source.churn,
+        age: source.age,
+        ageMeasured: source.ageMeasured,
+      },
     };
   });
 

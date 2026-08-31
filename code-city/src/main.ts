@@ -277,6 +277,12 @@ async function main(): Promise<void> {
       { id: "tethers", label: "Tethers", initial: true },
       { id: "landmarks", label: "Landmarks", initial: true },
       { id: "cranes", label: "Cranes", initial: true },
+      // V6 age -> patina/weathering overlay: OFF by default (Usul's ruling -- no aesthetic
+      // default ships before he's seen it rendered), unlike every other layer above. Not a
+      // Group-visibility flip like the others -- it recolors the already-built building
+      // instances in place via buildingsHandle.setAgeOverlay (src/renderer/buildings.ts), same
+      // mechanism as the lens control just below.
+      { id: "age", label: "Weathering", initial: false },
     ],
     onToggle: (id, visible) => {
       // Tethers own their visibility through the V5.1 Lane D handle rather than a raw
@@ -284,6 +290,10 @@ async function main(): Promise<void> {
       // agreement about what is on screen instead of fighting over the same property.
       if (id === "tethers") {
         tethersHandle.setLayerVisible(visible);
+        return;
+      }
+      if (id === "age") {
+        buildingsHandle.setAgeOverlay(visible);
         return;
       }
       const group = layerGroups.get(id);
@@ -381,6 +391,11 @@ async function main(): Promise<void> {
       layerControl.setVisible(id, visible);
     },
     layerVisible(id: string): boolean {
+      // "age" has no scene Group (it recolors instances in place, see the layer control's
+      // onToggle above) -- read the real applied state off buildingsHandle instead, same
+      // discipline this bridge already uses elsewhere: report what's actually on screen, not
+      // just what the control's own internal state claims.
+      if (id === "age") return buildingsHandle.ageOverlayEnabled();
       const group = layerGroups.get(id);
       return group ? group.visible : false;
     },

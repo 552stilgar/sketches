@@ -123,6 +123,30 @@ silently dropped it because it only carries typed fields through. `todoCount` is
 it automatically; `tests/merge.test.ts`'s "V5 scar test" `describe` block asserts this directly
 rather than trusting the spread.
 
+## V6: age -> patina/weathering overlay
+
+Motivation: `RepoNode.age` (V1, `docs/CONTRACT-repo-json.md` "Determinism rule: age") already
+carried age structurally, but nothing rendered it — this is a renderer + a small compiler-side
+wiring slice, not a new analyzer signal. `compileCity` now threads age through to
+`Building.metrics.age`/`.ageMeasured` (`docs/CONTRACT-city-json.md` "Age weathering (V6)"), and
+`src/renderer/buildings.ts` maps it to visible wall weathering, gated behind an OFF-by-default
+"Weathering" layer-control toggle (`src/main.ts`) so the default city render is byte-for-byte
+unchanged with the layer off.
+
+New producer/consumer pair:
+
+| Contract | Producer | Consumer |
+|---|---|---|
+| `Building.metrics.age` / `.ageMeasured` | `compileCity()` — `src/compiler/index.ts`, aggregating `RepoNode.age`/`.contributors` via `aggregateAge()` (`src/compiler/grammar.ts`) | `applyWeathering()` — `src/renderer/buildings.ts` |
+
+Both fields are optional in the TYPE for the same reason `contentHash`/`todoCount` are: every
+`Building` fixture already in this repo, and every already-committed `public/*.json` city,
+predates them. `ageMeasured` is the never-fabricate guard — `age: 0` from the analyzer's
+no-commits fallback and `age: 0` from a file created on HEAD day are otherwise indistinguishable
+(both are real `0`s, not absences, so `todoCount`'s "absent = unmeasured" trick doesn't apply to
+`age` itself); `ageMeasured` is what makes the two cases distinguishable at render time. Full
+field shape and the MAX-aggregation rule: `docs/CONTRACT-city-json.md` § "Age weathering (V6)".
+
 ## Phase 4: git time-travel (timeline scrub)
 
 Motivation (PROJECT_IDEA.md §5.2/Phase 4): a repo's history is a fourth navigable dimension.

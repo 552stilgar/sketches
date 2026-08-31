@@ -9,7 +9,29 @@ export interface BuildingSource {
   loc: number;
   complexity: number;
   churn: number;
+  /** V6 age weathering: MAX age across members with real git history, 0 if none do -- see
+   *  BuildingMetrics.age doc comment (src/types.ts) for why max, not sum. */
+  age: number;
+  /** V6 age weathering: true iff at least one member has contributors.length > 0. */
+  ageMeasured: boolean;
   members: RepoNode[];
+}
+
+/** RepoNode.contributors is non-empty iff the node has at least one real commit
+ *  (docs/CONTRACT-repo-json.md) -- the only signal that distinguishes a genuinely-measured
+ *  age from the analyzer's no-commits `age: 0` fallback (src/analyzer/git.ts). */
+function hasMeasuredAge(node: RepoNode): boolean {
+  return node.contributors.length > 0;
+}
+
+/** Aggregates `age` across a building's members by MAX, restricted to members with a real
+ *  measurement -- an unmeasured member must never drag a measured sibling's age down to 0
+ *  (never-fabricate), and a building with no measured members reports age 0 / ageMeasured false
+ *  rather than inventing a number from nothing. */
+function aggregateAge(members: readonly RepoNode[]): { age: number; ageMeasured: boolean } {
+  const measured = members.filter(hasMeasuredAge);
+  if (measured.length === 0) return { age: 0, ageMeasured: false };
+  return { age: Math.max(...measured.map((m) => m.age)), ageMeasured: true };
 }
 
 export function normalizePath(path: string): string {
@@ -37,6 +59,7 @@ function aggregate(id: string, path: string, districtPath: string, members: Repo
     loc: members.reduce((sum, node) => sum + node.loc, 0),
     complexity: members.reduce((sum, node) => sum + node.complexity, 0),
     churn: members.reduce((sum, node) => sum + node.churn, 0),
+    ...aggregateAge(members),
     members,
   };
 }
@@ -78,6 +101,8 @@ export function selectBuildingSources(
     loc: node.loc,
     complexity: node.complexity,
     churn: node.churn,
+    age: hasMeasuredAge(node) ? node.age : 0,
+    ageMeasured: hasMeasuredAge(node),
     members: [node],
   });
   if (files.length <= 500) {

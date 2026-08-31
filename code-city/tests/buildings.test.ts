@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
+  applyWeathering,
   BASE_HEIGHT_SCALE_DEFAULT,
   buildBuildings,
   buildProfileGeometry,
@@ -10,13 +11,14 @@ import {
   computeFanIn,
   computeOutgoing,
   districtVisual,
+  normalizeAge,
   occupancyIntensity,
   p95,
   PROFILE_NAMES,
   styleProfile,
 } from "../src/renderer/buildings.ts";
 import { validateCity } from "../src/types.ts";
-import type { CityModel, District, Road } from "../src/types.ts";
+import type { Building, CityModel, District, Road } from "../src/types.ts";
 
 function road(from: string, to: string, weight?: number): Road {
   return weight === undefined ? { from, to } : { from, to, weight };
@@ -373,5 +375,162 @@ describe("buildBuildings' base height-scale knob (Lane C v5.1 massing parameter)
       const scaled = findInstance(doubled, b.id)!;
       expect(readScaleY(scaled.mesh, scaled.index)).toBeCloseTo(readScaleY(base.mesh, base.index) * 2, 10);
     }
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// V6 -- age -> patina/weathering overlay
+// -------------------------------------------------------------------------------------------
+
+describe("normalizeAge (degenerate + normal cases, mirrors occupancyIntensity's discipline)", () => {
+  it("puts every building at 1 on a degenerate all-equal-age city", () => {
+    const ages = [40, 40, 40];
+    const ref = p95(ages);
+    for (const a of ages) expect(normalizeAge(a, ref)).toBe(1);
+  });
+
+  it("gives age 0 a zero intensity even when the reference is floored at 1", () => {
+    expect(normalizeAge(0, p95([0, 0]))).toBe(0);
+  });
+
+  it("never exceeds 1 for an age above the reference (top 5% clamp)", () => {
+    expect(normalizeAge(10_000, 100)).toBe(1);
+  });
+
+  it("scales linearly below the reference", () => {
+    expect(normalizeAge(50, 100)).toBeCloseTo(0.5, 10);
+  });
+});
+
+describe("applyWeathering -- never-fabricate: unmeasured must never read as age 0", () => {
+  const base = new THREE.Color(0.5, 0.5, 0.5);
+  const ref = 100;
+
+  it("an unmeasured building's color is unaffected by its (meaningless) numeric age", () => {
+    const atZero = applyWeathering(base, 0, ref, false);
+    const atFifty = applyWeathering(base, 50, ref, false);
+    expect(atZero.getHexString()).toBe(atFifty.getHexString());
+  });
+
+  it("an unmeasured building's color differs from BOTH a measured age-0 building and an old measured building", () => {
+    const unmeasured = applyWeathering(base, 0, ref, false);
+    const measuredNew = applyWeathering(base, 0, ref, true);
+    const measuredOld = applyWeathering(base, 100, ref, true);
+    expect(unmeasured.getHexString()).not.toBe(measuredNew.getHexString());
+    expect(unmeasured.getHexString()).not.toBe(measuredOld.getHexString());
+    expect(measuredNew.getHexString()).not.toBe(measuredOld.getHexString());
+  });
+
+  it("a measured age of 0 leaves the base color unchanged (clean/new, zero patina mix)", () => {
+    const measuredNew = applyWeathering(base, 0, ref, true);
+    expect(measuredNew.getHexString()).toBe(base.getHexString());
+  });
+
+  it("weathering monotonically increases (moves further from base) as measured age climbs", () => {
+    const dist = (c: THREE.Color) => Math.hypot(c.r - base.r, c.g - base.g, c.b - base.b);
+    const young = applyWeathering(base, 20, ref, true);
+    const old = applyWeathering(base, 80, ref, true);
+    expect(dist(old)).toBeGreaterThan(dist(young));
+  });
+});
+
+describe("buildBuildings' age overlay -- OFF by default, additive, never touches footprint/height", () => {
+  beforeAll(() => installMinimalCanvasStub());
+
+  function makeSyntheticCity(): CityModel {
+    const buildings: Building[] = [
+      {
+        id: "old.ts",
+        x: 0,
+        y: 0,
+        width: 10,
+        depth: 10,
+        height: 40,
+        style: "typescript",
+        metrics: { loc: 100, complexity: 5, churn: 1, age: 900, ageMeasured: true },
+      },
+      {
+        id: "new.ts",
+        x: 20,
+        y: 0,
+        width: 10,
+        depth: 10,
+        height: 40,
+        style: "typescript",
+        metrics: { loc: 100, complexity: 5, churn: 1, age: 2, ageMeasured: true },
+      },
+      {
+        id: "unmeasured.ts",
+        x: 40,
+        y: 0,
+        width: 10,
+        depth: 10,
+        height: 40,
+        style: "typescript",
+        metrics: { loc: 100, complexity: 5, churn: 1 }, // no age/ageMeasured at all -- pre-V6 shape
+      },
+    ];
+    return {
+      districts: [{ id: "district:.", name: ".", x: 0, y: 0, width: 100, depth: 100, style: "typescript" }],
+      buildings,
+      roads: [],
+      landmarks: [],
+    };
+  }
+
+  function colorOf(handle: ReturnType<typeof buildBuildings>, id: string): THREE.Color {
+    const found = findInstance(handle, id)!;
+    const c = new THREE.Color();
+    found.mesh.getColorAt(found.index, c);
+    return c;
+  }
+
+  it("leaves the default render byte-for-byte unchanged with the overlay off (Usul's ruling)", () => {
+    const city = makeSyntheticCity();
+    const withoutToggle = buildBuildings(city);
+    const withToggleUncalled = buildBuildings(city);
+    withToggleUncalled.setAgeOverlay(false); // explicit off should equal never-called
+    for (const b of city.buildings) {
+      expect(colorOf(withToggleUncalled, b.id).getHexString()).toBe(colorOf(withoutToggle, b.id).getHexString());
+    }
+    expect(withoutToggle.ageOverlayEnabled()).toBe(false);
+  });
+
+  it("changes colors once enabled, and reports its own state via ageOverlayEnabled()", () => {
+    const city = makeSyntheticCity();
+    const handle = buildBuildings(city);
+    const before = colorOf(handle, "old.ts").getHexString();
+    handle.setAgeOverlay(true);
+    expect(handle.ageOverlayEnabled()).toBe(true);
+    const after = colorOf(handle, "old.ts").getHexString();
+    expect(after).not.toBe(before);
+  });
+
+  it("a measured old building, a measured new building, and an unmeasured building all read distinctly once enabled", () => {
+    const city = makeSyntheticCity();
+    const handle = buildBuildings(city);
+    handle.setAgeOverlay(true);
+    const old = colorOf(handle, "old.ts").getHexString();
+    const fresh = colorOf(handle, "new.ts").getHexString();
+    const unmeasured = colorOf(handle, "unmeasured.ts").getHexString();
+    expect(new Set([old, fresh, unmeasured]).size).toBe(3);
+  });
+
+  it("never touches footprint or height -- only setLens()-style color/instance-Y state is affected", () => {
+    const city = makeSyntheticCity();
+    const handle = buildBuildings(city);
+    const beforeScaleY = readScaleY(findInstance(handle, "old.ts")!.mesh, findInstance(handle, "old.ts")!.index);
+    handle.setAgeOverlay(true);
+    const afterScaleY = readScaleY(findInstance(handle, "old.ts")!.mesh, findInstance(handle, "old.ts")!.index);
+    expect(afterScaleY).toBe(beforeScaleY);
+  });
+
+  it("toggling off after on restores the pre-overlay color exactly", () => {
+    const city = makeSyntheticCity();
+    const handle = buildBuildings(city);
+    const original = colorOf(handle, "old.ts").getHexString();
+    handle.setAgeOverlay(true);
+    handle.setAgeOverlay(false);
+    expect(colorOf(handle, "old.ts").getHexString()).toBe(original);
   });
 });
