@@ -181,13 +181,55 @@ Three frozen decisions:
   is still reported as a ruin plus a new file — git genuinely does not know they are the same
   file, and guessing would be the fabrication this contract exists to prevent.
 
-**Ships as a data-contract slice only**, same shape as V5: `compileCity` does not read `ruins` and
-no renderer treatment exists for them yet. How a ruin is drawn — and whether it can be placed at
-all, given it has no location in the tree — is a later slice's decision.
+**Shipped as a data-contract slice only** in this lane: `compileCity` did not read `ruins` and no
+renderer treatment existed yet. How a ruin is drawn — and whether it can be placed at all, given it
+has no location in the tree — was a later slice's decision. See "V5.3b: ruins placement" below for
+that slice.
 
 RED-turned-green this lane: `tests/ruins.test.ts` (real git fixtures: a deletion, a rename that
 must not appear, a mixed rename+deletion commit, a re-add, the window boundary, and a
 HEAD-anchoring determinism check).
+
+## V5.3b: ruins placement (compiler + renderer)
+
+Motivation: V5.3 above shipped `RepoGraph.ruins` as data only — nothing placed it in the city or
+drew it. This lane compiles `RuinRecord[]` into `CityModel.ruins` (`RuinMarker[]`) and renders it,
+OFF by default (this run's ruling: no new overlay's aesthetic ships before Usul has seen it
+rendered, same posture V5.4/V6 already established).
+
+New producer/consumer pair:
+
+| Contract | Producer | Consumer |
+|---|---|---|
+| `CityModel.ruins` (`RuinMarker[]`) | `compileCity()` — `src/compiler/index.ts` | `buildRuins()` — `src/renderer/ruins.ts` ("Ruins" toggle, OFF by default) |
+
+Full placement rule, footprint derivation, and renderer silhouette rationale:
+`docs/CONTRACT-city-json.md` § "Ruins placement (V5.3b)".
+
+Two frozen decisions:
+
+- **P1 — a ruin's district is seeded, never invented.** A ruin's top-level directory
+  (`topLevelPathOfFilePath`, `src/compiler/grammar.ts` — the same derivation `topLevelPath` gives
+  every live node) gets a district rectangle even when every live file in it is gone and no
+  datastore remains — same seeding rule the datastore-only-directory case already uses. This is
+  the honest middle ground between silently dropping a demolished directory's ruins and inventing
+  a district shape that has no basis in the graph.
+- **P2 — footprint is a fixed fraction of the slot, never `RuinRecord.lastLoc`.** `lastLoc` (when
+  present) is a real measurement, but of the file at the commit before it was deleted — a
+  DIFFERENT instant than every other size in this city (`headDate`). Sizing a marker from it would
+  silently present a historical number as a live one. `RUIN_FOOTPRINT_FRACTION = 0.35` of the
+  reserved shelf-grid slot's `maxSide` is a rendering choice, not a measurement, and it is the ONLY
+  input to a ruin's size.
+
+Not a `props.ts` `PropSpec`: those are a runtime overlay computed from `city.buildings`, never part
+of `CityModel`, and keyed to an anchor `buildingId` a ruin doesn't have. `landmarks.ts` — a
+first-class `CityModel` array with its own resolved `x`/`y`/footprint — is the correct precedent;
+`src/renderer/ruins.ts`'s own header carries the full comparison.
+
+RED-turned-green this lane: `tests/compiler-ruins.test.ts` (placement, non-overlap with buildings
+and other ruins, demolished-directory seeding, footprint independence from `lastLoc`, determinism,
+cross-district isolation) and `tests/ruins-render.test.ts` (discoverability, grounded positioning,
+sub-`HEIGHT_MIN` height cap, determinism, static-module check).
 
 ## V5.4 + V6: age extremes -> scaffolding + patina/weathering overlays
 
@@ -309,6 +351,9 @@ readRuins(repoPath: string, headDate: string): Promise<RuinRecord[]>      // src
 buildLandmarks(city: CityModel): THREE.Group                              // src/renderer/landmarks.ts
 buildTethers(city: CityModel, buildingCenter: (id: string) => THREE.Vector3 | null): THREE.Group  // src/renderer/tethers.ts
 
+// V5.3b (see "V5.3b: ruins placement" above)
+buildRuins(city: CityModel): THREE.Group                                  // src/renderer/ruins.ts
+
 // Phase 4 (see "Phase 4: git time-travel (timeline scrub)" above)
 buildTimelineManifest(entries: TimelineManifestInput[]): TimelineManifest  // src/compiler/sequence.ts — pure, sync
 morphBuilding(from: Building | undefined, to: Building | undefined, t: number): MorphedBuilding | null  // src/renderer/morph.ts — pure
@@ -343,9 +388,13 @@ All core modules are **fully implemented**:
 **V5.3 module** (ruins):
 - `readRuins()` — `src/analyzer/ruins.ts` — ✓ Implemented (`tests/ruins.test.ts`: 14 passing)
 
+**V5.3b modules** (ruins placement — compiler + renderer):
+- `compileCity()` ruins placement — `src/compiler/index.ts` — ✓ Implemented (`tests/compiler-ruins.test.ts`: 13 passing)
+- `buildRuins()` — `src/renderer/ruins.ts` — ✓ Implemented (`tests/ruins-render.test.ts`: 8 passing)
+
 **V5.4 + V6 modules** (age extremes → scaffolding + weathering overlays):
 - `aggregateAge()` — `src/compiler/grammar.ts` — ✓ Implemented (`tests/compiler-age.test.ts`: 10 passing)
 - `selectScaffoldSites()` / `buildScaffoldMeshes()` — `src/renderer/props.ts` — ✓ Implemented (`tests/props-scaffold.test.ts`: 17 passing)
 - `applyWeathering()` / `setAgeOverlay()` — `src/renderer/buildings.ts` — ✓ Implemented (`tests/buildings.test.ts`)
 
-**Overall: 473 tests passing across 41 files**.
+**Overall: 494 tests passing across 43 files**.

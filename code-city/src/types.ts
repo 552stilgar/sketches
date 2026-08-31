@@ -256,6 +256,39 @@ export interface IdentityLink {
   members: string[];
 }
 
+/**
+ * One RUIN placed in the city (V5.3b — compiler + renderer half, docs/CONTRACT-city-json.md §
+ * "Ruins placement (V5.3b)"). Compiled from `RepoGraph.ruins` (`RuinRecord`, above) by
+ * `compileCity` — see that function's own comment for the placement rule.
+ *
+ * Deliberately NOT a `Building`: `width`/`depth` here are a fixed fraction of the reserved slot,
+ * never derived from `RuinRecord.lastLoc` — carrying a real-but-differently-timed measurement
+ * (lastLoc is the file's size at deletion, not at `headDate`) into a field the renderer treats as
+ * "this building's current footprint" would silently misrepresent it as a live measurement, the
+ * same class of error `RuinRecord`'s own doc comment refuses for `complexity`/`churn`/etc.
+ * `height` does not exist on this type at all, for the same reason.
+ */
+export interface RuinMarker {
+  /** `ruin:<path>`, unique among ruins. Never collides with a building or landmark id (both use
+   *  disjoint prefixes/raw paths of their own). */
+  id: string;
+  /** RuinRecord.path, unchanged — the last known path, carried through for display/lookup. */
+  path: string;
+  /** Top-left corner of the marker's footprint, canvas coordinates — same convention as
+   *  `Building.x`/`.y` (docs/CONTRACT-city-json.md "Canvas"), NOT a center point (unlike
+   *  `Landmark.x`/`.y`). */
+  x: number;
+  y: number;
+  /** Fixed fraction of the reserved layout slot's `maxSide` (see compileCity) — a rendering
+   *  choice, not a measurement of the deleted file. Never exceeds the slot, so a ruin can never
+   *  overlap a building or landmark sharing its district. */
+  width: number;
+  depth: number;
+  /** RuinRecord.language, unchanged — lets the renderer style a ruin's rubble consistently with
+   *  the language it once held, same field name as `Building.style`/`District.style`. */
+  style: string;
+}
+
 export interface CityModel {
   districts: District[];
   buildings: Building[];
@@ -269,6 +302,15 @@ export interface CityModel {
    * every `city.json` written before V4 still validates unchanged.
    */
   identityLinks: IdentityLink[];
+  /**
+   * Deleted-file markers placed by `compileCity` from `RepoGraph.ruins` (V5.3b — see
+   * `RuinMarker` above and docs/CONTRACT-city-json.md § "Ruins placement (V5.3b)"). Same
+   * always-emit-but-legal-absent-on-read discipline as `identityLinks`: `compileCity` always
+   * returns this array (possibly empty, whether because the source graph carried no `ruins` at
+   * all or because it measured zero deletions), but `validateCity` accepts a missing key so every
+   * `city.json` compiled before V5.3b still validates unchanged.
+   */
+  ruins: RuinMarker[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -616,6 +658,36 @@ export function validateCity(x: unknown): ValidationResult {
             }
           }
         }
+      });
+    }
+  }
+
+  // ruins (V5.3b): same legal-absent-on-read discipline as identityLinks -- a city.json compiled
+  // before V5.3b lacks this key entirely.
+  if (c.ruins !== undefined) {
+    if (!Array.isArray(c.ruins)) {
+      errors.push("ruins must be an array when present");
+    } else {
+      const seenRuinIds = new Set<string>();
+      (c.ruins as unknown[]).forEach((raw, i) => {
+        if (!isPlainObject(raw)) {
+          errors.push(`ruins[${i}] must be an object`);
+          return;
+        }
+        const r = raw;
+        const label = isNonEmptyString(r.id) ? `ruin "${r.id}"` : `ruins[${i}]`;
+        if (!isNonEmptyString(r.id)) {
+          errors.push(`ruins[${i}]: missing/invalid id`);
+        } else if (seenRuinIds.has(r.id)) {
+          errors.push(`duplicate ruin id: "${r.id}"`);
+        } else {
+          seenRuinIds.add(r.id);
+        }
+        if (!isNonEmptyString(r.path)) errors.push(`${label}: path must be a non-empty string`);
+        for (const f of ["x", "y", "width", "depth"] as const) {
+          if (!isFiniteNumber(r[f])) errors.push(`${label}: ${f} must be a number`);
+        }
+        if (!isNonEmptyString(r.style)) errors.push(`${label}: missing/invalid style`);
       });
     }
   }

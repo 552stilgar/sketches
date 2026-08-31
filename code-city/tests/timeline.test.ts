@@ -47,7 +47,7 @@ function building(id: string): Building {
 }
 
 function city(buildings: Building[]): CityModel {
-  return { districts: [], buildings, roads: [], landmarks: [], identityLinks: [] };
+  return { districts: [], buildings, roads: [], landmarks: [], identityLinks: [], ruins: [] };
 }
 
 function snapshot(month: string, date: string, buildings: Building[], gapBefore = false): TimelineSnapshot {

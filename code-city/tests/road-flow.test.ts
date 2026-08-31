@@ -13,7 +13,7 @@ import { dashOffsetAt, flowBoundaries, flowParams, FLOW_PROVENANCE_LABEL } from 
 import type { CityModel, Road } from "../src/types.ts";
 
 function fakeCity(roads: Road[]): CityModel {
-  return { districts: [], buildings: [], roads, landmarks: [], identityLinks: [] };
+  return { districts: [], buildings: [], roads, landmarks: [], identityLinks: [], ruins: [] };
 }
 
 // Simple fixed layout: building id -> world position, so distance-along-road is predictable.

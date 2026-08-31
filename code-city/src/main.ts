@@ -11,6 +11,7 @@ import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts
 import { buildRoads } from "./renderer/roads.ts";
 import { buildLandmarks } from "./renderer/landmarks.ts";
 import { buildTethers } from "./renderer/tethers.ts";
+import { buildRuins } from "./renderer/ruins.ts";
 import { selectCraneSites, selectScaffoldSites, buildProps } from "./renderer/props.ts";
 import { setupUI, setupLensControl, setupLayerControl } from "./renderer/ui.ts";
 import { DEFAULT_LENS, computeCityLensRanks, type LensId } from "./renderer/lenses.ts";
@@ -37,6 +38,9 @@ interface TestBridge {
    * (src/types.ts doc comment on CityModel), so this defaults a missing array to 0 rather than
    * throwing. */
   identityLinkCount(): number;
+  /** city.ruins.length -- V5.3b. `ruins` is legal-absent on a pre-V5.3b city.json (same posture
+   * as identityLinkCount above), so this defaults a missing array to 0 rather than throwing. */
+  ruinCount(): number;
   /** Number of crane props actually built this frame (props.ts selectCraneSites output length) --
    *  a rendering-derived count, deliberately distinct from a city.json field, since props are not
    *  part of CityModel at all (they're a pure view-layer overlay computed from
@@ -247,6 +251,15 @@ async function main(): Promise<void> {
   scene.add(landmarksGroup);
   scene.add(tethersHandle.group);
 
+  // V5.3b (deleted-file ruins, compiler + renderer half — CONTRACTS.md § "V5.3b"): a first-class
+  // CityModel array, same architectural slot as `landmarks` above, not a props.ts runtime
+  // overlay (see src/renderer/ruins.ts's header for why). Ships OFF by default per this run's
+  // ruling (no new overlay's aesthetic ships before Usul has seen it rendered — same posture
+  // V5.4's scaffolding and V6's weathering toggles already carry below).
+  const ruinsGroup = buildRuins(city);
+  scene.add(ruinsGroup);
+  ruinsGroup.visible = false;
+
   // V5.2 (PROJECT_IDEA.md §5.2, first temporal overlay): churn -> crane props. Ranks are
   // recomputed here rather than threaded out of buildingsHandle -- buildBuildings already builds
   // the identical CityLensRanks internally for lens coloring (src/renderer/buildings.ts), and
@@ -285,6 +298,7 @@ async function main(): Promise<void> {
     ["landmarks", landmarksGroup],
     ["cranes", propsHandle.group],
     ["scaffolding", scaffoldingHandle.group],
+    ["ruins", ruinsGroup],
   ]);
   const layerControl = setupLayerControl({
     container: app,
@@ -295,6 +309,8 @@ async function main(): Promise<void> {
       { id: "cranes", label: "Cranes", initial: true },
       // OFF by default (Usul's ruling, V5.4) -- see scaffoldingHandle's own comment above.
       { id: "scaffolding", label: "Scaffolding", initial: false },
+      // OFF by default -- see ruinsGroup's own comment above.
+      { id: "ruins", label: "Ruins", initial: false },
       // V6 age -> patina/weathering overlay: OFF by default (Usul's ruling -- no aesthetic
       // default ships before he's seen it rendered), unlike every other layer above. Not a
       // Group-visibility flip like the others -- it recolors the already-built building
@@ -387,6 +403,9 @@ async function main(): Promise<void> {
     },
     identityLinkCount(): number {
       return city.identityLinks?.length ?? 0;
+    },
+    ruinCount(): number {
+      return city.ruins?.length ?? 0;
     },
     craneCount(): number {
       return propsHandle.count;

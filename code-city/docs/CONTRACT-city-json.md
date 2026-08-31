@@ -51,12 +51,21 @@ interface Landmark {
 interface IdentityLink { hash: string; members: string[]; }  // V4 — see "Clone identity" below.
                                                                 // [] is valid — no clones found.
 
+interface RuinMarker {          // V5.3b — see "Ruins placement" below. [] is valid — no
+  id: string;                    // deletions measured, or none in the HEAD-anchored window.
+  path: string;                  // RuinRecord.path, unchanged (docs/CONTRACT-repo-json.md)
+  x: number; y: number; width: number; depth: number;  // top-left corner, same convention as
+                                                          // Building -- NOT a center point.
+  style: string;                 // RuinRecord.language, unchanged
+}
+
 interface CityModel {
   districts: District[];
   buildings: Building[];
   roads: Road[];
   landmarks: Landmark[];
   identityLinks: IdentityLink[];
+  ruins: RuinMarker[];
 }
 ```
 
@@ -156,6 +165,67 @@ motion on roads and stillness on tethers learns the difference in one glance.
 **D3 — exact hash only.** See `docs/CONTRACT-repo-json.md` § "Clone identity / content hash" for
 the full rule; it applies identically here — `compileCity` must never widen exact-hash grouping
 into any form of near-duplicate clustering.
+
+## Ruins placement (V5.3b)
+
+- Producer: `compileCity` (`src/compiler/index.ts`), consuming `RepoGraph.ruins` (`RuinRecord[]`,
+  V5.3a — `docs/CONTRACT-repo-json.md` § "Ruins (V5.3)")
+- Consumer: `buildRuins` (`src/renderer/ruins.ts`), an OFF-by-default layer-control toggle
+  ("Ruins"), same posture as V5.4's "Scaffolding" and V6's "Weathering" — no new overlay's
+  aesthetic ships on before it has been seen rendered.
+- Validator: `validateCity` checks `id`/`path`/`style` (non-empty strings, `id` unique) and
+  `x`/`y`/`width`/`depth` (numbers), same shape discipline as every other array on `CityModel`.
+
+V5.3a shipped `RepoGraph.ruins` as a data-contract-only slice: no `x`/`y`/footprint, because a
+ruin has no location in the tree and its former directory may itself be gone (that lane's own
+"later slice's decision" note). This section is that later slice.
+
+### The placement rule
+
+A ruin's district is its last known path's top-level directory (`topLevelPathOfFilePath`,
+`src/compiler/grammar.ts` — the same derivation `topLevelPath` gives every live `RepoNode`, so the
+two can never silently disagree on what "top-level directory" means for the same path string).
+
+**If that directory still holds a live district** (it has live files, or a datastore, or another
+ruin already seeded it), the ruin's marker is placed inside it via the SAME shelf-grid pass
+(`shelfSlots`, `src/compiler/layout.ts`) buildings and landmarks already use: a `ruin:<path>`-
+prefixed key is added to that district's key list, guaranteeing the ruin's cell never overlaps a
+building or a landmark in the same district (the identical non-overlap guarantee `shelfSlots`
+already gives every other occupant).
+
+**If the entire top-level directory was demolished** — every live file gone, no datastore left
+behind either — `compileCity` seeds a district for it anyway (zero file members, exactly the
+existing seeding rule for a datastore-only directory), so the ruin still gets a real, weighted
+rectangle rather than being silently dropped or invented a spot in an unrelated district.
+
+Footprint (`width`/`depth`, both equal — a square marker) is a **fixed fraction
+(`RUIN_FOOTPRINT_FRACTION = 0.35`) of the reserved slot's `maxSide`** — never a function of
+`RuinRecord.lastLoc`. `lastLoc`, when present, is a true measurement, but of the file at a
+DIFFERENT instant (the commit before it was deleted) than every other size in this city
+(`headDate`); feeding it into a live-looking `width`/`depth` field would silently present a
+historical number as a current one — the same class of error `RuinRecord`'s own doc comment
+(`src/types.ts`) already refuses for `complexity`/`churn`/etc. Position sits at the slot's own
+corner (`slot.x`, `slot.y`), the same convention `footprintSide`'s building result already uses
+when its footprint is smaller than its cell.
+
+### Renderer treatment
+
+`buildRuins` (`src/renderer/ruins.ts`) draws each `RuinMarker` as a sunken foundation slab plus a
+scatter of independently-sized, independently-rotated rubble stubs — capped well under
+`HEIGHT_MIN = 4` (the shortest any real building ever renders), in a low-saturation, low-
+lightness ash/charcoal hue distinct from every other lit channel in the city (buildings, the
+steel-blue datastore tank, the safety-yellow crane, the mid-grey scaffold frame). A ruin is lit
+like a physical object (`MeshStandardMaterial`, scene lighting) — it is part of the physical city,
+unlike `tethers.ts`'s unlit diagram overlay — but can never be mistaken for a live building at any
+camera distance: too short, too jagged, too dark. Static only: no clock, no per-frame update, same
+discipline `buildProps` documents for cranes/scaffolds.
+
+This is **not** a `props.ts` `PropSpec` (the vocabulary `selectCraneSites`/`selectScaffoldSites`
+use): those are a runtime overlay computed from `city.buildings` at load time and never part of
+`CityModel` at all, and every `PropSpec` variant is keyed to an anchor `buildingId` — a ruin has no
+anchor building (the file it marks no longer exists). `landmarks.ts` is the correct architectural
+precedent instead: a first-class `CityModel` array, compiled once, with its own resolved
+`x`/`y`/footprint.
 
 ## Age extremes (`metrics.age` / `.newestAge` / `.ageMeasured`, V5.4 + V6)
 

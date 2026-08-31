@@ -59,10 +59,22 @@ export function normalizePath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, "");
 }
 
+/**
+ * The top-level district a FILE path belongs to (as opposed to `topLevelPathOfDir` in
+ * `src/compiler/index.ts`, which handles a bare directory string's different no-slash
+ * semantics). A no-slash file path is a root-level file and maps to the "." district; extracted
+ * standalone so a caller with a plain path string -- rather than a `RepoNode` -- (V5.3b's
+ * `RuinRecord.path`, `src/compiler/index.ts`) can reuse the identical derivation `topLevelPath`
+ * gives every live node, instead of re-deriving it and risking the two silently diverging.
+ */
+export function topLevelPathOfFilePath(path: string): string {
+  const normalized = normalizePath(path);
+  const slash = normalized.indexOf("/");
+  return slash < 0 ? "." : normalized.slice(0, slash);
+}
+
 export function topLevelPath(node: RepoNode): string {
-  const path = normalizePath(node.path || node.id);
-  const slash = path.indexOf("/");
-  return slash < 0 ? "." : path.slice(0, slash);
+  return topLevelPathOfFilePath(node.path || node.id);
 }
 
 export function dominantLanguage(nodes: readonly RepoNode[]): string {

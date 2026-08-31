@@ -9,8 +9,16 @@
 // move when one file's metrics change, no AABB overlaps, every building inside a district, every
 // road resolves to a real building id, and the LOD table (fixed, see the contract doc).
 
-import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark, DatastoreSpec } from "../types.ts";
-import { dominantLanguage, footprintSide, normalizePath, p95, selectBuildingSources, topLevelPath } from "./grammar.ts";
+import type { RepoGraph, CityModel, IdentityLink, RepoNode, Road, Landmark, DatastoreSpec, RuinMarker } from "../types.ts";
+import {
+  dominantLanguage,
+  footprintSide,
+  normalizePath,
+  p95,
+  selectBuildingSources,
+  topLevelPath,
+  topLevelPathOfFilePath,
+} from "./grammar.ts";
 import type { CloneLodScope } from "./grammar.ts";
 import { districtWeights, shelfSlots, squarify } from "./layout.ts";
 import type { DistrictWeightMode } from "./layout.ts";
@@ -27,6 +35,21 @@ function topLevelPathOfDir(dir: string): string {
   const slash = normalized.indexOf("/");
   return slash < 0 ? normalized : normalized.slice(0, slash);
 }
+
+/**
+ * A ruin's marker footprint, as a fraction of the layout slot reserved for it -- always smaller
+ * than the slot's `maxSide` so it never overlaps a neighboring building or landmark sharing its
+ * district (the same non-overlap guarantee `shelfSlots` already gives every other occupant of the
+ * shelf grid). Deliberately NOT derived from `RuinRecord.lastLoc`: `lastLoc` is a real measurement
+ * of the file at a DIFFERENT instant (the commit before it was deleted) than every other size in
+ * this city (`headDate`) -- feeding it into `width`/`depth` would silently present a historical
+ * number as a live one, the exact class of error `RuinRecord`'s own doc comment refuses for
+ * `complexity`/`churn`/etc. A ruin marker is smaller than a typical building's footprint (0.35 vs.
+ * buildings' own `footprintFloor`-to-`maxSide` range) so it reads as a small, deliberately modest
+ * mark on the ground -- a demolished lot, not a structure -- at a glance, independent of any
+ * renderer treatment layered on top of it.
+ */
+const RUIN_FOOTPRINT_FRACTION = 0.35;
 
 export interface CompileCityOptions {
   /** D4 clone-aware LOD scope (CONTRACTS.md V4, docs/CONTRACT-city-json.md "D4"). Defaults to
@@ -52,6 +75,10 @@ export interface CompileCityOptions {
 
 export function compileCity(graph: RepoGraph, options?: CompileCityOptions): CityModel {
   const datastores = graph.datastores ?? [];
+  // V5.3b: RepoGraph.ruins is optional -- absent means "nobody looked for deletions" (see
+  // RuinRecord's doc comment, src/types.ts), which this compiler treats identically to a present
+  // but empty array: no ruins to place, either way.
+  const ruinRecords = graph.ruins ?? [];
   const files = graph.nodes.filter((node) => node.type === "file");
   const districtMembers = new Map<string, RepoNode[]>();
   for (const file of files) {
@@ -67,6 +94,16 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
   // somewhere deterministic to put it.
   for (const spec of datastores) {
     const path = topLevelPathOfDir(spec.dir);
+    if (!districtMembers.has(path)) districtMembers.set(path, []);
+  }
+  // Same seeding for ruins (V5.3b): a whole top-level directory can have been demolished --
+  // every one of its live files gone, no datastore left behind either -- and a ruin whose
+  // district never gets a rectangle has nowhere honest to stand. Seeding it here (possibly with
+  // zero live members, exactly like the datastore-only case above) gives it one, sized by the
+  // same district-weighting curve every other district gets -- never a fabricated "new" district
+  // shape invented just for ruins.
+  for (const ruin of ruinRecords) {
+    const path = topLevelPathOfFilePath(ruin.path);
     if (!districtMembers.has(path)) districtMembers.set(path, []);
   }
   const districtPaths = [...districtMembers.keys()].sort(compareCodepoints);
@@ -104,6 +141,14 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
     group.push(spec);
     datastoresByDistrict.set(path, group);
   }
+  const ruinsByDistrict = new Map<string, typeof ruinRecords>();
+  for (const ruin of ruinRecords) {
+    const path = topLevelPathOfFilePath(ruin.path);
+    const group = ruinsByDistrict.get(path) ?? [];
+    group.push(ruin);
+    ruinsByDistrict.set(path, group);
+  }
+  const RUIN_KEY_PREFIX = "ruin:";
   const slots = new Map<string, ReturnType<typeof shelfSlots> extends Map<string, infer S> ? S : never>();
   for (const district of districts) {
     const group = sourcesByDistrict.get(district.name) ?? [];
@@ -113,7 +158,13 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
     // (always prefixed "datastore:") is added to the same key list `shelfSlots` partitions, and
     // never collides with a real building path.
     const landmarkKeys = (datastoresByDistrict.get(district.name) ?? []).map((spec) => spec.id);
-    const keys = [...group.map((source) => source.path), ...landmarkKeys];
+    // Ruins (V5.3b) get the same treatment, on the same reasoning: a `ruin:<path>` key added to
+    // the same shelfSlots pass so a demolished file's marker lands in its own non-overlapping
+    // cell, never sharing ground with a live building or a datastore tank in the same district.
+    // The prefix guarantees it can never collide with a real building path or a `datastore:`-
+    // prefixed landmark id.
+    const ruinKeys = (ruinsByDistrict.get(district.name) ?? []).map((ruin) => `${RUIN_KEY_PREFIX}${ruin.path}`);
+    const keys = [...group.map((source) => source.path), ...landmarkKeys, ...ruinKeys];
     for (const [path, slot] of shelfSlots(keys, district)) slots.set(path, slot);
   }
   const buildings = sources.map((source) => {
@@ -206,5 +257,27 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
         })
         .sort(compareCodepoints),
     }));
-  return { districts, buildings, roads, landmarks, identityLinks };
+
+  // Ruins (V5.3b — compiler placement half, docs/CONTRACT-city-json.md § "Ruins placement
+  // (V5.3b)"): a ruin's footprint is a FIXED fraction of its reserved slot's `maxSide`, never a
+  // function of `RuinRecord.lastLoc` -- see RuinMarker's own doc comment (src/types.ts) for why
+  // sizing from a historical-instant measurement would misrepresent it as a live one. Position
+  // sits at the slot's own corner (`slot.x`, `slot.y`), the same convention `buildings` above
+  // uses for its `footprintSide` result -- a ruin's marker can be smaller than its cell without
+  // being re-centered inside it, exactly like an undersized building footprint today.
+  const ruins: RuinMarker[] = ruinRecords.map((ruin) => {
+    const key = `${RUIN_KEY_PREFIX}${ruin.path}`;
+    const slot = slots.get(key);
+    const districtPath = topLevelPathOfFilePath(ruin.path);
+    const district = districts.find((d) => d.name === districtPath);
+    // Defensive fallback only -- every ruin's district key was seeded into districtMembers above,
+    // so `slot` is always present in practice (same posture as the landmarks fallback above).
+    const side = slot ? slot.maxSide * RUIN_FOOTPRINT_FRACTION : 0;
+    const x = slot ? slot.x : (district?.x ?? 0);
+    const y = slot ? slot.y : (district?.y ?? 0);
+    return { id: key, path: ruin.path, x, y, width: side, depth: side, style: ruin.language };
+  });
+  ruins.sort((a, b) => compareCodepoints(a.id, b.id));
+
+  return { districts, buildings, roads, landmarks, identityLinks, ruins };
 }
