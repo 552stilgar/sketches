@@ -475,6 +475,8 @@ describe("buildBuildings' age overlay -- OFF by default, additive, never touches
       buildings,
       roads: [],
       landmarks: [],
+      identityLinks: [],
+      ruins: [],
     };
   }
 

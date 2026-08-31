@@ -24,7 +24,7 @@ function building(id: string, overrides: Partial<Building> = {}): Building {
 }
 
 function cityOf(buildings: Building[]): CityModel {
-  return { districts: [], buildings, roads: [], landmarks: [], identityLinks: [] };
+  return { districts: [], buildings, roads: [], landmarks: [], identityLinks: [], ruins: [] };
 }
 
 describe("morphBuilding", () => {

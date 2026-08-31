@@ -22,7 +22,7 @@ function mkBuilding(id: string, width: number, depth: number, height: number): B
 }
 
 function mkCity(buildings: Building[]): CityModel {
-  return { districts: [], buildings, roads: [], landmarks: [], identityLinks: [] };
+  return { districts: [], buildings, roads: [], landmarks: [], identityLinks: [], ruins: [] };
 }
 
 describe("resolveMassingScale — explicit override vs normalized default", () => {

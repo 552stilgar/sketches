@@ -32,7 +32,7 @@ function loadMockCityV4(): CityModel {
 }
 
 function emptyCity(): CityModel {
-  return { districts: [], buildings: [], roads: [], landmarks: [], identityLinks: [] };
+  return { districts: [], buildings: [], roads: [], landmarks: [], identityLinks: [], ruins: [] };
 }
 
 function findByUserData<T extends string>(
