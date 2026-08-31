@@ -11,8 +11,9 @@ import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts
 import { buildRoads } from "./renderer/roads.ts";
 import { buildLandmarks } from "./renderer/landmarks.ts";
 import { buildTethers } from "./renderer/tethers.ts";
+import { selectCraneSites, buildProps } from "./renderer/props.ts";
 import { setupUI, setupLensControl, setupLayerControl } from "./renderer/ui.ts";
-import { DEFAULT_LENS, type LensId } from "./renderer/lenses.ts";
+import { DEFAULT_LENS, computeCityLensRanks, type LensId } from "./renderer/lenses.ts";
 import { resolveMassingScale } from "./massing-resolution.ts";
 
 interface TestBridge {
@@ -36,6 +37,11 @@ interface TestBridge {
    * (src/types.ts doc comment on CityModel), so this defaults a missing array to 0 rather than
    * throwing. */
   identityLinkCount(): number;
+  /** Number of crane props actually built this frame (props.ts selectCraneSites output length) --
+   *  a rendering-derived count, deliberately distinct from a city.json field, since props are not
+   *  part of CityModel at all (they're a pure view-layer overlay computed from
+   *  city.buildings + churn ranks, see src/renderer/props.ts). */
+  craneCount(): number;
   /** The camera framing computed for this city on load (src/renderer/scene.ts) -- bounds, orbit
    * target, and camera world position -- so a headless check can assert the first frame is
    * actually looking at the city's content instead of a fixed offset (measured defect,
@@ -237,6 +243,17 @@ async function main(): Promise<void> {
   scene.add(landmarksGroup);
   scene.add(tethersHandle.group);
 
+  // V5.2 (PROJECT_IDEA.md §5.2, first temporal overlay): churn -> crane props. Ranks are
+  // recomputed here rather than threaded out of buildingsHandle -- buildBuildings already builds
+  // the identical CityLensRanks internally for lens coloring (src/renderer/buildings.ts), and
+  // computeCityLensRanks is a cheap, pure, one-pass function of city.buildings, so recomputing it
+  // is simpler than widening BuildingsHandle's surface to leak an internal it doesn't otherwise
+  // expose. selectCraneSites/buildProps are both static (props.ts header) -- built once here,
+  // never touched by the render loop below.
+  const craneSites = selectCraneSites(city.buildings, computeCityLensRanks(city.buildings));
+  const propsHandle = buildProps(craneSites);
+  scene.add(propsHandle.group);
+
   // Which document this frame is actually drawing. Always shown, not only under ?city= -- the
   // whole point is that a viewer comparing two cities can never mis-attribute what's on screen.
   showSourceBadge(app, cityUrl, city, massing);
@@ -247,6 +264,7 @@ async function main(): Promise<void> {
     // so window.__test.layerVisible("tethers") still reports the real on-screen state.
     ["tethers", tethersHandle.group],
     ["landmarks", landmarksGroup],
+    ["cranes", propsHandle.group],
   ]);
   const layerControl = setupLayerControl({
     container: app,
@@ -254,6 +272,7 @@ async function main(): Promise<void> {
       { id: "roads", label: "Roads", initial: true },
       { id: "tethers", label: "Tethers", initial: true },
       { id: "landmarks", label: "Landmarks", initial: true },
+      { id: "cranes", label: "Cranes", initial: true },
     ],
     onToggle: (id, visible) => {
       // Tethers own their visibility through the V5.1 Lane D handle rather than a raw
@@ -336,6 +355,9 @@ async function main(): Promise<void> {
     },
     identityLinkCount(): number {
       return city.identityLinks?.length ?? 0;
+    },
+    craneCount(): number {
+      return propsHandle.count;
     },
     cameraFraming() {
       return {
