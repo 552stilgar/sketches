@@ -15,7 +15,7 @@
 // PURE, same contract as compileCity: no I/O, no clock, no randomness, no dependence on Set/Map
 // iteration order. Same input graphs in the same order -> byte-identical output, always.
 
-import type { DatastoreSpec, RepoGraph, RepoNode } from "../types.ts";
+import type { DatastoreSpec, RepoGraph, RepoNode, RuinRecord } from "../types.ts";
 import { validateRepoGraph } from "../types.ts";
 import { compareCodepoints } from "../util/compare.ts";
 
@@ -58,6 +58,15 @@ function remapEdges(name: string, ownIds: ReadonlySet<string>, edges: readonly s
 function namespaceDatastore(name: string, spec: DatastoreSpec): DatastoreSpec {
   const dir = spec.dir === "" ? name : prefixId(name, spec.dir);
   return { ...spec, id: `datastore:${dir}`, dir };
+}
+
+// Namespaces one RuinRecord exactly the way a node's id/path is namespaced: a ruin's `path` is
+// its LAST KNOWN path in its own repo's id space (docs/CONTRACT-repo-json.md § "Ruins"), so it
+// takes the same "<name>/" prefix that repo's live nodes take, and lands in the same district.
+// Every other RuinRecord field (language, deletedSha, deletedDate, lastLoc) is a scalar with no
+// cross-repo meaning and rides through untouched on the spread.
+function namespaceRuin(name: string, ruin: RuinRecord): RuinRecord {
+  return { ...ruin, path: prefixId(name, ruin.path) };
 }
 
 export function mergeRepoGraphs(graphs: readonly NamedRepoGraph[]): RepoGraph {
@@ -120,12 +129,21 @@ export function mergeRepoGraphs(graphs: readonly NamedRepoGraph[]): RepoGraph {
     .flatMap(({ name, graph }) => (graph.datastores ?? []).map((spec) => namespaceDatastore(name, spec)))
     .sort((a, b) => compareCodepoints(a.dir, b.dir));
 
+  // Ruins (V5.3) ride the same present-if-any-input-had-it rule datastores use, for the same
+  // reason: absent must keep meaning NOT MEASURED across the merge, so one input repo that never
+  // looked for deletions cannot erase another's real finding.
+  const anyRuinsField = graphs.some(({ graph }) => graph.ruins !== undefined);
+  const ruins: RuinRecord[] = graphs
+    .flatMap(({ name, graph }) => (graph.ruins ?? []).map((ruin) => namespaceRuin(name, ruin)))
+    .sort((a, b) => compareCodepoints(a.path, b.path));
+
   const merged: RepoGraph = {
     nodes,
     repoPath,
     headSha,
     headDate,
     ...(anyDatastoresField ? { datastores } : {}),
+    ...(anyRuinsField ? { ruins } : {}),
   };
 
   const check = validateRepoGraph(merged);

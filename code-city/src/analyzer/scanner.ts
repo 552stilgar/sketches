@@ -43,7 +43,11 @@ export function languageForPath(path: string): string {
   return LANGUAGES[extname(path).toLowerCase()] ?? "unknown";
 }
 
-function isSourceFile(path: string): boolean {
+/** True when `path`'s extension is one of the source languages this analyzer builds nodes for.
+ *  Exported so src/analyzer/ruins.ts narrows DELETED paths through the exact same gate live files
+ *  pass — a ruin for a `README.md` would put something in the city that could never have been a
+ *  building while it was alive. */
+export function isSourceFile(path: string): boolean {
   return Object.hasOwn(LANGUAGES, extname(path).toLowerCase());
 }
 

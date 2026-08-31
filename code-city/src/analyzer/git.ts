@@ -2,7 +2,17 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The single HEAD-anchored history window every temporal signal in repo.json uses: `churn`
+ * (below) and `ruins` (src/analyzer/ruins.ts) both mean "within ANALYSIS_WINDOW_DAYS days BEFORE
+ * the repo's HEAD commit date". Exported rather than re-typed per signal so the two windows
+ * cannot drift apart — a city that showed 90 days of churn beside 30 days of ruins would be
+ * reading two different pasts at once. Never a wall-clock window; see the "Determinism rule"
+ * sections in docs/CONTRACT-repo-json.md.
+ */
+export const ANALYSIS_WINDOW_DAYS = 90;
 
 export interface GitInfo {
   headSha: string;
@@ -62,7 +72,7 @@ export async function readFileGitMetrics(
   headDate: string,
 ): Promise<FileGitMetrics> {
   const headMs = Date.parse(headDate);
-  const sinceMs = headMs - 90 * DAY_MS;
+  const sinceMs = headMs - ANALYSIS_WINDOW_DAYS * DAY_MS;
   try {
     const [datesText, commitsText, authorsText] = await Promise.all([
       git(repoPath, ["log", "--follow", "--reverse", "--format=%cI", "--", filePath]),
