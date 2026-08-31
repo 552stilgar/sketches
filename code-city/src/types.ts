@@ -70,6 +70,43 @@ export interface DatastoreSpec {
   migrationCount: number;
 }
 
+/**
+ * One RUIN (V5.3): a source file that was REMOVED from the tracked tree inside the HEAD-anchored
+ * analysis window and is still absent at HEAD — see `docs/CONTRACT-repo-json.md` § "Ruins (V5.3)"
+ * and `src/analyzer/ruins.ts`, whose header carries the full design rationale.
+ *
+ * **Deliberately not a `RepoNode`.** A deleted file has no current `loc`, `complexity`, `churn`,
+ * `age`, `contributors`, `imports`, `calls`, `contentHash`, or place in the tree — every one of
+ * those is UNMEASURED, not zero. Modelling a ruin as a node would force seven fabricated zeros
+ * that a consumer could not tell apart from a real, tiny, quiet, brand-new file (PROJECT_IDEA.md
+ * §5.5 constraint 2, and the deleted commit-prefix churn heuristic `318773d` this project already
+ * had to undo). Ruins live in their own array with their own type so `nodes` can never yield one
+ * by accident, and the fields git genuinely knows are the only fields that exist here.
+ */
+export interface RuinRecord {
+  /** Repo-relative POSIX path the file occupied when it was removed — its LAST KNOWN path, in the
+   *  same id space live node ids use. A real measurement: git records it exactly. Never collides
+   *  with a live node id (a path tracked at HEAD is a live file, not a ruin). */
+  path: string;
+  /** Language derived from `path`'s extension by the same `languageForPath` a live node gets
+   *  (`src/analyzer/scanner.ts`) — a pure function of the path, nothing historical inferred. */
+  language: string;
+  /** Full sha of the commit that removed the file. */
+  deletedSha: string;
+  /** ISO-8601 committer date of `deletedSha`. Inside the window `[headDate - 90d, headDate]`. */
+  deletedDate: string;
+  /**
+   * Line count of the file's content at the commit immediately BEFORE `deletedSha` — an
+   * explicitly HISTORICAL measurement, taken with the same `countLines` (`src/analyzer/loc.ts`)
+   * that produces a live node's `loc`, but at a different instant than `headDate`. Optional
+   * because it is genuinely not always obtainable: the deleting commit may be a root commit with
+   * no parent to read, or the blob may be unreadable or binary. Absent means NOT MEASURED — never
+   * `0`, which would read as "the file was empty when it died" (§5.5 constraint 2). A file that
+   * really was empty at deletion reports a real `0`.
+   */
+  lastLoc?: number;
+}
+
 export interface RepoGraph {
   nodes: RepoNode[];
   repoPath: string;
@@ -83,6 +120,14 @@ export interface RepoGraph {
    * namespaced the same way node ids are — see CONTRACTS.md § "V4: datastores + clone identity".
    */
   datastores?: DatastoreSpec[];
+  /**
+   * Source files removed from the tracked tree within the HEAD-anchored analysis window (V5.3 —
+   * see `RuinRecord` above). Optional because it lands ahead of any consumer: absent means NOT
+   * MEASURED (nobody looked for deletions), never "nothing was demolished" — an empty array is
+   * the finding that the window really held no deletions. `mergeRepoGraphs` must carry this
+   * field through, namespaced the same way node ids and datastore dirs are.
+   */
+  ruins?: RuinRecord[];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -333,6 +378,46 @@ export function validateRepoGraph(x: unknown): ValidationResult {
         }
         if (!isFiniteNumber(d.migrationCount) || d.migrationCount < 0 || !Number.isInteger(d.migrationCount)) {
           errors.push(`${label}: migrationCount must be a non-negative integer`);
+        }
+      });
+    }
+  }
+
+  // ruins (V5.3): absent is always legal — it means nobody looked for deletions. An empty array
+  // is a different (and stronger) statement: the window really held none.
+  if (g.ruins !== undefined) {
+    if (!Array.isArray(g.ruins)) {
+      errors.push("ruins must be an array when present");
+    } else {
+      const seenRuinPaths = new Set<string>();
+      (g.ruins as unknown[]).forEach((raw, i) => {
+        if (!isPlainObject(raw)) {
+          errors.push(`ruins[${i}] must be an object`);
+          return;
+        }
+        const r = raw;
+        const label = isNonEmptyString(r.path) ? `ruin "${r.path}"` : `ruins[${i}]`;
+        if (!isNonEmptyString(r.path)) {
+          errors.push(`ruins[${i}]: path must be a non-empty string`);
+        } else if (seenRuinPaths.has(r.path)) {
+          errors.push(`duplicate ruin path: "${r.path}"`);
+        } else {
+          seenRuinPaths.add(r.path);
+          // A path cannot be both demolished and standing. This is not the referential-integrity
+          // checking this validator deliberately skips for imports/calls — it is a direct
+          // contradiction inside one document, and it is exactly what a broken rename-detection
+          // or re-add filter would produce.
+          if (seenIds.has(r.path)) {
+            errors.push(`${label}: path is also a live node id — a file cannot be both a ruin and a node`);
+          }
+        }
+        if (!isNonEmptyString(r.language)) errors.push(`${label}: language must be a non-empty string`);
+        if (!isNonEmptyString(r.deletedSha)) errors.push(`${label}: deletedSha must be a non-empty string`);
+        if (!isNonEmptyString(r.deletedDate) || Number.isNaN(Date.parse(r.deletedDate as string))) {
+          errors.push(`${label}: deletedDate must be a non-empty ISO-8601 date string`);
+        }
+        if (r.lastLoc !== undefined && (!isFiniteNumber(r.lastLoc) || r.lastLoc < 0 || !Number.isInteger(r.lastLoc))) {
+          errors.push(`${label}: lastLoc must be a non-negative integer when present`);
         }
       });
     }

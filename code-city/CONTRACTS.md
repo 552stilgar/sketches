@@ -6,6 +6,7 @@ contract that lets the analyzer, compiler, and renderer be built — and tested 
 | Contract | Producer | Consumer | Spec |
 |---|---|---|---|
 | `repo.json` (RepoGraph) | `analyzeRepo()` — `src/analyzer/index.ts` | `compileCity()`, `mergeRepoGraphs()` | [docs/CONTRACT-repo-json.md](docs/CONTRACT-repo-json.md) |
+| `RepoGraph.ruins` (deleted files) | `readRuins()` — `src/analyzer/ruins.ts` | `mergeRepoGraphs()` (no renderer consumer yet) | [docs/CONTRACT-repo-json.md](docs/CONTRACT-repo-json.md) § "Ruins (V5.3)" |
 | merged `repo.json` (RepoGraph) | `mergeRepoGraphs()` — `src/analyzer/merge.ts` | `compileCity()` | [docs/CONTRACT-repo-json.md](docs/CONTRACT-repo-json.md) § "Multi-repo merge" |
 | `city.json` (CityModel) | `compileCity()` — `src/compiler/index.ts` | `render2d()`, future 3D renderer | [docs/CONTRACT-city-json.md](docs/CONTRACT-city-json.md) |
 | `city.svg` output | `render2d()` — `src/renderer/svg.ts` | browser / debug view | [docs/CONTRACT-render-svg.md](docs/CONTRACT-render-svg.md) |
@@ -143,6 +144,51 @@ reproduce their exact prior output. Full contract: `docs/CONTRACT-city-json.md` 
 "District area-weighting (`districtWeightMode`, V5.1)". RED gate:
 `tests/compiler-district-weight.test.ts`.
 
+## V5.3: ruins (deleted files)
+
+Motivation: every signal in `repo.json` so far describes files that EXIST at HEAD. A repo's
+demolitions are history the city currently cannot show at all — a directory that lost half its
+files in the last quarter looks identical to one that was always small. V5.3 adds
+`RepoGraph.ruins`: the source files removed from the tracked tree inside the same HEAD-anchored
+90-day window `churn` uses, and still absent at HEAD.
+
+New producer/consumer pair:
+
+| Contract | Producer | Consumer |
+|---|---|---|
+| `RepoGraph.ruins` | `readRuins()` — `src/analyzer/ruins.ts`, assigned by `analyzeRepo()` | `mergeRepoGraphs()` (namespaces `path`, carries through) |
+
+Full field shape, detection rule, and validation: `docs/CONTRACT-repo-json.md` §§ "Ruins (V5.3)"
+and "Determinism rule: ruins".
+
+Three frozen decisions:
+
+- **R1 — a ruin is NOT a `RepoNode`.** A deleted file has no current `loc`, `complexity`, `churn`,
+  `age`, `contributors`, `imports`/`calls`, `contentHash`, or place in the tree — all UNMEASURED,
+  not zero. Modelling one as a node would force seven fabricated zeros, each indistinguishable
+  from a real tiny quiet brand-new file (the `318773d` failure mode; §5.5 constraint 2). Ruins get
+  their own array and their own type so `nodes` can never yield one by accident.
+- **R2 — the contract is narrower than the word "ruins" suggests, on purpose.** Only `path`,
+  `language`, `deletedSha`, `deletedDate` and an optional, explicitly HISTORICAL `lastLoc` (the
+  blob's line count at `deletedSha^`, counted by the same `countLines` a live `loc` uses, absent
+  when the parent/blob is unreadable or binary). No complexity, no edges, no contributors, no
+  position — a narrow true signal beats a rich invented one, and each of those would silently be
+  compared against HEAD-measured values on live nodes.
+- **R3 — renames are excluded, at an explicit `-M50%` threshold.** Git stores a rename as
+  delete + add, and the `diff.renames` default has moved across git versions; a signal whose output
+  depended on the operator's gitconfig would not be reproducible. `readRuins` requests rename
+  detection on every invocation, so a renamed file is not a ruin. A rename SPLIT across two commits
+  is still reported as a ruin plus a new file — git genuinely does not know they are the same
+  file, and guessing would be the fabrication this contract exists to prevent.
+
+**Ships as a data-contract slice only**, same shape as V5: `compileCity` does not read `ruins` and
+no renderer treatment exists for them yet. How a ruin is drawn — and whether it can be placed at
+all, given it has no location in the tree — is a later slice's decision.
+
+RED-turned-green this lane: `tests/ruins.test.ts` (real git fixtures: a deletion, a rename that
+must not appear, a mixed rename+deletion commit, a re-add, the window boundary, and a
+HEAD-anchoring determinism check).
+
 ## Phase 4: git time-travel (timeline scrub)
 
 Motivation (PROJECT_IDEA.md §5.2/Phase 4): a repo's history is a fourth navigable dimension.
@@ -219,6 +265,9 @@ render2d(city: CityModel): string                   // src/renderer/svg.ts — p
 // V4 (see "V4: datastores + clone identity" above)
 hashFileContent(bytes: Uint8Array | string): string                       // src/analyzer/content-hash.ts
 detectDatastores(files: {path: string, content: string}[]): DatastoreSpec[]  // src/analyzer/datastores.ts
+
+// V5.3 (see "V5.3: ruins (deleted files)" above)
+readRuins(repoPath: string, headDate: string): Promise<RuinRecord[]>      // src/analyzer/ruins.ts — HEAD-anchored window, never Date.now()
 buildLandmarks(city: CityModel): THREE.Group                              // src/renderer/landmarks.ts
 buildTethers(city: CityModel, buildingCenter: (id: string) => THREE.Vector3 | null): THREE.Group  // src/renderer/tethers.ts
 
@@ -253,4 +302,7 @@ All core modules are **fully implemented**:
 - `morphBuilding()` / `morphBuildings()` — `src/renderer/morph.ts` — ✓ Implemented (`tests/morph.test.ts`: 13 passing)
 - `buildTimeline()` — `src/renderer/timeline.ts` — ✓ Implemented (`tests/timeline.test.ts`: 7 passing)
 
-**Overall: 330 tests passing across 31 files**.
+**V5.3 module** (ruins):
+- `readRuins()` — `src/analyzer/ruins.ts` — ✓ Implemented (`tests/ruins.test.ts`: 14 passing)
+
+**Overall: 432 tests passing across 39 files**.

@@ -17,7 +17,9 @@ import { hashFileContent } from "./content-hash.ts";
 import type { DatastoreSpec } from "./datastores.ts";
 import { detectDatastores } from "./datastores.ts";
 import { readFileGitMetrics, readGitInfo } from "./git.ts";
+import { countLines } from "./loc.ts";
 import { parseTypeScript } from "./parser.ts";
+import { readRuins } from "./ruins.ts";
 import { scanSourceFiles } from "./scanner.ts";
 import { countTodoMarkers } from "./todo-density.ts";
 
@@ -111,6 +113,10 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
     readGitInfo(absoluteRepoPath),
     detectRepoDatastores(absoluteRepoPath),
   ]);
+  // Ruins (V5.3) need gitInfo.headDate to anchor their window, so they cannot join the fan-out
+  // above -- the window is HEAD-anchored, never wall-clock (docs/CONTRACT-repo-json.md,
+  // "Determinism rule: ruins").
+  const ruins = await readRuins(absoluteRepoPath, gitInfo.headDate);
   const fileIds = new Set(files.map((file) => file.path));
   const unsupportedLanguages = new Set<string>();
 
@@ -135,7 +141,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       unsupportedLanguages.add(file.language);
       parsed = { imports: [], calls: [], complexity: 1 };
     }
-    const loc = source.length === 0 ? 0 : source.split("\n").length - (source.endsWith("\n") ? 1 : 0);
+    const loc = countLines(source);
 
     return {
       id: file.path,
@@ -169,6 +175,7 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
     headSha: gitInfo.headSha,
     headDate: gitInfo.headDate,
     datastores,
+    ruins,
   };
   return graph;
 }

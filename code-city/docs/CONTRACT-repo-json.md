@@ -48,6 +48,11 @@ interface RepoGraph {
                                    // applies to absence of a signal as much as to a value).
                                    // `mergeRepoGraphs` MUST carry this field through, namespaced
                                    // the same way node ids are — see "Multi-repo merge" below.
+  ruins?: RuinRecord[];          // V5.3 — source files REMOVED from the tracked tree inside the
+                                   // HEAD-anchored window, see "Ruins (V5.3)" below. Optional:
+                                   // absent means NOT MEASURED (nobody looked for deletions),
+                                   // never "nothing was demolished" — an EMPTY ARRAY is that
+                                   // finding (§5.5 constraint 2). Also carried through the merge.
 }
 ```
 
@@ -115,6 +120,22 @@ and get the same churn numbers, because the window is anchored to history, not t
 
 `age` = days from this file's **first commit** touching it to the repo's **HEAD commit date**
 (`headDate`) — again anchored to `headDate`, never `Date.now()`.
+
+## Determinism rule: ruins
+
+`ruins` = the source files **removed** from the tracked tree in the **90 days before the repo's
+HEAD commit date** (`headDate` above) and still absent at HEAD — **never wall-clock `Date.now()`**,
+and the same 90-day window `churn` uses, from the same constant (`ANALYSIS_WINDOW_DAYS`,
+`src/analyzer/git.ts`) rather than a second copy of the number. A city that showed 90 days of churn
+beside 30 days of demolition would be reading two different pasts at once. Run the analyzer today
+or next year against the same commit and the ruins list is byte-identical, because the window is
+anchored to history, not the calendar.
+
+One further determinism obligation this signal has that `churn` and `age` do not: **rename
+detection must be requested explicitly, not inherited.** `git log --name-only` only pairs a
+delete with an add when rename detection is on, and the `diff.renames` default has changed across
+git versions — a signal whose output depended on the operator's gitconfig would not be
+reproducible. `readRuins` passes `-M50%` on every invocation.
 
 ## Complexity
 
@@ -221,6 +242,77 @@ other typed `RepoNode` field across the merge (see "Multi-repo merge" below; `te
 pins this specifically, mirroring the V4 `datastores` scar this field was built to avoid
 repeating — CONTRACTS.md § "Fixed 2026-08-28").
 
+## Ruins (V5.3)
+
+- Producer: `readRuins(repoPath: string, headDate: string): Promise<RuinRecord[]>` —
+  `src/analyzer/ruins.ts`, called by `analyzeRepo()` and assigned to `RepoGraph.ruins`
+- Consumer: none yet in `compileCity`/renderer — this contract ships the DATA field only (see
+  `CONTRACTS.md` § "V5.3: ruins")
+
+```ts
+interface RuinRecord {
+  path: string;         // LAST KNOWN repo-relative POSIX path, same id space live node ids use
+  language: string;     // languageForPath(path) — the same pure extension map live nodes get
+  deletedSha: string;   // full sha of the commit that removed it
+  deletedDate: string;  // ISO-8601 committer date of deletedSha, inside the window
+  lastLoc?: number;     // HISTORICAL line count at deletedSha's first parent — see below
+}
+```
+
+**A ruin is NOT a `RepoNode`, and that is the whole design.** A deleted file has no current `loc`,
+no `complexity`, no `churn`, no `age`, no `contributors`, no `imports`/`calls`, no `contentHash`,
+and no place in the tree — every one of those is UNMEASURED, not zero. Modelling a ruin as a node
+would force seven fabricated zeros, each individually indistinguishable from a real, tiny, quiet,
+brand-new file: exactly the failure the commit-message-prefix churn heuristic had before it was
+deleted (`318773d`), and exactly what §5.5 constraint 2 forbids. Ruins therefore live in their own
+array with their own type, so no consumer can iterate `nodes` and pick one up by accident, and the
+fields git genuinely knows are the only fields that exist.
+
+**What is honestly measurable, and what is refused:**
+
+| Field | Measurable? | Why |
+|---|---|---|
+| `path` | **yes** | Git records the exact path the file occupied when removed. A real measurement, in the live id space. |
+| `language` | **yes** | Pure function of the path's extension — the identical derivation a live node gets. Nothing historical inferred. |
+| `deletedSha` / `deletedDate` | **yes** | Read straight out of history. |
+| `lastLoc` | **sometimes** | Read from the file's blob at `deletedSha^` and counted with the same `countLines` (`src/analyzer/loc.ts`) a live node's `loc` uses. That makes it TRUE — but true *of a different instant than `headDate`*, which is why it is named `lastLoc` and not `loc`, and why a consumer must never place it on the same axis as a live building's size without saying which commit it came from. |
+| `complexity`, `churn`, `age`, `contributors`, `imports`, `calls`, `contentHash` | **no** | Each would mean parsing or re-walking history for a file that no longer exists, then silently comparing the result against HEAD-measured values on live nodes. The fields simply do not exist on `RuinRecord`. A narrow true signal beats a rich invented one. |
+| position / footprint | **no** | A ruin has no location in the tree; its former directory may itself be gone. Where (or whether) the compiler places one is a later slice's decision, not a datum the analyzer can measure. |
+
+`lastLoc` is **absent, never `0`, whenever it cannot be read honestly**: the deleting commit is a
+root commit with no parent, the blob is unreadable, or the blob contains a NUL byte (binary —
+splitting it on `"\n"` would produce a number that looks like LOC and isn't). Each of those cases
+warns on stderr rather than degrading silently (Failure Discipline). A file that genuinely was
+empty when it died reports a real `0`.
+
+**Detection rule**, in full:
+- `git log --no-merges -M50% --diff-filter=D --relative --name-only HEAD`, windowed in JS against
+  `headDate` using the same predicate `churn` uses (not `git log --since`, whose date parsing is
+  fuzzier than an exact anchored comparison).
+- `--relative` for the same reason `readFileGitMetrics` needs it: `--name-only` prints paths
+  relative to the git ROOT, which never matches the repo-relative id space when `repoPath` is a
+  subdirectory of a larger repo (`tests/git-nested-repo.test.ts`). It also usefully drops
+  deletions that happened outside the analyzed subtree.
+- **Renames are excluded.** Git stores a rename as delete + add; `-M50%` makes git pair them and
+  report `R`, which `--diff-filter=D` then filters out. **50%** is the threshold: at least half the
+  content must survive the move. A renamed file is not a ruin.
+- **Re-added paths are excluded.** A path tracked at HEAD is a live file, whatever happened to it
+  mid-window. Deleted-then-restored produces no ruin.
+- **Deleted twice, one ruin.** `git log` is newest-first, so the most recent deletion of a path is
+  the one recorded — the demolition that stuck.
+- **Non-source paths are excluded** by the same `isSourceFile` gate live files pass
+  (`src/analyzer/scanner.ts`). A ruin for a `README.md` would put something in the city that could
+  never have been a building while it was alive.
+- Output is sorted by `path` in codepoint order (`compareCodepoints`).
+
+**Known limitations, stated rather than hidden:**
+- A deletion that exists ONLY as a merge commit's conflict resolution (an "evil merge") is not
+  reported — `git log` gives merge commits no `--name-only` output, and `--no-merges` says so
+  explicitly rather than leaving it to a default.
+- A rename split across two commits (delete in one, add in another) is reported as a ruin plus a
+  new file. Git genuinely does not know those are the same file; guessing that they are would be
+  the fabrication this contract exists to prevent.
+
 ## Multi-repo merge
 
 - Producer: `mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph` —
@@ -288,6 +380,13 @@ usul-mgmt-itba/vendor/kernel    -> usul-mgmt-itba/vendor/kernel
 usul-heighliner-radio/src       -> usul-heighliner-radio/src   (schema.sql at repo-relative "src")
 ```
 
+**Ruins (V5.3)** ride the same mechanism and the same present-if-any-input-had-it rule: each
+`RuinRecord.path` gets the `<name>/` prefix that repo's live node ids get, so a ruin lands in the
+same district its repo does; every other field is a scalar with no cross-repo meaning and rides
+through untouched. The merged `ruins` field is present whenever **any** input repo carried one
+(even an empty one) — absent only when none did, so a repo that never looked for deletions cannot
+erase another's real finding.
+
 ## Validation
 
 `validateRepoGraph` checks: `nodes` is an array; every node has all fields above with the correct
@@ -299,7 +398,14 @@ characters) — absent is always legal, a malformed non-hash string is a hard va
 present, `datastores` is checked the same way: an array of objects each with a non-empty `id`, a
 `dir` string (empty string legal — the repo-root case), and non-negative integer `tableCount` /
 `migrationCount` — absent is always legal (V4 contract D1: absent means not detected). When
-present, `todoCount` must be a non-negative integer (V5: absent means not measured, never `0`). It
-does **not** check referential integrity of `imports`/`calls`/`contains` against other node ids, or
+present, `todoCount` must be a non-negative integer (V5: absent means not measured, never `0`).
+When present, `ruins` is an array of objects each with a non-empty `path` (unique across the
+array), a non-empty `language`, a non-empty `deletedSha`, a parseable ISO-8601 `deletedDate`, and a
+non-negative integer `lastLoc` if the field is there at all — absent is always legal (V5.3: absent
+means not measured). One cross-field check is made deliberately: **a `ruins[].path` that is also a
+live node id is a hard error** — a file cannot be both demolished and standing, and that
+contradiction is exactly what a broken rename-detection or re-add filter would produce. That is not
+the referential-integrity checking below; it is a contradiction inside one document. It does
+**not** check referential integrity of `imports`/`calls`/`contains` against other node ids, or
 validate the churn/age windowing math — those are behavioral checks, owned by
 `tests/analyzer.test.ts` and `tests/compiler-*.test.ts`, not structural schema checks.
