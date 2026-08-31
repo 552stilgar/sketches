@@ -36,6 +36,17 @@ export interface RepoNode {
    * to carry this; it is meaningless for aggregate node types.
    */
   contentHash?: string;
+  /**
+   * Count of `TODO`/`FIXME` marker occurrences in this file's tracked source (V5 — see
+   * CONTRACTS.md § "V5: TODO density" and docs/CONTRACT-repo-json.md § "TODO density"). Optional
+   * because it is only meaningful where the analyzer actually scans the file's text: a file in a
+   * language the analyzer does not statically support gets NO real read of its source for this
+   * purpose, so it must report `undefined` (NOT MEASURED), never `0` — a `0` would read as "this
+   * file is clean", a fabricated measurement (PROJECT_IDEA.md 5.5, constraint 2, never fabricate,
+   * applies to absence of a signal as much as to a value). A supported-language file with no
+   * markers legitimately reports `0` — that is a real measurement, not an absence.
+   */
+  todoCount?: number;
 }
 
 /**
@@ -298,6 +309,9 @@ export function validateRepoGraph(x: unknown): ValidationResult {
     if (!isStringArray(n.contains)) errors.push(`${label}: contains must be a string[]`);
     if (n.contentHash !== undefined && !isSha256Hex(n.contentHash)) {
       errors.push(`${label}: contentHash must be a lowercase hex sha256 string when present`);
+    }
+    if (n.todoCount !== undefined && (!isFiniteNumber(n.todoCount) || n.todoCount < 0 || !Number.isInteger(n.todoCount))) {
+      errors.push(`${label}: todoCount must be a non-negative integer when present`);
     }
   });
 

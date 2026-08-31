@@ -94,6 +94,35 @@ RED gates (fail today, turn green as each V4 lane lands): `tests/content-hash.te
 `tests/landmarks-render.test.ts` (`buildLandmarks` + `buildTethers`). Each file's header comment
 says which lane turns it green.
 
+## V5: TODO density
+
+Motivation: `loc`/`complexity`/`churn`/`age` measure a file's size and volatility, but not its
+*declared* open work — a `TODO`/`FIXME` comment is a signal a developer actually left in the
+code, distinct from anything inferred structurally. V5 adds `RepoNode.todoCount`: a count of
+`TODO`/`FIXME` marker occurrences per file, following the exact same optional-field/never-
+fabricate shape `contentHash` (V4) established, so the pipeline's absence-handling convention
+stays uniform rather than each new signal inventing its own.
+
+New producer/consumer pair:
+
+| Contract | Producer | Consumer |
+|---|---|---|
+| `RepoNode.todoCount` | `countTodoMarkers()` — `src/analyzer/todo-density.ts`, assigned by `analyzeRepo()` (only for `PARSEABLE_LANGUAGES` files) | `mergeRepoGraphs()` (carries through unchanged — scalar, no namespacing needed) |
+
+Full field shape and validation rule: `docs/CONTRACT-repo-json.md` § "TODO density (V5)".
+
+**Ships as a data-contract slice only.** No renderer consumer yet — `compileCity` does not read
+`todoCount` and no scaffolding prop exists for it. That is a deliberately later slice (a
+rendering decision, not a data-availability one); this slice's job is only to make the signal
+real, typed, validated, and merge-safe, per the delegation instructions that scoped it.
+
+**The scar this repeats-not:** V4's `datastores` field first landed as an untyped property
+attached outside `RepoGraph`'s typed shape (see "Fixed 2026-08-28" below) — `mergeRepoGraphs`
+silently dropped it because it only carries typed fields through. `todoCount` is a typed
+`RepoNode` field from its first commit, so `mergeRepoGraphs`'s per-node `...node` spread carries
+it automatically; `tests/merge.test.ts`'s "V5 scar test" `describe` block asserts this directly
+rather than trusting the spread.
+
 ## Phase 4: git time-travel (timeline scrub)
 
 Motivation (PROJECT_IDEA.md §5.2/Phase 4): a repo's history is a fourth navigable dimension.
