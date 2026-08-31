@@ -15,7 +15,10 @@
 // never changes; only the (necessarily unstable) partial current month can differ run to run.
 //
 // Never-fabricate: a month with no commit at or before its end is SKIPPED, never emitted as an
-// empty or interpolated graph.
+// empty or interpolated graph. There is a second, independent skip path further down
+// (SubdirNotPresentAtCommitError) for the case where the resolved commit exists but the analyzed
+// subdirectory doesn't yet (or no longer) appear in it -- see that class's doc comment for why
+// it, unlike this one, can skip a month in the MIDDLE of an otherwise-continuous sequence.
 
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, stat } from "node:fs/promises";
@@ -143,7 +146,16 @@ export async function resolveMonthlyCommits(
 /** Thrown by withDetachedWorktree when `sha` resolves fine but the analyzed subdirectory has no
  *  entry in that commit's tree -- e.g. a project folded into a monorepo later, being asked for a
  *  month before the fold. Distinguished from a generic Error so generateMonthlySnapshots can
- *  convert it to an accurately-worded skip instead of letting it read as an analyzer crash. */
+ *  convert it to an accurately-worded skip instead of letting it read as an analyzer crash.
+ *
+ *  Reachability note (src/compiler/sequence.ts's gapBefore consumes this): unlike the "no commit
+ *  yet" skip in resolveMonthlyCommits -- which, given git history's monotonic commit order, can
+ *  only ever precede a repo's first resolved month -- this path can fire in the MIDDLE of an
+ *  otherwise-continuous sequence. A subdirectory deleted and later re-added (folded out of a repo,
+ *  then folded back in) resolves to real, qualifying commits both before and after the gap, so the
+ *  months in between are skipped here while the months on either side resolve normally. That is
+ *  the one path that produces a genuine mid-sequence gapBefore: true; see
+ *  tests/snapshots.test.ts's "mid-sequence gapBefore" fixture for the proof. */
 export class SubdirNotPresentAtCommitError extends Error {
   subdir: string;
   sha: string;

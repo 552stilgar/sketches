@@ -15,6 +15,17 @@
 // silent month. This module's only job re: gaps is to make each one EXPLICIT (`gapBefore: true`)
 // on the entry that follows it, so a renderer can show "no data here" instead of a scrubber that
 // silently glides across a missing period as if it were continuous history.
+//
+// Reachability (settled by tests/snapshots.test.ts's "mid-sequence gapBefore" fixture): a gap is
+// NOT confined to the very first entry. src/analyzer/snapshots.ts has two independent skip paths
+// -- "no commit on or before this month's end" (resolveMonthlyCommits) can only fire before a
+// repo's first commit, so it can only ever precede entry 0. But the SECOND path,
+// SubdirNotPresentAtCommitError (raised when the analyzed path is a subdirectory that resolves to
+// a real, later commit that simply doesn't contain it), fires whenever that subdirectory is
+// absent from history for a stretch bracketed by real commits on both sides -- e.g. a module
+// folded out of a repo and folded back in later. That is an ordinary occurrence and it produces a
+// genuine MID-SEQUENCE gapBefore here, since a skipped month never gets a repo-YYYY-MM.json file
+// and therefore never becomes a TimelineManifestInput at all.
 
 import { compareCodepoints } from "../util/compare.ts";
 import type { TimelineEntry, TimelineManifest } from "../types.ts";

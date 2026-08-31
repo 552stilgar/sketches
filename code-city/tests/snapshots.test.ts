@@ -17,7 +17,8 @@ import {
   resolveMonthlyCommits,
   type SkippedMonth,
 } from "../src/analyzer/snapshots.ts";
-import { validateRepoGraph } from "../src/types.ts";
+import { buildTimelineManifest } from "../src/compiler/sequence.ts";
+import { validateRepoGraph, validateTimelineManifest } from "../src/types.ts";
 
 const BUILD_FIXTURE = fileURLToPath(new URL("../fixtures/build-fixture.mjs", import.meta.url));
 const BUILD_NESTED_FIXTURE = fileURLToPath(new URL("../fixtures/build-nested-fixture.mjs", import.meta.url));
@@ -270,6 +271,109 @@ describe("Lane E defect 1 -- accurate error when a subpath predates its own crea
         expect(s.reason.toLowerCase()).toMatch(/exist|predate|present/);
       }
     }
+  }, 20000);
+});
+
+describe("mid-sequence gapBefore -- a real subdirectory deleted then restored", () => {
+  // sequence.ts's own doc comment used to claim gaps can only precede the FIRST timeline entry,
+  // on the reasoning that git history is monotonic: resolveMonthlyCommits always resolves to
+  // "the last commit on or before this month's end", so once a repo exists every later month
+  // resolves too. That reasoning only accounts for the "no commit yet" skip path
+  // (resolveMonthlyCommits) and misses the SECOND skip path this file defines:
+  // SubdirNotPresentAtCommitError, raised by withDetachedWorktree when generateMonthlySnapshots
+  // is pointed at a SUBDIRECTORY that resolves to a real commit but doesn't exist in that
+  // commit's tree. A subdirectory that is added, deleted, and later re-added -- an ordinary
+  // occurrence (a module folded out of a repo and folded back in, a rename-and-restore) --
+  // produces a genuine MID-SEQUENCE skip via this second path, from entirely real history. This
+  // fixture proves it end to end: generateMonthlySnapshots' own skip list feeds directly into
+  // buildTimelineManifest (the same shape bin/sequence.ts builds from a directory of
+  // repo-YYYY-MM.json files -- a skipped month simply has no file, so it never becomes a
+  // TimelineManifestInput), and the resulting gapBefore lands on an entry that is NOT the first.
+  let wrapperDir: string;
+  let moduleDir: string;
+
+  beforeAll(() => {
+    wrapperDir = mkdtempSync(join(tmpdir(), "code-city-subdir-restore-"));
+    moduleDir = join(wrapperDir, "module");
+    execFileSync("git", ["init", "-q"], { cwd: wrapperDir });
+    execFileSync("git", ["config", "user.name", "Fixture Bot"], { cwd: wrapperDir });
+    execFileSync("git", ["config", "user.email", "fixture@example.com"], { cwd: wrapperDir });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: wrapperDir });
+
+    const commit = (message: string, isoDate: string): void => {
+      execFileSync("git", ["add", "-A"], { cwd: wrapperDir });
+      execFileSync("git", ["commit", "-m", message], {
+        cwd: wrapperDir,
+        env: { ...process.env, GIT_AUTHOR_DATE: isoDate, GIT_COMMITTER_DATE: isoDate },
+      });
+    };
+
+    // Month 1 (2024-01): module/ exists.
+    mkdirSync(moduleDir, { recursive: true });
+    writeFileSync(join(moduleDir, "index.ts"), "export const version = 1;\n");
+    commit("add module", "2024-01-05T12:00:00+00:00");
+
+    // Month 2 (2024-02): module/ still exists, modified -- proves the "present" months aren't
+    // just the same unchanged commit repeated.
+    writeFileSync(join(moduleDir, "index.ts"), "export const version = 2;\n");
+    commit("touch module", "2024-02-05T12:00:00+00:00");
+
+    // Month 3 (2024-03): module/ deleted entirely (mirrors folding it out of the repo).
+    rmSync(moduleDir, { recursive: true, force: true });
+    commit("remove module", "2024-03-05T12:00:00+00:00");
+
+    // Month 4 (2024-04): module/ restored (mirrors folding it back in later).
+    mkdirSync(moduleDir, { recursive: true });
+    writeFileSync(join(moduleDir, "index.ts"), "export const version = 4;\n");
+    commit("restore module", "2024-04-05T12:00:00+00:00");
+  });
+
+  afterAll(() => {
+    if (wrapperDir) rmSync(wrapperDir, { recursive: true, force: true });
+  });
+
+  it("skips exactly the month module/ was absent, via the subdir-not-present path, not the no-commit path", async () => {
+    const { snapshots, skipped } = await generateMonthlySnapshots(moduleDir, {
+      months: 4,
+      asOf: new Date("2024-04-15T00:00:00Z"),
+    });
+    expect(snapshots.map((s) => s.month)).toEqual(["2024-01", "2024-02", "2024-04"]);
+    expect(skipped.map((s) => s.month)).toEqual(["2024-03"]);
+    // The reason must name the real condition (subdir absent at a real, resolved commit) --
+    // never the generic "no commit on or before this month's end" reason the first skip path
+    // uses, which would be factually wrong here: 2024-03 DID have a qualifying commit.
+    expect(skipped[0].reason).toMatch(/path not present at this commit/);
+  }, 20000);
+
+  it("produces a gapBefore: true on a MID-SEQUENCE entry, not the first, once fed through buildTimelineManifest", async () => {
+    const { snapshots, skipped } = await generateMonthlySnapshots(moduleDir, {
+      months: 4,
+      asOf: new Date("2024-04-15T00:00:00Z"),
+    });
+    expect(skipped.map((s) => s.month)).toEqual(["2024-03"]); // sanity: same skip as above
+
+    // Exactly what bin/sequence.ts does with a directory of repo-YYYY-MM.json files: only the
+    // months that actually got a file (i.e. were resolved, not skipped) become manifest inputs.
+    // buildingCount/districtCount aren't under test here, so real-but-arbitrary node counts
+    // stand in for the compiled city.buildings/.districts this test doesn't need to compile.
+    const manifest = buildTimelineManifest(
+      snapshots.map((s) => ({
+        month: s.month,
+        date: s.date,
+        cityFile: `city-${s.month}.json`,
+        buildingCount: s.graph.nodes.length,
+        districtCount: 1,
+      })),
+    );
+
+    expect(validateTimelineManifest(manifest)).toEqual({ ok: true, errors: [] });
+    expect(manifest.entries.map((e) => e.month)).toEqual(["2024-01", "2024-02", "2024-04"]);
+    expect(manifest.entries.map((e) => e.gapBefore)).toEqual([false, false, true]);
+    // The gap is on entries[2] -- index 2, not index 0 -- i.e. genuinely mid-sequence, not the
+    // "first entry is never a gap" case sequence.ts already special-cases.
+    const gapIndex = manifest.entries.findIndex((e) => e.gapBefore);
+    expect(gapIndex).toBeGreaterThan(0);
+    expect(manifest.entries[gapIndex].month).toBe("2024-04");
   }, 20000);
 });
 
