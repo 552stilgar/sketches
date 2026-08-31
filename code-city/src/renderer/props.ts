@@ -41,14 +41,31 @@ import * as THREE from "three";
 import type { Building } from "../types.ts";
 import type { CityLensRanks } from "./lenses.ts";
 
-export interface PropSpec {
-  buildingId: string;
-  kind: "crane";
-  x: number;
-  y: number;
-  z: number;
-  height: number;
-}
+/**
+ * A prop is either a churn-driven CRANE (V5.2, above) or an age-driven SCAFFOLD (V5.4, below --
+ * "new-file -> scaffolding" companion overlay). `span` only exists on "scaffold": it is the
+ * building-footprint depth the scaffold's bracing needs to visually cover that face (see
+ * selectScaffoldSites), and a crane has no equivalent -- its jib length is a fixed constant, not
+ * derived from the building it stands beside.
+ */
+export type PropSpec =
+  | {
+      buildingId: string;
+      kind: "crane";
+      x: number;
+      y: number;
+      z: number;
+      height: number;
+    }
+  | {
+      buildingId: string;
+      kind: "scaffold";
+      x: number;
+      y: number;
+      z: number;
+      height: number;
+      span: number;
+    };
 
 /** Top decile by churn percentile rank -- the proposed default (PROJECT_IDEA.md §5.2 pairs
  *  "recent changes" with cranes as a SCARCE overlay, sitting alongside landmarks rather than
@@ -133,6 +150,84 @@ export function selectCraneSites(
 }
 
 // -------------------------------------------------------------------------------------------
+// new-file -> SCAFFOLDING props (V5.4, sibling overlay to the churn -> crane props above).
+// Cranes mean churn (ongoing change); scaffolds mean youth (recent creation). A building can
+// legitimately have both -- an actively-churning file that was also only just added -- so
+// selection and geometry both have to keep the two readable and non-colliding at once (see
+// CRANE_STANDOFF's +x placement above vs. SCAFFOLD_STANDOFF's -x placement below).
+// -------------------------------------------------------------------------------------------
+
+/**
+ * How recent counts as "recently added", in days before `RepoGraph.headDate`. Deliberately equal
+ * to `ANALYSIS_WINDOW_DAYS` (src/analyzer/git.ts) rather than an independently-chosen number: that
+ * constant's own doc comment already states the reason this module inherits verbatim -- "a city
+ * that showed 90 days of churn beside 30 days of ruins would be reading two different pasts at
+ * once". Scaffolding is a third temporal overlay in the same city; picking any other window here
+ * would make it the one signal disagreeing with churn and ruins about what "recent" means.
+ *
+ * NOT imported from src/analyzer/git.ts directly: that module's top-level `import
+ * "node:child_process"` is fine in the analyzer/CLI runtime but is never meant to reach the
+ * browser bundle this renderer module ships in. Restated as a literal instead, with this comment
+ * as the drift guard -- tests/props-scaffold.test.ts pins the value equal to
+ * `ANALYSIS_WINDOW_DAYS` directly so the two cannot silently diverge.
+ */
+export const DEFAULT_MAX_SCAFFOLD_AGE_DAYS = 90;
+
+/** How far outside the building's own footprint the scaffold's frame stands -- deliberately
+ *  smaller than CRANE_STANDOFF: real scaffolding hugs the facade it wraps, while a crane works
+ *  from a standoff distance. A crane (when present) attaches at the footprint's +x edge (see
+ *  above); a scaffold attaches at the -x edge -- opposite sides by construction, so the two props
+ *  can never occupy the same space on a building that has both. */
+const SCAFFOLD_STANDOFF = 1.5;
+
+/**
+ * Selects which buildings get scaffolding, keyed by `metrics.age` directly (not a percentile
+ * rank, unlike churn -- "recently added" is a plain HEAD-anchored day count, not a
+ * distribution-relative notion the way "unusually high churn" is). A building is selected only if
+ * `metrics.age` is present AND at/below `opts.maxAgeDays` (default DEFAULT_MAX_SCAFFOLD_AGE_DAYS).
+ *
+ * A missing `metrics.age` (a city.json compiled before this field shipped, see
+ * BuildingMetrics.age's doc comment in src/types.ts) is UNMEASURED, not age 0 -- it is skipped
+ * rather than defaulted, per NEVER-FABRICATE (same discipline selectCraneSites gives a missing
+ * churn rank).
+ *
+ * Pure and order-preserving, same determinism posture as selectCraneSites: iterates `buildings`
+ * in the order given, never sorts or reorders.
+ */
+export function selectScaffoldSites(
+  buildings: readonly Building[],
+  opts?: { maxAgeDays?: number; heightScale?: number },
+): PropSpec[] {
+  const maxAgeDays = opts?.maxAgeDays ?? DEFAULT_MAX_SCAFFOLD_AGE_DAYS;
+  // Same "must match the scale buildBuildings() actually renders at" reasoning as
+  // selectCraneSites's heightScale -- see that function's comment.
+  const heightScale = opts?.heightScale ?? 1;
+  if (!Number.isFinite(heightScale) || heightScale <= 0) {
+    throw new Error(`selectScaffoldSites: heightScale must be a finite positive number, got ${heightScale}`);
+  }
+  const specs: PropSpec[] = [];
+
+  for (const b of buildings) {
+    const age = b.metrics.age;
+    if (age === undefined) continue; // unmeasured -- never fabricate an age
+    if (age > maxAgeDays) continue;
+
+    // Standing beside the footprint's -x edge, vertically centered on its depth -- the mirror
+    // image of selectCraneSites's +x placement, so a crane and a scaffold on the same building
+    // never occupy the same ground.
+    const x = b.x - SCAFFOLD_STANDOFF;
+    const z = b.y + b.depth / 2;
+    // Unlike a crane (which must tower ABOVE its subject to read as "working on" it), scaffolding
+    // wraps the structure being built and so is sized to match it, never exceed it.
+    const height = b.height * heightScale;
+
+    specs.push({ buildingId: b.id, kind: "scaffold", x, y: 0, z, height, span: b.depth });
+  }
+
+  return specs;
+}
+
+// -------------------------------------------------------------------------------------------
 // Geometry -- unlit-free (MeshStandardMaterial), same lighting family as landmarks.ts's tanks:
 // a crane is a physical object standing IN the city, not a diagram overlay like tethers.ts's
 // links, so it takes scene lighting like any other structure.
@@ -175,6 +270,83 @@ function buildCraneMeshes(height: number): THREE.Object3D[] {
   return [mast, jib, counterJib];
 }
 
+// Muted galvanized-steel grey for the frame, with a translucent safety-orange net panel -- both
+// deliberately outside every hue already spoken for in this city (CRANE_COLOR's safety-yellow,
+// buildings.ts's language palette, landmarks.ts's steel-blue, tethers.ts's amber 0xffb84d), and
+// far enough from CRANE_COLOR specifically that a crane and a scaffold read as two different
+// machines at normal camera distance, not two shades of the same "under construction" marker. The
+// frame's boxy, evenly-stacked lattice (no jib, no counter-jib) is the other half of that
+// distinction -- silhouette, not just hue, separates the two prop kinds.
+const SCAFFOLD_FRAME_COLOR = new THREE.Color().setHSL(0, 0, 0.55);
+const SCAFFOLD_FRAME_MATERIAL_PARAMS = { roughness: 0.7, metalness: 0.5 } as const;
+const SCAFFOLD_NET_COLOR = new THREE.Color().setHSL(0.06, 0.85, 0.5);
+
+const SCAFFOLD_POLE_WIDTH = 0.6;
+const SCAFFOLD_BRACE_THICKNESS = 0.4;
+/** Vertical spacing between horizontal braces -- a real scaffold's lift height. Fixed, not a
+ *  fraction of `height`, so the lattice always reads as the same physical structure regardless of
+ *  the building it's wrapping (same reasoning CRANE_STANDOFF's own doc gives for staying an
+ *  absolute, not proportional). */
+const SCAFFOLD_LIFT_HEIGHT = 6;
+/** Net panel opacity -- translucent so it never fully occludes the building wall behind it,
+ *  reading as safety netting rather than a solid second facade. */
+const SCAFFOLD_NET_OPACITY = 0.35;
+
+/**
+ * One scaffold's static lattice: two vertical corner poles spanning `height`, evenly-spaced
+ * horizontal braces between them every SCAFFOLD_LIFT_HEIGHT, and a translucent net panel behind
+ * the poles -- the silhouette that reads as "wrapped in scaffolding" without a jib or any part of
+ * buildCraneMeshes' vocabulary. `span` is the footprint depth this scaffold's frame covers (see
+ * selectScaffoldSites). Every dimension is a fixed constant or a function of `height`/`span`;
+ * nothing here reads a clock or a random source (DETERMINISM), matching buildCraneMeshes.
+ */
+function buildScaffoldMeshes(height: number, span: number): THREE.Object3D[] {
+  const frameMaterial = new THREE.MeshStandardMaterial({
+    color: SCAFFOLD_FRAME_COLOR,
+    ...SCAFFOLD_FRAME_MATERIAL_PARAMS,
+  });
+  const meshes: THREE.Object3D[] = [];
+
+  const halfSpan = span / 2;
+  for (const zOffset of [-halfSpan, halfSpan]) {
+    const pole = new THREE.Mesh(
+      new THREE.BoxGeometry(SCAFFOLD_POLE_WIDTH, height, SCAFFOLD_POLE_WIDTH),
+      frameMaterial,
+    );
+    pole.position.set(0, height / 2, zOffset);
+    pole.castShadow = true;
+    meshes.push(pole);
+  }
+
+  // Horizontal braces at each lift, starting at the first full lift height above ground and never
+  // above `height` itself -- a partial top lift is simply omitted rather than poking through the
+  // roofline it's supposed to be scaffolding.
+  for (let y = SCAFFOLD_LIFT_HEIGHT; y <= height; y += SCAFFOLD_LIFT_HEIGHT) {
+    const brace = new THREE.Mesh(
+      new THREE.BoxGeometry(SCAFFOLD_BRACE_THICKNESS, SCAFFOLD_BRACE_THICKNESS, span),
+      frameMaterial,
+    );
+    brace.position.set(0, y, 0);
+    brace.castShadow = true;
+    meshes.push(brace);
+  }
+
+  const net = new THREE.Mesh(
+    new THREE.PlaneGeometry(span, height),
+    new THREE.MeshStandardMaterial({
+      color: SCAFFOLD_NET_COLOR,
+      transparent: true,
+      opacity: SCAFFOLD_NET_OPACITY,
+      side: THREE.DoubleSide,
+    }),
+  );
+  net.rotation.y = Math.PI / 2;
+  net.position.set(0, height / 2, 0);
+  meshes.push(net);
+
+  return meshes;
+}
+
 export interface BuiltProps {
   /** One tagged child Group per PropSpec -- add this to the scene, not the individual meshes. */
   group: THREE.Group;
@@ -199,11 +371,12 @@ export function buildProps(specs: readonly PropSpec[]): BuiltProps {
 
   for (const spec of specs) {
     const propGroup = new THREE.Group();
-    propGroup.name = `crane:${spec.buildingId}`;
+    propGroup.name = `${spec.kind}:${spec.buildingId}`;
     propGroup.userData.buildingId = spec.buildingId;
     propGroup.position.set(spec.x, spec.y, spec.z);
 
-    for (const mesh of buildCraneMeshes(spec.height)) propGroup.add(mesh);
+    const meshes = spec.kind === "crane" ? buildCraneMeshes(spec.height) : buildScaffoldMeshes(spec.height, spec.span);
+    for (const mesh of meshes) propGroup.add(mesh);
 
     group.add(propGroup);
   }

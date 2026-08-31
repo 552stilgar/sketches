@@ -25,7 +25,7 @@ interface Building {
                        // this is what lets a renderer/UI join a building back to its metrics.
   x: number; y: number; width: number; depth: number; height: number;  // canvas coords + height
   style: string;
-  metrics: { loc: number; complexity: number; churn: number };
+  metrics: { loc: number; complexity: number; churn: number; age?: number };
 }
 
 interface Road {
@@ -118,6 +118,26 @@ Roads are **not** a deduplicated adjacency set. Each `Road` carries `weight`: th
 The compiler emits weights; the **renderer** owns anything animated from them. `compileCity` stays
 a pure function with no clock and no randomness — no frame timing, pulse rate, or dash offset ever
 appears in `city.json` (`PROJECT_IDEA.md` §5.5, determinism constraint).
+
+## Building age (`metrics.age`, V5.4)
+
+`metrics.age` is `compileCity`'s carry-through of `RepoNode.age` (`docs/CONTRACT-repo-json.md`
+§ "Determinism rule: age") into `city.json`, feeding the scaffolding overlay
+(`src/renderer/props.ts` `selectScaffoldSites`, sibling of the V5.2 churn → crane overlay).
+
+- At file LOD, `metrics.age` is that file's own `age` unchanged.
+- At directory/clone-group LOD, `metrics.age` is the **minimum** age across the building's member
+  files — the youngest member, not a sum or average — because the question this field answers is
+  "does this location contain a newly-created file", which a blended average would wash out the
+  moment one old sibling file joins the group. Contrast `metrics.churn`, which sums (total
+  activity, not recency, is the question there).
+- Optional in `types.ts` for the same reason `Road.weight` is: so a `city.json` compiled before
+  this field shipped stays valid. `compileCity` **MUST** always emit a real value for every
+  building going forward — `RepoNode.age` is a required, always-measured field (git history alone
+  determines it; unlike `todoCount` there is no "unsupported language" absence case). A renderer
+  reading a missing `metrics.age` (an older `city.json`) **must** treat it as UNMEASURED, never as
+  age `0` — a missing signal reading as "brand new" is exactly the fabricated-zero failure
+  `PROJECT_IDEA.md` §5.5 constraint 2 already ruled out project-wide.
 
 ## Landmarks (V4)
 
@@ -262,7 +282,8 @@ which fails loudly (non-zero exit, listing the valid set) on anything else — s
 
 `validateCity` checks: `districts`/`buildings`/`roads`/`landmarks` are present; every
 district/building has the required fields with correct types (`metrics.loc`/`.complexity`/
-`.churn` included); every district id is unique among districts and every building id is unique
+`.churn` included; `metrics.age`, when present, must be a non-negative number — it is legally
+absent altogether, see "Building age" above); every district id is unique among districts and every building id is unique
 among buildings; every road's `from`/`to` resolves to a real building id (dangling road refs are a
 hard validation failure); a landmark's `label`/`weight`, when present, are a non-empty string /
 non-negative number respectively. It does **not** check the geometric invariants above (no-overlap,

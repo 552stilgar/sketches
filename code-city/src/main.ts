@@ -11,7 +11,7 @@ import { buildBuildings, updateDistrictLabelFade } from "./renderer/buildings.ts
 import { buildRoads } from "./renderer/roads.ts";
 import { buildLandmarks } from "./renderer/landmarks.ts";
 import { buildTethers } from "./renderer/tethers.ts";
-import { selectCraneSites, buildProps } from "./renderer/props.ts";
+import { selectCraneSites, selectScaffoldSites, buildProps } from "./renderer/props.ts";
 import { setupUI, setupLensControl, setupLayerControl } from "./renderer/ui.ts";
 import { DEFAULT_LENS, computeCityLensRanks, type LensId } from "./renderer/lenses.ts";
 import { resolveMassingScale } from "./massing-resolution.ts";
@@ -42,6 +42,10 @@ interface TestBridge {
    *  part of CityModel at all (they're a pure view-layer overlay computed from
    *  city.buildings + churn ranks, see src/renderer/props.ts). */
   craneCount(): number;
+  /** Number of scaffold props actually built this frame (props.ts selectScaffoldSites output
+   *  length) -- same posture as craneCount() above, a rendering-derived count keyed off
+   *  city.buildings + metrics.age, never part of CityModel itself. */
+  scaffoldCount(): number;
   /** The camera framing computed for this city on load (src/renderer/scene.ts) -- bounds, orbit
    * target, and camera world position -- so a headless check can assert the first frame is
    * actually looking at the city's content instead of a fixed offset (measured defect,
@@ -258,6 +262,17 @@ async function main(): Promise<void> {
   const propsHandle = buildProps(craneSites);
   scene.add(propsHandle.group);
 
+  // V5.4 (new-file -> scaffolding props, sibling of the V5.2 crane overlay above): selected by
+  // `metrics.age` directly rather than a churn-style percentile rank (see selectScaffoldSites'
+  // header) -- built as its own group, separate from propsHandle, so it gets its own layer toggle
+  // below rather than sharing the crane layer's on/off state. Ships OFF by default (Usul's ruling:
+  // no new overlay's aesthetic gets defaulted on before it's been seen rendered) -- the "cranes"
+  // layer above predates that ruling and is unaffected by it.
+  const scaffoldSites = selectScaffoldSites(city.buildings, { heightScale: massing.scale });
+  const scaffoldingHandle = buildProps(scaffoldSites);
+  scene.add(scaffoldingHandle.group);
+  scaffoldingHandle.group.visible = false;
+
   // Which document this frame is actually drawing. Always shown, not only under ?city= -- the
   // whole point is that a viewer comparing two cities can never mis-attribute what's on screen.
   showSourceBadge(app, cityUrl, city, massing);
@@ -269,6 +284,7 @@ async function main(): Promise<void> {
     ["tethers", tethersHandle.group],
     ["landmarks", landmarksGroup],
     ["cranes", propsHandle.group],
+    ["scaffolding", scaffoldingHandle.group],
   ]);
   const layerControl = setupLayerControl({
     container: app,
@@ -277,6 +293,8 @@ async function main(): Promise<void> {
       { id: "tethers", label: "Tethers", initial: true },
       { id: "landmarks", label: "Landmarks", initial: true },
       { id: "cranes", label: "Cranes", initial: true },
+      // OFF by default (Usul's ruling, V5.4) -- see scaffoldingHandle's own comment above.
+      { id: "scaffolding", label: "Scaffolding", initial: false },
     ],
     onToggle: (id, visible) => {
       // Tethers own their visibility through the V5.1 Lane D handle rather than a raw
@@ -362,6 +380,9 @@ async function main(): Promise<void> {
     },
     craneCount(): number {
       return propsHandle.count;
+    },
+    scaffoldCount(): number {
+      return scaffoldingHandle.count;
     },
     cameraFraming() {
       return {
