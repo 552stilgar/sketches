@@ -250,7 +250,11 @@ async function main(): Promise<void> {
   // is simpler than widening BuildingsHandle's surface to leak an internal it doesn't otherwise
   // expose. selectCraneSites/buildProps are both static (props.ts header) -- built once here,
   // never touched by the render loop below.
-  const craneSites = selectCraneSites(city.buildings, computeCityLensRanks(city.buildings));
+  // heightScale must be the SAME resolved scale buildBuildings() got above -- a crane sized from
+  // the raw height floats free of the skyline it belongs to (props.ts CRANE_ROOFTOP_CLEARANCE_FRACTION).
+  const craneSites = selectCraneSites(city.buildings, computeCityLensRanks(city.buildings), {
+    heightScale: massing.scale,
+  });
   const propsHandle = buildProps(craneSites);
   scene.add(propsHandle.group);
 

@@ -129,6 +129,49 @@ describe("selectCraneSites", () => {
   });
 });
 
+describe("selectCraneSites -- massing scale", () => {
+  // Regression gate for the V6 merge-step finding: selectCraneSites sized cranes from the RAW
+  // Building.height while buildBuildings() renders at `b.height * heightScale`. On the real
+  // usul-mgmt city at the normalized scale 0.25 that put 95 cranes at 4.27x the median rendered
+  // building height. The invariant below is what "a crane works ON a building" means
+  // geometrically, and it must hold across the whole usable massing band, not just at scale 1.
+  const USABLE_SCALES = [0.25, 0.5, 1, 2];
+
+  it("sizes cranes from the RENDERED building height, at every scale in the usable band", () => {
+    const buildings = tenBuildingsSpread();
+    const ranks = computeCityLensRanks(buildings);
+
+    for (const heightScale of USABLE_SCALES) {
+      const specs = selectCraneSites(buildings, ranks, { minRank: 0, heightScale });
+      expect(specs.length).toBe(buildings.length);
+      for (const spec of specs) {
+        const building = buildings.find((b) => b.id === spec.buildingId)!;
+        const rendered = building.height * heightScale;
+        // Taller than what it's building (the whole point of the clearance)...
+        expect(spec.height).toBeGreaterThan(rendered);
+        // ...but never towering over it. The pre-fix code produced 4.27x here.
+        expect(spec.height).toBeLessThan(rendered * 2);
+      }
+    }
+  });
+
+  it("defaults heightScale to 1 rather than guessing the viewer's resolved scale", () => {
+    const buildings = tenBuildingsSpread();
+    const ranks = computeCityLensRanks(buildings);
+    const implicit = selectCraneSites(buildings, ranks, { minRank: 0 });
+    const explicit = selectCraneSites(buildings, ranks, { minRank: 0, heightScale: 1 });
+    expect(implicit).toEqual(explicit);
+  });
+
+  it("fails loudly on a non-positive or non-finite heightScale", () => {
+    const buildings = tenBuildingsSpread();
+    const ranks = computeCityLensRanks(buildings);
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => selectCraneSites(buildings, ranks, { heightScale: bad })).toThrow(/heightScale/);
+    }
+  });
+});
+
 describe("buildProps", () => {
   function findByBuildingId(root: THREE.Object3D, buildingId: string): THREE.Object3D | undefined {
     let found: THREE.Object3D | undefined;

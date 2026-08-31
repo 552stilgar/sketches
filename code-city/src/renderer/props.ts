@@ -60,11 +60,26 @@ export interface PropSpec {
  *  module's selection logic. */
 export const DEFAULT_MIN_CRANE_RANK = 0.9;
 
-/** Ground clearance a crane's jib sits above the RAW (unscaled) height of the building it stands
- *  beside -- mirrors tethers.ts's TETHER_ROOFTOP_CLEARANCE in spirit (a real, structural quantity
- *  derived from the building it attaches to, never a guessed absolute height), so a crane always
- *  reads as "taller than what it's building" regardless of that building's own height. */
-const CRANE_ROOFTOP_CLEARANCE = 8;
+/** How far a crane's jib rises above the RENDERED height of the building it stands beside, as a
+ *  FRACTION of that height -- so a crane always reads as "taller than what it's building" at any
+ *  building size and any massing scale, which is what makes it read as a machine working on that
+ *  building rather than a mast that happens to be nearby.
+ *
+ *  Proportional, not absolute, and both halves of that were learned by measurement:
+ *
+ *  1. It must key off the SCALED height. buildBuildings() renders every building at
+ *     `b.height * heightScale` (buildings.ts), so sizing from raw `b.height` floats a crane free
+ *     of the skyline it belongs to -- on the real usul-mgmt city at the normalized scale 0.25,
+ *     that put 95 safety-yellow masts at 4.27x the median rendered building (min 4.18, max 5.14),
+ *     spending back exactly the scarcity the top-decile threshold buys.
+ *  2. It must be a fraction, not world units. A fixed absolute clearance is a rounding error on a
+ *     tall building and a tower on a short one: at 8 world units over a building rendered 2.5
+ *     tall, the crane stands 4.2x its subject -- the same defect as (1), reached from the other
+ *     direction, and NOT fixed by scaling alone. This is the quantity "derived from the building
+ *     it attaches to, never a guessed absolute height" that this comment always claimed.
+ *
+ *  CRANE_STANDOFF below is deliberately NOT proportional -- see its own note. */
+const CRANE_ROOFTOP_CLEARANCE_FRACTION = 0.25;
 
 /** How far outside the building's own footprint the crane's mast stands -- a crane building INTO
  *  a structure would read as decoration growing out of the building, not a machine working beside
@@ -87,9 +102,16 @@ const CRANE_STANDOFF = 4;
 export function selectCraneSites(
   buildings: readonly Building[],
   ranks: CityLensRanks,
-  opts?: { minRank?: number },
+  opts?: { minRank?: number; heightScale?: number },
 ): PropSpec[] {
   const minRank = opts?.minRank ?? DEFAULT_MIN_CRANE_RANK;
+  // Must match the scale buildBuildings() actually renders at (see
+  // CRANE_ROOFTOP_CLEARANCE_FRACTION). Defaulting to 1 keeps an unscaled call honest rather than
+  // guessing the viewer's resolved scale here.
+  const heightScale = opts?.heightScale ?? 1;
+  if (!Number.isFinite(heightScale) || heightScale <= 0) {
+    throw new Error(`selectCraneSites: heightScale must be a finite positive number, got ${heightScale}`);
+  }
   const specs: PropSpec[] = [];
 
   for (const b of buildings) {
@@ -102,7 +124,7 @@ export function selectCraneSites(
     // knowledge this pure function deliberately doesn't have).
     const x = b.x + b.width + CRANE_STANDOFF;
     const z = b.y + b.depth / 2;
-    const height = b.height + CRANE_ROOFTOP_CLEARANCE;
+    const height = b.height * heightScale * (1 + CRANE_ROOFTOP_CLEARANCE_FRACTION);
 
     specs.push({ buildingId: b.id, kind: "crane", x, y: 0, z, height });
   }
