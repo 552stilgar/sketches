@@ -189,6 +189,44 @@ RED-turned-green this lane: `tests/ruins.test.ts` (real git fixtures: a deletion
 must not appear, a mixed rename+deletion commit, a re-add, the window boundary, and a
 HEAD-anchoring determinism check).
 
+## V5.4 + V6: age extremes -> scaffolding + patina/weathering overlays
+
+Motivation: `RepoNode.age` (V1, `docs/CONTRACT-repo-json.md` "Determinism rule: age") already
+carried age structurally, but nothing rendered it — these are renderer slices plus a small
+compiler-side wiring slice, not a new analyzer signal. `compileCity` now threads age through to
+`Building.metrics.age` / `.newestAge` / `.ageMeasured`
+(`docs/CONTRACT-city-json.md` § "Age extremes"), feeding two independent, OFF-by-default overlays
+(`src/main.ts` layer controls) so the default city render is byte-for-byte unchanged with both
+layers off.
+
+New producer/consumer pairs:
+
+| Contract | Producer | Consumer |
+|---|---|---|
+| `Building.metrics.age` (MAX) | `compileCity()` — `src/compiler/index.ts`, via `aggregateAge()` (`src/compiler/grammar.ts`) | `applyWeathering()` — `src/renderer/buildings.ts` ("Weathering" toggle) |
+| `Building.metrics.newestAge` (MIN) | same | `selectScaffoldSites()` — `src/renderer/props.ts` ("Scaffolding" toggle) |
+| `Building.metrics.ageMeasured` | same | both of the above — gates each one |
+
+**A1 — two extremes, two fields.** The weathering overlay asks "how old is the oldest wing"
+(MAX) and the scaffolding overlay asks "was something just added here" (MIN). These are opposite
+reductions of the same measurement and cannot share one `age` field; the two lanes that built
+these overlays each defined `metrics.age` for their own question, and merging them onto a single
+field would have silently broken whichever definition lost. They are split at merge (P3) into
+`age` and `newestAge`, both emitted by the same `aggregateAge()` so they can never drift apart.
+
+**A2 — `ageMeasured` is the never-fabricate guard, and it is what makes MIN safe.** `age: 0` from
+the analyzer's no-commits fallback (`src/analyzer/git.ts`, `firstDate ? ... : 0`) and `age: 0`
+from a file created on HEAD day are indistinguishable (both are real `0`s, not absences, so
+`todoCount`'s "absent = unmeasured" trick doesn't apply to `age` itself). `aggregateAge()`
+therefore reduces over members with `contributors.length > 0` ONLY. An unfiltered MIN would let a
+single never-committed file pull `newestAge` to `0` and raise scaffolding on an untouched
+building — the `318773d` failure mode (§5.5 constraint 2) reintroduced.
+
+All three fields are optional in the TYPE for the same reason `contentHash`/`todoCount` are:
+every `Building` fixture already in this repo, and every already-committed `public/*.json` city,
+predates them. Full field shape and both aggregation rules: `docs/CONTRACT-city-json.md` §
+"Age extremes".
+
 ## Phase 4: git time-travel (timeline scrub)
 
 Motivation (PROJECT_IDEA.md §5.2/Phase 4): a repo's history is a fourth navigable dimension.
@@ -305,4 +343,9 @@ All core modules are **fully implemented**:
 **V5.3 module** (ruins):
 - `readRuins()` — `src/analyzer/ruins.ts` — ✓ Implemented (`tests/ruins.test.ts`: 14 passing)
 
-**Overall: 432 tests passing across 39 files**.
+**V5.4 + V6 modules** (age extremes → scaffolding + weathering overlays):
+- `aggregateAge()` — `src/compiler/grammar.ts` — ✓ Implemented (`tests/compiler-age.test.ts`: 10 passing)
+- `selectScaffoldSites()` / `buildScaffoldMeshes()` — `src/renderer/props.ts` — ✓ Implemented (`tests/props-scaffold.test.ts`: 17 passing)
+- `applyWeathering()` / `setAgeOverlay()` — `src/renderer/buildings.ts` — ✓ Implemented (`tests/buildings.test.ts`)
+
+**Overall: 473 tests passing across 41 files**.

@@ -181,15 +181,23 @@ export const DEFAULT_MAX_SCAFFOLD_AGE_DAYS = 90;
 const SCAFFOLD_STANDOFF = 1.5;
 
 /**
- * Selects which buildings get scaffolding, keyed by `metrics.age` directly (not a percentile
+ * Selects which buildings get scaffolding, keyed by `metrics.newestAge` directly (not a percentile
  * rank, unlike churn -- "recently added" is a plain HEAD-anchored day count, not a
  * distribution-relative notion the way "unusually high churn" is). A building is selected only if
- * `metrics.age` is present AND at/below `opts.maxAgeDays` (default DEFAULT_MAX_SCAFFOLD_AGE_DAYS).
+ * `metrics.newestAge` is present, `metrics.ageMeasured` is true, AND the value is at/below
+ * `opts.maxAgeDays` (default DEFAULT_MAX_SCAFFOLD_AGE_DAYS).
  *
- * A missing `metrics.age` (a city.json compiled before this field shipped, see
- * BuildingMetrics.age's doc comment in src/types.ts) is UNMEASURED, not age 0 -- it is skipped
- * rather than defaulted, per NEVER-FABRICATE (same discipline selectCraneSites gives a missing
- * churn rank).
+ * `newestAge` (MIN across measured members), NOT `age` (MAX): the question here is "does this
+ * location contain a newly-created file", which the oldest wing would immediately wash out.
+ * See docs/CONTRACT-city-json.md § "Age extremes" for why these are two separate fields.
+ *
+ * TWO absence cases, both UNMEASURED and both skipped rather than defaulted, per NEVER-FABRICATE
+ * (same discipline selectCraneSites gives a missing churn rank):
+ *   - `metrics.newestAge` absent -- a city.json compiled before this field shipped.
+ *   - `metrics.ageMeasured` not true -- no member of this building has any git history, so its
+ *     `newestAge: 0` is the analyzer's no-commits fallback (src/analyzer/git.ts), NOT a file
+ *     created today. Without this check a never-committed file raises scaffolding on an
+ *     untouched building -- the fabricated-zero failure of 318773d.
  *
  * Pure and order-preserving, same determinism posture as selectCraneSites: iterates `buildings`
  * in the order given, never sorts or reorders.
@@ -208,7 +216,10 @@ export function selectScaffoldSites(
   const specs: PropSpec[] = [];
 
   for (const b of buildings) {
-    const age = b.metrics.age;
+    // Gate order matters: ageMeasured first, because a `newestAge: 0` from the no-commits
+    // fallback is a real 0 and would otherwise sail past the threshold check below.
+    if (b.metrics.ageMeasured !== true) continue; // unmeasured -- never fabricate an age
+    const age = b.metrics.newestAge;
     if (age === undefined) continue; // unmeasured -- never fabricate an age
     if (age > maxAgeDays) continue;
 

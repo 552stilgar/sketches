@@ -1,11 +1,13 @@
 // props.ts (src/renderer/props.ts) -- age -> scaffolding prop selection + static geometry (V5.4,
 // sibling of the V5.2 churn -> crane overlay pinned in tests/props.test.ts). Pins the behaviors
 // the C2 task called out explicitly:
-//   1. Selection is by `metrics.age` directly against a documented, HEAD-window-anchored default
-//      threshold -- not a percentile rank (age is an absolute day count, not a distribution-
-//      relative notion the way "unusually high churn" is).
-//   2. A building whose `metrics.age` is absent gets NO scaffold, ever -- absence is UNMEASURED,
-//      never "brand new" (never fabricate an unmeasured signal into a plausible-looking zero).
+//   1. Selection is by `metrics.newestAge` directly against a documented, HEAD-window-anchored
+//      default threshold -- not a percentile rank (age is an absolute day count, not a
+//      distribution-relative notion the way "unusually high churn" is). `newestAge` (MIN across
+//      measured members), never `age` (MAX) -- see docs/CONTRACT-city-json.md "Age extremes".
+//   2. A building whose `metrics.newestAge` is absent -- OR whose `metrics.ageMeasured` is not
+//      true -- gets NO scaffold, ever: both are UNMEASURED, never "brand new" (never fabricate
+//      an unmeasured signal into a plausible-looking zero).
 //   3. Deterministic and pure: same buildings -> identical PropSpec[], same order.
 //   4. A crane and a scaffold on the SAME building never collide geometrically.
 //   5. A crane and a scaffold are visually distinguishable (different color, different silhouette).
@@ -34,7 +36,15 @@ function makeBuilding(id: string, age: number | undefined, overrides?: Partial<B
     depth: 4,
     height: 10,
     style: "flat",
-    metrics: { loc: 100, complexity: 5, churn: 0, ...(age === undefined ? {} : { age }) },
+    // A measured building carries newestAge + ageMeasured together; `age` (the MAX/oldest-wing
+    // field the weathering overlay reads) is deliberately NOT set here -- scaffolding must never
+    // read it.
+    metrics: {
+      loc: 100,
+      complexity: 5,
+      churn: 0,
+      ...(age === undefined ? {} : { newestAge: age, ageMeasured: true }),
+    },
     ...overrides,
   };
 }
@@ -67,9 +77,44 @@ describe("selectScaffoldSites", () => {
     expect(selectScaffoldSites(buildings, { maxAgeDays: 25 }).map((s) => s.buildingId)).toEqual(["a", "b"]);
   });
 
-  it("a building with metrics.age absent gets no scaffold, regardless of how young it might be", () => {
+  it("reads newestAge (youngest wing), never age (oldest wing)", () => {
+    // The merge-point ruling (P3): `age` is MAX-across-members and belongs to the weathering
+    // overlay; scaffolding reads `newestAge`. A building that is ancient overall but contains a
+    // brand-new file MUST get a scaffold, and a building whose only young number is in `age`
+    // must NOT -- otherwise the two overlays are silently reading each other's signal.
+    const sites = selectScaffoldSites([
+      makeBuilding("old-dir-with-new-file", undefined, {
+        x: 0,
+        metrics: { loc: 100, complexity: 5, churn: 0, age: 4000, newestAge: 3, ageMeasured: true },
+      }),
+      makeBuilding("young-max-only", undefined, {
+        x: 50,
+        metrics: { loc: 100, complexity: 5, churn: 0, age: 3, ageMeasured: true },
+      }),
+    ]);
+    expect(sites.map((s) => s.buildingId)).toEqual(["old-dir-with-new-file"]);
+  });
+
+  it("a building with ageMeasured false gets no scaffold even though newestAge is 0", () => {
+    // src/analyzer/git.ts emits age 0 BOTH for a file committed today and for a file with no
+    // commits at all. ageMeasured is the only thing separating them, so an unmeasured building
+    // whose newestAge is a real, threshold-passing 0 must still be skipped -- this is exactly
+    // the fabricated-zero failure of 318773d.
+    const sites = selectScaffoldSites([
+      makeBuilding("no-git-history", undefined, {
+        metrics: { loc: 100, complexity: 5, churn: 0, newestAge: 0, ageMeasured: false },
+      }),
+      makeBuilding("no-flag-at-all", undefined, {
+        x: 50,
+        metrics: { loc: 100, complexity: 5, churn: 0, newestAge: 0 },
+      }),
+    ]);
+    expect(sites).toEqual([]);
+  });
+
+  it("a building with metrics.newestAge absent gets no scaffold, regardless of how young it might be", () => {
     const buildings = [
-      makeBuilding("unmeasured", undefined, { x: 0 }), // no metrics.age at all
+      makeBuilding("unmeasured", undefined, { x: 0 }), // no metrics.newestAge at all
       makeBuilding("measured-old", 5000, { x: 10 }),
     ];
     // Even with an enormous maxAgeDays, the unmeasured building is never selected -- absence is
@@ -122,7 +167,7 @@ describe("selectScaffoldSites", () => {
 
 describe("crane + scaffold on the same building", () => {
   it("never collide geometrically -- opposite edges of the footprint", () => {
-    const building = makeBuilding("dual", 1, { x: 100, y: 200, width: 6, depth: 8, height: 30, metrics: { loc: 100, complexity: 5, churn: 999, age: 1 } });
+    const building = makeBuilding("dual", 1, { x: 100, y: 200, width: 6, depth: 8, height: 30, metrics: { loc: 100, complexity: 5, churn: 999, newestAge: 1, ageMeasured: true } });
     const buildings = [building];
     const ranks = computeCityLensRanks(buildings);
     const [crane] = selectCraneSites(buildings, ranks, { minRank: 0 });

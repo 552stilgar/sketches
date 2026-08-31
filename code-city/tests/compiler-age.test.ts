@@ -1,4 +1,6 @@
-// compileCity's `metrics.age` carry-through (V5.4, docs/CONTRACT-city-json.md § "Building age").
+// compileCity's age-extremes carry-through (V5.4 + V6, docs/CONTRACT-city-json.md § "Age
+// extremes"): `metrics.age` (MAX/oldest wing, weathering), `metrics.newestAge` (MIN/youngest
+// wing, scaffolding), and the `metrics.ageMeasured` gate that makes both honest.
 // age already existed as a required field on every RepoNode; this pins the NEW compiler-level
 // behavior: file-LOD passthrough, directory-LOD MIN aggregation (not sum, unlike churn), and the
 // validator's optional-but-non-negative-when-present treatment (mirrors Road.weight).
@@ -20,7 +22,9 @@ function node(id: string, age: number, overrides?: Partial<RepoNode>): RepoNode 
     complexity: 1,
     churn: 0,
     age,
-    contributors: [],
+    // Non-empty by default: contributors.length > 0 is what marks an age as MEASURED
+    // (src/compiler/grammar.ts hasMeasuredAge). Tests that want the unmeasured path override it.
+    contributors: ["Ada <ada@example.com>"],
     imports: [],
     calls: [],
     contains: [],
@@ -28,8 +32,8 @@ function node(id: string, age: number, overrides?: Partial<RepoNode>): RepoNode 
   };
 }
 
-describe("compileCity: metrics.age", () => {
-  it("at file LOD, carries a file's own age through unchanged", () => {
+describe("compileCity: age extremes", () => {
+  it("at file LOD, carries a file's own age through unchanged as BOTH extremes", () => {
     const graph: RepoGraph = {
       nodes: [node("a.ts", 42), node("b.ts", 7)],
       repoPath: "/repo",
@@ -38,15 +42,18 @@ describe("compileCity: metrics.age", () => {
     };
     const city = compileCity(graph);
     const byId = new Map(city.buildings.map((b) => [b.id, b]));
+    // One member => max === min === that file's own age.
     expect(byId.get("a.ts")?.metrics.age).toBe(42);
+    expect(byId.get("a.ts")?.metrics.newestAge).toBe(42);
+    expect(byId.get("a.ts")?.metrics.ageMeasured).toBe(true);
     expect(byId.get("b.ts")?.metrics.age).toBe(7);
+    expect(byId.get("b.ts")?.metrics.newestAge).toBe(7);
   });
 
-  it("at directory LOD, aggregates to the MINIMUM age across members -- youngest wins, not a sum", () => {
+  it("at directory LOD, age is the MAX (oldest wing) and newestAge the MIN (youngest wing)", () => {
     // > 500 files forces directory-level LOD aggregation (selectBuildingSources).
     const nodes: RepoNode[] = Array.from({ length: 501 }, (_, i) => node(`dir/f${i}.ts`, 100 + i));
-    // The youngest file in the group -- min age wins.
-    nodes[3] = node("dir/f3.ts", 2);
+    nodes[3] = node("dir/f3.ts", 2); // the youngest file in the group
     const graph: RepoGraph = {
       nodes,
       repoPath: "/repo",
@@ -56,25 +63,63 @@ describe("compileCity: metrics.age", () => {
     const city = compileCity(graph);
     const aggregated = city.buildings.find((b) => b.id === "directory:dir");
     expect(aggregated).toBeDefined();
-    expect(aggregated!.metrics.age).toBe(2);
-    // Definitely not a sum (which would be enormous here) and not an average either.
-    expect(aggregated!.metrics.age).toBeLessThan(100);
+    // The two overlays read opposite ends of the same distribution -- this is the whole reason
+    // they are two fields (docs/CONTRACT-city-json.md "Age extremes", decision A1).
+    expect(aggregated!.metrics.newestAge).toBe(2);
+    expect(aggregated!.metrics.age).toBe(600); // 100 + 500, the oldest member
+    // Neither is a sum (which would be enormous here) nor an average.
+    expect(aggregated!.metrics.newestAge).toBeLessThan(100);
+    expect(aggregated!.metrics.ageMeasured).toBe(true);
   });
 
-  it("compileCity always emits a real numeric age -- never omits the field for a real node", () => {
+  it("a node with NO git history is ageMeasured:false -- not a fabricated brand-new zero", () => {
     const graph: RepoGraph = {
-      nodes: [node("a.ts", 0)],
+      nodes: [node("a.ts", 0, { contributors: [] })],
       repoPath: "/repo",
       headSha: "deadbeef",
       headDate: "2026-08-31T00:00:00.000Z",
     };
     const city = compileCity(graph);
+    // The analyzer's no-commits fallback is a real 0 (src/analyzer/git.ts). The numbers are
+    // emitted as 0, but ageMeasured:false is what stops a renderer reading that as "brand new".
     expect(city.buildings[0].metrics.age).toBe(0);
+    expect(city.buildings[0].metrics.newestAge).toBe(0);
+    expect(city.buildings[0].metrics.ageMeasured).toBe(false);
+    expect(validateCity(city).ok).toBe(true);
+  });
+
+  it("an unmeasured member never drags a measured sibling's extremes", () => {
+    const nodes: RepoNode[] = Array.from({ length: 501 }, (_, i) => node(`dir/f${i}.ts`, 100 + i));
+    // A never-committed file sitting in an otherwise-measured directory. An UNFILTERED min would
+    // report newestAge 0 here and raise scaffolding on an untouched building (318773d's shape).
+    nodes[7] = node("dir/f7.ts", 0, { contributors: [] });
+    const graph: RepoGraph = {
+      nodes,
+      repoPath: "/repo",
+      headSha: "deadbeef",
+      headDate: "2026-08-31T00:00:00.000Z",
+    };
+    const city = compileCity(graph);
+    const aggregated = city.buildings.find((b) => b.id === "directory:dir");
+    expect(aggregated!.metrics.newestAge).toBe(100); // f0, the youngest MEASURED member
+    expect(aggregated!.metrics.ageMeasured).toBe(true);
+  });
+
+  it("compileCity always emits real numeric extremes -- never omits the fields", () => {
+    const graph: RepoGraph = {
+      nodes: [node("a.ts", 3)],
+      repoPath: "/repo",
+      headSha: "deadbeef",
+      headDate: "2026-08-31T00:00:00.000Z",
+    };
+    const city = compileCity(graph);
+    expect(city.buildings[0].metrics.age).toBe(3);
+    expect(city.buildings[0].metrics.newestAge).toBe(3);
     expect(validateCity(city).ok).toBe(true);
   });
 });
 
-describe("validateCity: metrics.age", () => {
+describe("validateCity: age extremes", () => {
   function baseCity() {
     return {
       districts: [{ id: "district:.", name: ".", x: 0, y: 0, width: 10, depth: 10, style: "typescript" }],
@@ -98,6 +143,28 @@ describe("validateCity: metrics.age", () => {
   it("accepts a city.json with metrics.age entirely absent (pre-migration compatibility)", () => {
     const city = baseCity();
     expect(validateCity(city).ok).toBe(true);
+  });
+
+  it("applies the same non-negative-number rule to metrics.newestAge", () => {
+    for (const bad of [-1, "young", Number.NaN]) {
+      const city = baseCity();
+      city.buildings[0].metrics.newestAge = bad;
+      const result = validateCity(city);
+      expect(result.ok).toBe(false);
+      expect(result.errors.some((e) => e.includes("metrics.newestAge"))).toBe(true);
+    }
+    const good = baseCity();
+    good.buildings[0].metrics.newestAge = 0;
+    expect(validateCity(good).ok).toBe(true);
+  });
+
+  it("rejects a non-boolean metrics.ageMeasured but accepts its absence", () => {
+    const city = baseCity();
+    city.buildings[0].metrics.ageMeasured = "yes";
+    const result = validateCity(city);
+    expect(result.ok).toBe(false);
+    expect(result.errors.some((e) => e.includes("metrics.ageMeasured"))).toBe(true);
+    expect(validateCity(baseCity()).ok).toBe(true);
   });
 
   it("accepts a present, non-negative metrics.age", () => {

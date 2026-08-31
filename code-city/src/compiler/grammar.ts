@@ -9,11 +9,50 @@ export interface BuildingSource {
   loc: number;
   complexity: number;
   churn: number;
-  /** Youngest member's age (min, not sum) -- see BuildingMetrics.age's doc comment in
-   *  src/types.ts for why "does this building contain a newly-created file" wants a min, not a
-   *  blended average or a total the way loc/complexity/churn do. */
+  /** V6 age weathering: MAX age across members with real git history, 0 if none do -- see
+   *  BuildingMetrics.age doc comment (src/types.ts) for why max, not sum. */
   age: number;
+  /** V5.4 scaffolding: MIN age across members with real git history, 0 if none do -- the
+   *  "youngest wing" counterpart to `age`. See BuildingMetrics.newestAge (src/types.ts). */
+  newestAge: number;
+  /** True iff at least one member has contributors.length > 0. Gates BOTH `age` and
+   *  `newestAge` -- neither is a measurement when this is false. */
+  ageMeasured: boolean;
   members: RepoNode[];
+}
+
+/** RepoNode.contributors is non-empty iff the node has at least one real commit
+ *  (docs/CONTRACT-repo-json.md) -- the only signal that distinguishes a genuinely-measured
+ *  age from the analyzer's no-commits `age: 0` fallback (src/analyzer/git.ts). */
+function hasMeasuredAge(node: RepoNode): boolean {
+  return node.contributors.length > 0;
+}
+
+/**
+ * Aggregates the two age extremes across a building's members, both restricted to members with a
+ * real measurement:
+ *   - `age`       = MAX -- the "oldest wing", what the V6 weathering overlay reads.
+ *   - `newestAge` = MIN -- the "youngest wing", what the V5.4 scaffolding overlay reads
+ *                   ("does this building contain a newly-created file", which a single old
+ *                   sibling must not wash out).
+ *
+ * They are two SEPARATE signals because they answer opposite questions; collapsing them into one
+ * `age` field silently breaks whichever overlay didn't define it (see docs/CONTRACT-city-json.md
+ * "Age extremes"). The `hasMeasuredAge` restriction is what keeps both honest: RepoNode.age is 0
+ * both for a file committed today AND for a file with no commits at all (src/analyzer/git.ts
+ * `firstDate ? ... : 0`), so an unfiltered MIN would report a never-committed file as "brand new"
+ * -- the fabricated-zero failure §5.5 constraint 2 forbids. A building with no measured members
+ * reports ageMeasured:false and both numbers 0, which renderers MUST read as UNMEASURED.
+ */
+function aggregateAge(members: readonly RepoNode[]): {
+  age: number;
+  newestAge: number;
+  ageMeasured: boolean;
+} {
+  const measured = members.filter(hasMeasuredAge);
+  if (measured.length === 0) return { age: 0, newestAge: 0, ageMeasured: false };
+  const ages = measured.map((m) => m.age);
+  return { age: Math.max(...ages), newestAge: Math.min(...ages), ageMeasured: true };
 }
 
 export function normalizePath(path: string): string {
@@ -41,7 +80,7 @@ function aggregate(id: string, path: string, districtPath: string, members: Repo
     loc: members.reduce((sum, node) => sum + node.loc, 0),
     complexity: members.reduce((sum, node) => sum + node.complexity, 0),
     churn: members.reduce((sum, node) => sum + node.churn, 0),
-    age: Math.min(...members.map((node) => node.age)),
+    ...aggregateAge(members),
     members,
   };
 }
@@ -83,7 +122,9 @@ export function selectBuildingSources(
     loc: node.loc,
     complexity: node.complexity,
     churn: node.churn,
-    age: node.age,
+    // One-member building: same aggregation path as a directory building, so a file's age
+    // extremes are gated by hasMeasuredAge identically (age === newestAge here by definition).
+    ...aggregateAge([node]),
     members: [node],
   });
   if (files.length <= 500) {

@@ -25,7 +25,15 @@ interface Building {
                        // this is what lets a renderer/UI join a building back to its metrics.
   x: number; y: number; width: number; depth: number; height: number;  // canvas coords + height
   style: string;
-  metrics: { loc: number; complexity: number; churn: number; age?: number };
+  metrics: {
+    loc: number; complexity: number; churn: number;
+    age?: number;           // V6 — OLDEST measured member (MAX). See "Age extremes" below.
+    newestAge?: number;     // V5.4 — YOUNGEST measured member (MIN). See "Age extremes" below.
+                             // Both optional: absent on any city.json compiled before they
+                             // shipped, never a fabricated 0.
+    ageMeasured?: boolean;  // true iff `age`/`newestAge` reflect a real git history, not the
+                             // analyzer's no-commits fallback. Absent must be treated as false.
+  };
 }
 
 interface Road {
@@ -119,26 +127,6 @@ The compiler emits weights; the **renderer** owns anything animated from them. `
 a pure function with no clock and no randomness — no frame timing, pulse rate, or dash offset ever
 appears in `city.json` (`PROJECT_IDEA.md` §5.5, determinism constraint).
 
-## Building age (`metrics.age`, V5.4)
-
-`metrics.age` is `compileCity`'s carry-through of `RepoNode.age` (`docs/CONTRACT-repo-json.md`
-§ "Determinism rule: age") into `city.json`, feeding the scaffolding overlay
-(`src/renderer/props.ts` `selectScaffoldSites`, sibling of the V5.2 churn → crane overlay).
-
-- At file LOD, `metrics.age` is that file's own `age` unchanged.
-- At directory/clone-group LOD, `metrics.age` is the **minimum** age across the building's member
-  files — the youngest member, not a sum or average — because the question this field answers is
-  "does this location contain a newly-created file", which a blended average would wash out the
-  moment one old sibling file joins the group. Contrast `metrics.churn`, which sums (total
-  activity, not recency, is the question there).
-- Optional in `types.ts` for the same reason `Road.weight` is: so a `city.json` compiled before
-  this field shipped stays valid. `compileCity` **MUST** always emit a real value for every
-  building going forward — `RepoNode.age` is a required, always-measured field (git history alone
-  determines it; unlike `todoCount` there is no "unsupported language" absence case). A renderer
-  reading a missing `metrics.age` (an older `city.json`) **must** treat it as UNMEASURED, never as
-  age `0` — a missing signal reading as "brand new" is exactly the fabricated-zero failure
-  `PROJECT_IDEA.md` §5.5 constraint 2 already ruled out project-wide.
-
 ## Landmarks (V4)
 
 `Landmark.kind` is an open string, but V4's analyzer/compiler pipeline emits exactly one kind:
@@ -168,6 +156,72 @@ motion on roads and stillness on tethers learns the difference in one glance.
 **D3 — exact hash only.** See `docs/CONTRACT-repo-json.md` § "Clone identity / content hash" for
 the full rule; it applies identically here — `compileCity` must never widen exact-hash grouping
 into any form of near-duplicate clustering.
+
+## Age extremes (`metrics.age` / `.newestAge` / `.ageMeasured`, V5.4 + V6)
+
+- Producer: `compileCity` (`src/compiler/index.ts` via `aggregateAge`, `src/compiler/grammar.ts`),
+  sourcing `RepoNode.age` / `RepoNode.contributors` (`docs/CONTRACT-repo-json.md` "Determinism
+  rule: age")
+- Consumers, both OFF-by-default layer-control toggles, never applied unless the viewer turns
+  them on:
+  - `age` → `buildBuildings` / `applyWeathering` (`src/renderer/buildings.ts`), the V6
+    "Weathering" patina overlay
+  - `newestAge` → `selectScaffoldSites` (`src/renderer/props.ts`), the V5.4 "Scaffolding" overlay
+- Validator: `validateCity` checks `metrics.age` and `metrics.newestAge` (non-negative number,
+  each when present) and `metrics.ageMeasured` (boolean, when present)
+
+### Two extremes, two fields — not one
+
+The two overlays ask **opposite** questions of the same underlying measurement, so they get two
+separate fields. One `age` field cannot mean both, and collapsing them silently breaks whichever
+overlay did not define it.
+
+| Field | Aggregation across members | Question it answers |
+|---|---|---|
+| `age` | **MAX** of measured members | "how weathered is this building's oldest wing?" |
+| `newestAge` | **MIN** of measured members | "does this location contain a newly-created file?" |
+
+At file LOD the building has one member, so `age === newestAge` by definition. At
+directory/clone-group LOD (see "LOD" below) they diverge, and that divergence is the point:
+
+- **MAX for weathering**, not sum or average: a directory-aggregate building should read as
+  weathered the moment it contains one old file, the same way a real building's oldest wing shows
+  through. Summing would make a building of many young files read older than its oldest member
+  actually is; averaging would hide a single ancient file inside a pile of new ones.
+- **MIN for scaffolding**, not average: a single old sibling file must not wash out the signal
+  that something was just added here.
+
+Contrast `metrics.churn`, which **sums** — total activity, not recency, is the question there.
+
+### `ageMeasured` gates both — never-fabricate
+
+**Never-fabricate applies to absence, not just to values (PROJECT_IDEA §5.5 constraint 2).** A
+file's `age` reaching `analyzeRepo`'s no-commits fallback (`age: 0`, `src/analyzer/git.ts`
+`const age = firstDate ? ... : 0`) is NOT the same claim as "this file is brand new" — a
+genuinely day-old file and a file with no git history at all both surface as `age: 0`.
+`ageMeasured` is the only signal that disambiguates them, and it is derived from
+`contributors.length > 0`, never from `age` itself being nonzero.
+
+This gate is what makes MIN safe. An **unfiltered** MIN over all members would let a single
+never-committed file pull `newestAge` to 0 and light up scaffolding on an untouched building —
+precisely the fabricated-zero failure that got the commit-prefix churn heuristic deleted
+(`318773d`). `aggregateAge` therefore computes both extremes over measured members ONLY, and
+reports `ageMeasured: false` with both numbers `0` when a building has no measured member at all.
+
+A renderer MUST treat `ageMeasured === false` — or any of these fields being absent (a
+pre-migration `city.json`, or a building with zero measured members) — identically: as
+UNMEASURED, visually distinct from both "clean/new" and "weathered/old", and never as grounds to
+draw scaffolding. All three fields are optional in the TYPE for the same reason
+`contentHash`/`todoCount` are: they land ahead of every existing `Building` fixture in this repo
+and every already-committed `public/*.json` city, none of which carry them — absence means NOT
+MEASURED, never a fabricated 0/false.
+
+### Normalization
+
+Weathering normalizes against the CITY'S OWN age distribution, not a hardcoded day count (`p95`
+over this city's `ageMeasured` buildings only, mirroring the `loc`/`complexity` reference pattern
+already in `compileCity`) — a 3-month-old repo and a 10-year-old repo each produce a legible
+weathering spread instead of one reading as uniformly "new" against the other's scale.
 
 ## Layout algorithm (fixed — do not redesign)
 
@@ -282,8 +336,9 @@ which fails loudly (non-zero exit, listing the valid set) on anything else — s
 
 `validateCity` checks: `districts`/`buildings`/`roads`/`landmarks` are present; every
 district/building has the required fields with correct types (`metrics.loc`/`.complexity`/
-`.churn` included; `metrics.age`, when present, must be a non-negative number — it is legally
-absent altogether, see "Building age" above); every district id is unique among districts and every building id is unique
+`.churn` included, plus `metrics.age`/`.newestAge`/`.ageMeasured` type-checked only when present
+— `age`/`newestAge` must each be a non-negative number when present and are legally absent
+altogether, see "Age extremes" below); every district id is unique among districts and every building id is unique
 among buildings; every road's `from`/`to` resolves to a real building id (dangling road refs are a
 hard validation failure); a landmark's `label`/`weight`, when present, are a non-empty string /
 non-negative number respectively. It does **not** check the geometric invariants above (no-overlap,

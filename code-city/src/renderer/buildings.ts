@@ -44,6 +44,16 @@ export interface BuildingsHandle {
   setLens(lens: LensId): void;
   /** The lens most recently applied via setLens() (DEFAULT_LENS until the first call). */
   currentLens(): LensId;
+  /**
+   * Toggles the V6 age -> patina/weathering overlay: recolors the ALREADY-BUILT instances in
+   * place, same mechanism as setLens() (no geometry rebuild, no footprint change -- weathering is
+   * a color-only signal, see applyWeathering()). OFF by default (Usul's ruling: no aesthetic
+   * default ships unseen) -- the default render is unchanged from before this overlay existed
+   * until a caller turns it on.
+   */
+  setAgeOverlay(enabled: boolean): void;
+  /** Whether the age overlay is currently applied (false until the first setAgeOverlay(true)). */
+  ageOverlayEnabled(): boolean;
 }
 
 // -------------------------------------------------------------------------------------------
@@ -501,6 +511,55 @@ function applyDeadTint(base: THREE.Color): THREE.Color {
   return new THREE.Color().setHSL(hsl.h, hsl.s * 0.25, Math.min(hsl.l, 0.12));
 }
 
+// -------------------------------------------------------------------------------------------
+// V6 -- age -> patina/weathering overlay (pure, tested)
+// -------------------------------------------------------------------------------------------
+//
+// docs/CONTRACT-city-json.md "Age weathering (V6)": age IS measured (unlike, say, the structural
+// liveness above), so a MEASURED building may render its age as a real spread of weathering --
+// but a building with no measured age (ageMeasured === false, or the field simply absent on a
+// pre-V6 city.json) must render as visibly UNMEASURED, never as "brand new". Age 0 (a file
+// created on HEAD day, genuinely measured) and age-absent (no git history at all) are two
+// different claims and must never collapse into the same clean/new look.
+
+/** Mossy grey-green patina an old, measured building mixes toward as age climbs -- deliberately
+ *  desaturated/dark so it reads as "worn", not as a hue swap that could be mistaken for a
+ *  different language's style color. */
+const PATINA_TARGET = new THREE.Color().setHSL(0.28, 0.22, 0.24);
+const PATINA_MIX_MAX = 0.62;
+
+/** A caution-amber tint for UNMEASURED buildings -- deliberately far from both a clean building's
+ *  own hue and PATINA_TARGET's mossy green, so "we don't know this building's age" never reads as
+ *  "old" or blends in as "new" on any city's own language palette. Mixed at a FIXED amount
+ *  (never scaled by `age`, since an unmeasured age number carries no real signal to scale by). */
+const UNMEASURED_TINT = new THREE.Color().setHSL(0.13, 0.6, 0.55);
+const UNMEASURED_MIX = 0.4;
+
+/**
+ * Normalizes one building's measured age against the city's own age reference (its p95, nearest
+ * rank -- same discipline p95() elsewhere on this page uses for loc/complexity/fan-in). A
+ * degenerate city where every measured building has equal age puts every one of them at the same
+ * intensity, matching how occupancyIntensity()/normalizeWeight() already treat a flat
+ * distribution -- never fabricating a spread the data doesn't contain.
+ */
+export function normalizeAge(age: number, ageRef: number): number {
+  const safeAge = Math.max(0, age);
+  const safeRef = Math.max(1, ageRef);
+  return Math.min(1, safeAge / safeRef);
+}
+
+/**
+ * The one age -> weathering color mapping. `measured` gates which visual channel applies:
+ * unmeasured buildings get the fixed UNMEASURED_TINT regardless of `age`'s numeric value (which
+ * may be the analyzer's meaningless no-commits 0), measured buildings get patina proportional to
+ * their normalized age. Never both -- an unmeasured building is not "age 0", it is "no reading".
+ */
+export function applyWeathering(base: THREE.Color, age: number, ageRef: number, measured: boolean): THREE.Color {
+  const c = base.clone();
+  if (!measured) return c.lerp(UNMEASURED_TINT, UNMEASURED_MIX);
+  return c.lerp(PATINA_TARGET, normalizeAge(age, ageRef) * PATINA_MIX_MAX);
+}
+
 function makeLabelSprite(text: string): THREE.Sprite {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
@@ -591,6 +650,8 @@ function applyInstance(
   hasOutgoing: boolean,
   fanInRef: number,
   baseHeightScale: number,
+  ageOverlayEnabled: boolean,
+  ageRef: number,
 ): void {
   const cx = b.x + b.width / 2;
   const cz = b.y + b.depth / 2;
@@ -607,10 +668,13 @@ function applyInstance(
   const base = hsl
     ? new THREE.Color().setHSL(hsl.hue, hsl.sat, THREE.MathUtils.clamp(hsl.light + lightnessBias, 0.05, 0.92))
     : buildingColor(b, lightnessBias);
-  const color =
+  let color =
     classifyStructuralLiveness(fanIn, hasOutgoing) === "dead"
       ? applyDeadTint(base)
       : applyOccupancy(base, occupancyIntensity(fanIn, fanInRef));
+  if (ageOverlayEnabled) {
+    color = applyWeathering(color, b.metrics.age ?? 0, ageRef, b.metrics.ageMeasured === true);
+  }
   mesh.setColorAt(index, color);
 }
 
@@ -632,6 +696,14 @@ export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): B
   const outgoing = computeOutgoing(roads);
   const fanInRef = p95(city.buildings.map((b) => fanInById.get(b.id) ?? 0));
   const lensRanks = computeCityLensRanks(city.buildings as Building[]);
+  // V6: reference for normalizeAge()/applyWeathering() -- restricted to genuinely MEASURED
+  // buildings (docs/CONTRACT-city-json.md "Age weathering (V6)"), so a city where every file is
+  // unmeasured doesn't collapse the reference to 0 (p95([]) already floors at 1) and an unmeasured
+  // building's meaningless age:0 fallback never pollutes the scale real ages are judged against.
+  const ageRef = p95(
+    (city.buildings as Building[]).filter((b) => b.metrics.ageMeasured === true).map((b) => b.metrics.age ?? 0),
+  );
+  let ageOverlayEnabled = false;
 
   const meshes: THREE.InstancedMesh[] = [];
   const meshOrder = new Map<THREE.InstancedMesh, Building[]>();
@@ -662,7 +734,21 @@ export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): B
     list.forEach((b, i) => {
       const fanIn = fanInById.get(b.id) ?? 0;
       const hasOutgoing = outgoing.has(b.id);
-      applyInstance(dummy, mesh, i, b, activeLens, 0, profile.lightnessBias, fanIn, hasOutgoing, fanInRef, baseHeightScale);
+      applyInstance(
+        dummy,
+        mesh,
+        i,
+        b,
+        activeLens,
+        0,
+        profile.lightnessBias,
+        fanIn,
+        hasOutgoing,
+        fanInRef,
+        baseHeightScale,
+        ageOverlayEnabled,
+        ageRef,
+      );
 
       // buildingCenter() is always the unscaled (architecture-lens) top-of-building, on purpose
       // (see BuildingsHandle.buildingCenter doc) -- computed once here from the RAW height, never
@@ -690,19 +776,35 @@ export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): B
     return centers.get(id) ?? null;
   }
 
-  function setLens(lens: LensId): void {
-    activeLens = lens;
+  /** Re-applies every already-built instance's transform/color for the CURRENT `activeLens` and
+   *  `ageOverlayEnabled` state -- the shared refresh both setLens() and setAgeOverlay() drive, so
+   *  switching either one never leaves the other stale on screen. */
+  function refreshAllInstances(): void {
     const touched = new Set<THREE.InstancedMesh>();
     for (const b of city.buildings as Building[]) {
       const entry = instanceIndex.get(b.id);
       if (!entry) continue;
       const fanIn = fanInById.get(b.id) ?? 0;
       const hasOutgoing = outgoing.has(b.id);
-      const rank = rankForLens(lens, {
+      const rank = rankForLens(activeLens, {
         complexityRank: lensRanks.complexityRank.get(b.id) ?? 0,
         churnRank: lensRanks.churnRank.get(b.id) ?? 0,
       });
-      applyInstance(dummy, entry.mesh, entry.index, b, lens, rank, entry.lightnessBias, fanIn, hasOutgoing, fanInRef, baseHeightScale);
+      applyInstance(
+        dummy,
+        entry.mesh,
+        entry.index,
+        b,
+        activeLens,
+        rank,
+        entry.lightnessBias,
+        fanIn,
+        hasOutgoing,
+        fanInRef,
+        baseHeightScale,
+        ageOverlayEnabled,
+        ageRef,
+      );
       touched.add(entry.mesh);
     }
     for (const mesh of touched) {
@@ -711,8 +813,22 @@ export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): B
     }
   }
 
+  function setLens(lens: LensId): void {
+    activeLens = lens;
+    refreshAllInstances();
+  }
+
   function currentLens(): LensId {
     return activeLens;
+  }
+
+  function setAgeOverlay(enabled: boolean): void {
+    ageOverlayEnabled = enabled;
+    refreshAllInstances();
+  }
+
+  function ageOverlayEnabledFn(): boolean {
+    return ageOverlayEnabled;
   }
 
   return {
@@ -723,5 +839,7 @@ export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): B
     buildingCenter,
     setLens,
     currentLens,
+    setAgeOverlay,
+    ageOverlayEnabled: ageOverlayEnabledFn,
   };
 }

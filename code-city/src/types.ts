@@ -149,26 +149,46 @@ export interface BuildingMetrics {
   complexity: number;
   churn: number;
   /**
-   * Days from the building's YOUNGEST member file's first commit to `RepoGraph.headDate` --
-   * `compileCity`'s aggregate of `RepoNode.age` (src/compiler/grammar.ts `aggregate`/
-   * `toFileSource`; min across `members`, not sum, because what a "recently added" overlay
-   * (src/renderer/props.ts scaffolding, V5.4) needs from a multi-file building is "does this
-   * location contain a newly-created file", not a blended average age that a single old sibling
-   * file would immediately wash out).
+   * V6 — days from this building's OLDEST measured member's first commit to the repo's
+   * `headDate` (RepoNode.age, docs/CONTRACT-repo-json.md "Determinism rule: age"), aggregated by
+   * MAX across the building's measured members: a directory-aggregate building reads as
+   * weathered the moment it contains one old file, the same way a real building's oldest wing
+   * shows through. Read by the V6 patina/weathering overlay.
    *
-   * Optional in the TYPE so a `city.json` compiled before this field shipped stays valid --
-   * exactly the `Road.weight` precedent above ("Optional in the TYPE so the field can land ahead
-   * of the compiler that emits it, but the compiler MUST emit it"): `compileCity` always emits a
-   * real value for every building (`RepoNode.age` is a required, always-measured field --
-   * src/analyzer/git.ts `readFileGitMetrics` computes it from git history alone, independent of
-   * language support, so no "unsupported language" absence case exists for it the way it does for
-   * `todoCount`). A renderer reading an OLDER, pre-migration `city.json` off disk sees `age`
-   * missing and MUST treat that as UNMEASURED, never as age `0` -- a missing value reading as
-   * "brand new" is exactly the fabricated-zero failure PROJECT_IDEA.md §5.5 constraint 2 (and the
-   * deleted commit-prefix churn heuristic, `318773d`) already ruled out for every other signal in
-   * this pipeline.
+   * Optional: absent on any city.json compiled before V6 (docs/CONTRACT-city-json.md, "Age
+   * extremes") — never a fabricated 0. Renderers MUST pair this with `ageMeasured` before
+   * drawing anything from it.
    */
   age?: number;
+  /**
+   * V5.4 — the YOUNGEST-wing counterpart to `age`: MIN of `RepoNode.age` across this building's
+   * measured members. Read by the scaffolding overlay, which asks "does this location contain a
+   * newly-created file" — a question a single old sibling file would immediately wash out if it
+   * were answered from `age` (MAX) or from a blended average.
+   *
+   * This is a SEPARATE field from `age` rather than a redefinition of it because the two
+   * overlays ask opposite questions of the same underlying measurement; one `age` field cannot
+   * mean both, and collapsing them silently breaks whichever overlay did not define it.
+   *
+   * Same optionality and the same `ageMeasured` gate as `age`.
+   */
+  newestAge?: number;
+  /**
+   * V6 — true iff at least one of this building's members has a real git history
+   * (RepoNode.contributors.length > 0), i.e. `age`/`newestAge` above reflect genuine
+   * measurements rather than the analyzer's no-commits fallback of 0.
+   *
+   * This gate is load-bearing, not decorative: `src/analyzer/git.ts` computes
+   * `age = firstDate ? ... : 0`, so RepoNode.age is 0 BOTH for a file committed today AND for a
+   * file with no commits at all. Without this flag the two are indistinguishable, and a
+   * never-committed file renders as "brand new" — the fabricated-zero failure PROJECT_IDEA.md
+   * §5.5 constraint 2 (and the deleted commit-prefix churn heuristic, `318773d`) already ruled
+   * out for every other signal in this pipeline.
+   *
+   * Optional for the same pre-V6 reason as `age`; absent must be treated identically to `false`
+   * (UNMEASURED), never as "brand new".
+   */
+  ageMeasured?: boolean;
 }
 
 export interface Building {
@@ -514,11 +534,16 @@ export function validateCity(x: unknown): ValidationResult {
       for (const f of ["loc", "complexity", "churn"] as const) {
         if (!isFiniteNumber(m[f])) errors.push(`${label}: metrics.${f} must be a number`);
       }
-      // age is OPTIONAL (see BuildingMetrics.age doc comment) -- absence is legal (a
+      // age/newestAge are OPTIONAL (see BuildingMetrics doc comments) -- absence is legal (a
       // pre-migration city.json), but a PRESENT value must still be a real, non-negative
-      // measurement, same discipline every other numeric metric here gets.
-      if (m.age !== undefined && (!isFiniteNumber(m.age) || m.age < 0)) {
-        errors.push(`${label}: metrics.age must be a non-negative number when present`);
+      // measurement, the same discipline every other numeric metric here gets.
+      for (const f of ["age", "newestAge"] as const) {
+        if (m[f] !== undefined && (!isFiniteNumber(m[f]) || (m[f] as number) < 0)) {
+          errors.push(`${label}: metrics.${f} must be a non-negative number when present`);
+        }
+      }
+      if (m.ageMeasured !== undefined && typeof m.ageMeasured !== "boolean") {
+        errors.push(`${label}: metrics.ageMeasured must be a boolean when present`);
       }
     }
   });
