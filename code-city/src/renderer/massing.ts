@@ -23,7 +23,35 @@ export const TARGET_MEDIAN_ASPECT_DEFAULT = 3.7;
  * Pure function of its inputs -- no clock, no randomness.
  */
 export function medianAspect(buildings: readonly Building[], heightScale: number): number {
-  throw new Error("not implemented");
+  if (buildings.length === 0) {
+    throw new Error("Cannot calculate median aspect for an empty building list");
+  }
+  if (!Number.isFinite(heightScale)) {
+    throw new Error("heightScale must be finite");
+  }
+
+  const aspects = buildings.map((building) => {
+    const footprint = Math.min(building.width, building.depth);
+    if (!Number.isFinite(footprint) || footprint <= 0) {
+      throw new Error(`Building ${building.id} must have a positive, finite footprint`);
+    }
+    if (!Number.isFinite(building.height)) {
+      throw new Error(`Building ${building.id} must have a finite height`);
+    }
+
+    const aspect = (building.height * heightScale) / footprint;
+    if (!Number.isFinite(aspect)) {
+      throw new Error(`Building ${building.id} produced a non-finite aspect ratio`);
+    }
+    return aspect;
+  });
+
+  aspects.sort((a, b) => a - b);
+  const middle = Math.floor(aspects.length / 2);
+  if (aspects.length % 2 === 1) {
+    return aspects[middle];
+  }
+  return aspects[middle - 1] / 2 + aspects[middle] / 2;
 }
 
 /**
@@ -44,5 +72,21 @@ export function normalizedHeightScale(
   buildings: readonly Building[],
   target?: number,
 ): { scale: number; clamped: boolean; medianAspect: number } {
-  throw new Error("not implemented");
+  const resolvedTarget = target ?? TARGET_MEDIAN_ASPECT_DEFAULT;
+  if (!Number.isFinite(resolvedTarget)) {
+    throw new Error("target must be finite");
+  }
+
+  const aspectPerUnitScale = medianAspect(buildings, 1);
+  const idealScale = resolvedTarget / aspectPerUnitScale;
+  if (Number.isNaN(idealScale)) {
+    throw new Error("Cannot normalize an indeterminate aspect ratio");
+  }
+
+  const scale = Math.min(2, Math.max(0.25, idealScale));
+  return {
+    scale,
+    clamped: idealScale < 0.25 || idealScale > 2,
+    medianAspect: medianAspect(buildings, scale),
+  };
 }
