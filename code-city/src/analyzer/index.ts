@@ -19,6 +19,7 @@ import { detectDatastores } from "./datastores.ts";
 import { readFileGitMetrics, readGitInfo } from "./git.ts";
 import { parseTypeScript } from "./parser.ts";
 import { scanSourceFiles } from "./scanner.ts";
+import { countTodoMarkers } from "./todo-density.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -119,8 +120,14 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       readFileGitMetrics(absoluteRepoPath, file.path, gitInfo.headDate),
     ]);
     let parsed: { imports: string[]; calls: string[]; complexity: number };
+    let todoCount: number | undefined;
     if (PARSEABLE_LANGUAGES.has(file.language)) {
       parsed = await parseTypeScript(source, file.path, fileIds);
+      // Same gate as the real-parsing branch above, deliberately: TODO/FIXME density is a real
+      // measurement only where the analyzer actually reads the file's text for structure. A
+      // language it never scans gets no todoCount at all (undefined = NOT MEASURED), never a
+      // fabricated 0 -- see src/analyzer/todo-density.ts and RepoNode.todoCount's doc comment.
+      todoCount = countTodoMarkers(source);
     } else {
       // Disclosed fallback (Failure Discipline LAW): a stub is fine for a language we don't
       // parse, but it must not look identical to a real "no imports, complexity 1" file —
@@ -145,13 +152,14 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
       calls: parsed.calls,
       contains: [],
       contentHash: hashFileContent(source),
+      todoCount,
     };
   });
 
   if (unsupportedLanguages.size > 0) {
     const languages = [...unsupportedLanguages].sort().join(", ");
     console.warn(
-      `[code-city analyzer] stubbed imports/calls/complexity (imports=[], calls=[], complexity=1) for unsupported language(s): ${languages} — real static analysis is TypeScript/JavaScript only in V1`,
+      `[code-city analyzer] stubbed imports/calls/complexity (imports=[], calls=[], complexity=1) and left todoCount undefined for unsupported language(s): ${languages} — real static analysis is TypeScript/JavaScript only in V1`,
     );
   }
 

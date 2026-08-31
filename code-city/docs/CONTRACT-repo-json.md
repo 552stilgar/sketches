@@ -31,6 +31,10 @@ interface RepoNode {
                                           // ahead of the analyzer stage that fills it in. Absent
                                           // means NOT HASHED, never "no clones" (§5.5 constraint 2
                                           // applies to absence of a signal as much as a value).
+  todoCount?: number;                     // V5 — count of TODO/FIXME markers in this file's
+                                            // tracked source, see "TODO density" below. Optional:
+                                            // absent means NOT MEASURED (unsupported language),
+                                            // never a fabricated 0 (§5.5 constraint 2).
 }
 
 interface RepoGraph {
@@ -187,6 +191,36 @@ count, never anything read from a `.db` file. `migrationCount` = the number of t
 files under that datastore's `migrations/` directory (`0` for a bare-`schema.sql` datastore, which
 has no migrations directory to count).
 
+## TODO density (V5)
+
+- Producer: `countTodoMarkers(source: string): number` — `src/analyzer/todo-density.ts`, called
+  by `analyzeRepo()` and assigned to `RepoNode.todoCount`
+- Consumer: none yet in `compileCity`/renderer — this contract ships the DATA field only (a later
+  slice renders it as a scaffolding prop; see `CONTRACTS.md` § "V5: TODO density")
+
+`todoCount` = the count of whole-word `TODO`/`FIXME` marker occurrences in a file's tracked
+source text. Both markers count; a file with two `TODO`s and one `FIXME` reports `3`. Matching is
+whole-word (`TODOItem` or `FIXMEHandler` as an identifier does not count) and does not
+distinguish comment context from string-literal context — the marker convention is the signal,
+not its syntactic position.
+
+**Never-fabricate rule, restated for this field specifically:** `todoCount` is only ever computed
+for a file in a language `analyzeRepo` actually parses (the same `PARSEABLE_LANGUAGES` gate that
+governs real `imports`/`calls`/`complexity` extraction, `src/analyzer/index.ts` — currently
+TypeScript and plain JavaScript, the tree-sitter TypeScript grammar's syntactic superset). A file
+in a language the analyzer does not statically support gets `todoCount === undefined` — NOT
+MEASURED — never `0`. A `0` for a file nobody scanned would read as "this file has no open work",
+a fabricated measurement exactly like the "no clones" reading `contentHash`'s own absence-case
+guards against above (§5.5 constraint 2: absence of a signal must never render as a plausible
+default). A supported-language file that genuinely contains no markers reports a real `0` — that
+is a measurement, not an absence, and is not conflated with the unsupported-language case.
+
+`mergeRepoGraphs()` carries `todoCount` through unchanged: it is a scalar count, not an id or
+path, so it needs no namespacing — it survives via the same per-node spread that carries every
+other typed `RepoNode` field across the merge (see "Multi-repo merge" below; `tests/merge.test.ts`
+pins this specifically, mirroring the V4 `datastores` scar this field was built to avoid
+repeating — CONTRACTS.md § "Fixed 2026-08-28").
+
 ## Multi-repo merge
 
 - Producer: `mergeRepoGraphs(graphs: {name: string, graph: RepoGraph}[]): RepoGraph` —
@@ -264,7 +298,8 @@ parses as a valid date; when present, `contentHash` is a lowercase hex sha256 st
 characters) — absent is always legal, a malformed non-hash string is a hard validation error. When
 present, `datastores` is checked the same way: an array of objects each with a non-empty `id`, a
 `dir` string (empty string legal — the repo-root case), and non-negative integer `tableCount` /
-`migrationCount` — absent is always legal (V4 contract D1: absent means not detected). It does
-**not** check referential integrity of `imports`/`calls`/`contains` against other node ids, or
+`migrationCount` — absent is always legal (V4 contract D1: absent means not detected). When
+present, `todoCount` must be a non-negative integer (V5: absent means not measured, never `0`). It
+does **not** check referential integrity of `imports`/`calls`/`contains` against other node ids, or
 validate the churn/age windowing math — those are behavioral checks, owned by
 `tests/analyzer.test.ts` and `tests/compiler-*.test.ts`, not structural schema checks.

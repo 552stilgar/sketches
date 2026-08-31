@@ -273,3 +273,36 @@ describe("mergeRepoGraphs", () => {
     for (const l of city.landmarks) expect(l.kind).toBe("datastore");
   });
 });
+
+// V5 scar test — the datastores field (V4) once landed as an untyped property attached outside
+// RepoGraph's typed fields, and mergeRepoGraphs (built against typed fields only) silently
+// dropped it on every merge with all tests staying green (CONTRACTS.md § "Fixed 2026-08-28").
+// todoCount is a real, typed RepoNode field from the start, and this pins that the merge's
+// `...node` spread actually carries it -- not by trusting the spread, but by asserting the
+// value survives end to end.
+describe("mergeRepoGraphs — todoCount survives the merge (V5 scar test)", () => {
+  it("carries a node's todoCount through unchanged, including the real 0 case", () => {
+    const repoA = repoGraph(
+      [{ ...node("a.ts"), todoCount: 3 }, { ...node("b.ts"), todoCount: 0 }],
+      "/repos/foo",
+      "sha-foo",
+      "2026-01-01T00:00:00.000Z",
+    );
+    const merged = mergeRepoGraphs([{ name: "foo", graph: repoA }]);
+
+    const a = merged.nodes.find((n) => n.id === "foo/a.ts");
+    const b = merged.nodes.find((n) => n.id === "foo/b.ts");
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a!.todoCount).toBe(3);
+    expect(b!.todoCount).toBe(0);
+  });
+
+  it("leaves todoCount undefined on a node that never had it measured", () => {
+    const repoA = repoGraph([node("a.ts")], "/repos/foo", "sha-foo", "2026-01-01T00:00:00.000Z");
+    const merged = mergeRepoGraphs([{ name: "foo", graph: repoA }]);
+    const a = merged.nodes.find((n) => n.id === "foo/a.ts");
+    expect(a).toBeDefined();
+    expect(a!.todoCount).toBeUndefined();
+  });
+});
