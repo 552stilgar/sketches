@@ -16,7 +16,7 @@ import { promisify } from "node:util";
 import { hashFileContent } from "./content-hash.ts";
 import type { DatastoreSpec } from "./datastores.ts";
 import { detectDatastores } from "./datastores.ts";
-import { readFileGitMetrics, readGitInfo } from "./git.ts";
+import { prepareGitMetricsHistory, readFileGitMetrics, readGitInfo } from "./git.ts";
 import { countLines } from "./loc.ts";
 import { parseTypeScript } from "./parser.ts";
 import { readRuins } from "./ruins.ts";
@@ -83,9 +83,9 @@ async function detectRepoDatastores(repoPath: string): Promise<DatastoreSpec[]> 
 // not the unsupported-language stub below.
 const PARSEABLE_LANGUAGES: ReadonlySet<string> = new Set(["typescript", "javascript"]);
 
-// Every file spawns 3 git subprocesses (readFileGitMetrics) plus one for the source read.
-// Firing all of them at once for a large repo is unbounded process fan-out; cap how many
-// files are in flight at a time with a plain worker-pool (no new dependency).
+// Every file spawns one lineage-scoped git subprocess (readFileGitMetrics) plus one source read;
+// its two repo-wide history scans are prepared once before the pool. Firing all per-file work at
+// once for a large repo is still unbounded process fan-out, so cap how many files are in flight.
 const GIT_FANOUT_CONCURRENCY = 8;
 
 async function mapWithConcurrency<T, R>(
@@ -116,14 +116,17 @@ export async function analyzeRepo(repoPath: string): Promise<RepoGraph> {
   // Ruins (V5.3) need gitInfo.headDate to anchor their window, so they cannot join the fan-out
   // above -- the window is HEAD-anchored, never wall-clock (docs/CONTRACT-repo-json.md,
   // "Determinism rule: ruins").
-  const ruins = await readRuins(absoluteRepoPath, gitInfo.headDate);
+  const [ruins, gitMetricsHistory] = await Promise.all([
+    readRuins(absoluteRepoPath, gitInfo.headDate),
+    prepareGitMetricsHistory(absoluteRepoPath),
+  ]);
   const fileIds = new Set(files.map((file) => file.path));
   const unsupportedLanguages = new Set<string>();
 
   const nodes = await mapWithConcurrency(files, GIT_FANOUT_CONCURRENCY, async (file): Promise<RepoNode> => {
     const [source, history] = await Promise.all([
       readFile(file.absolutePath, "utf8"),
-      readFileGitMetrics(absoluteRepoPath, file.path, gitInfo.headDate),
+      readFileGitMetrics(absoluteRepoPath, file.path, gitInfo.headDate, gitMetricsHistory),
     ]);
     let parsed: { imports: string[]; calls: string[]; complexity: number };
     let todoCount: number | undefined;
