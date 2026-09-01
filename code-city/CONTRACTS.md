@@ -138,9 +138,17 @@ holding 65 files between them 59.6% of the canvas against the 1103-file district
 `deriveDistrictWeightExponent`) that solves the exponent of a `count ** p` curve per compile from
 the graph's own district counts — least distortion (largest `p`, `p = 1` is exact linear) that
 still keeps the smallest district above a legibility floor (`MIN_DISTRICT_SHARE_DEFAULT`, derived
-from the district label sprite's fixed world-space size in `src/renderer/buildings.ts`). `"derived"`
-is now the compiler default; `"linear"`, `"sqrt"`, and `"log"` remain explicit, named opt-outs that
-reproduce their exact prior output. Full contract: `docs/CONTRACT-city-json.md` §
+from the district label sprite's fixed world-space size in `src/renderer/buildings.ts`).
+
+**Default, as of 2026-09-01: `"log"`** — Usul's ruling on the rendered A/B variants, reverting the
+`"derived"` default of 2026-08-31. `derived`'s engineering argument above is not withdrawn and was
+not refuted; it was overruled on the result. On the usul-mgmt corpus `derived` solves to a curve
+that clears the legibility floor for the five small districts while giving `modules` **81.5%** of
+the canvas, against `log`'s **40.3%** — the comparative picture the view exists to show is lost at
+81.5%. `"derived"`, `"linear"`, and `"sqrt"` remain explicit, named opt-outs that reproduce their
+exact prior output. The floor-vs-layout tension underneath this (the `0.008` floor is derived for
+square geometry while districts lay out as full-width strips) is a separate open item and is NOT
+settled by this ruling. Full contract: `docs/CONTRACT-city-json.md` §
 "District area-weighting (`districtWeightMode`, V5.1)". RED gate:
 `tests/compiler-district-weight.test.ts`.
 
@@ -268,6 +276,47 @@ All three fields are optional in the TYPE for the same reason `contentHash`/`tod
 every `Building` fixture already in this repo, and every already-committed `public/*.json` city,
 predates them. Full field shape and both aggregation rules: `docs/CONTRACT-city-json.md` §
 "Age extremes".
+
+## V2-visual: tone mapping + procedural facades (renderer-only)
+
+**No `city.json` or `repo.json` shape change.** Both halves are pure renderer work; every city
+document already on disk renders under them unchanged. Listed here anyway because each establishes
+an invariant that later work can break silently.
+
+**V1 — tone mapping, exposure, sky/IBL** (`src/renderer/scene.ts`). ACES filmic tone mapping at
+`TONE_MAPPING_EXPOSURE`, plus a procedural twilight sky serving as both background and
+PMREM-derived environment light; the punctual lights were rebalanced down because the environment
+now carries most of the fill.
+
+> **The exposure constant is gated, not a free dial.** Four renderer modules pick their hue's
+> lightness against each other so one object type can never read as another — ruin charcoal 0.16 <
+> landmark tank band 0.32 < building ~0.42 (pre-bias) < landmark tank body 0.55 (`ruins.ts` header
+> states the full ladder). A tone curve remaps every rung. RED gate:
+> `tests/tone-mapping.test.ts` asserts post-curve ORDERING and a minimum surviving gap per adjacent
+> pair. It guards the albedo ladder, not the lit result — that half is covered in-browser.
+
+**V2 — procedural facades** (`src/renderer/facades.ts`, consumed by `src/renderer/buildings.ts`).
+Split in two by the InstancedMesh architecture (Usul's ruling, 2026-09-01, "hybrid"):
+- *Silhouette* → geometry buckets. The building grouping key became `${profile}:${setbackTier}`
+  (was `${profile}` alone), so each (profile, tier) pair gets its own geometry and InstancedMesh.
+  Tiers are quantized so this stays ≤16 meshes rather than one per building, preserving the
+  `instanceId` raycast fast path `resolveBuildingId` depends on.
+- *Surface* → a shader injected via `onBeforeCompile`, reading per-instance attributes
+  (`aFloors`, `aColumnsX`/`aColumnsZ`, `aFacadeSeed`).
+
+> **Facades restate geometry; they never encode a metric.** Floors come from height, window columns
+> from footprint span, setback tier from height against the city's p95. They deliberately do NOT
+> read `loc`, `complexity`, `churn`, or `age` — partly never-fabricate (`age` is optional and
+> `ageMeasured`-gated), but mainly because `loc`/`complexity` already drive footprint and height,
+> and the lens system re-encodes complexity/churn as color and height on demand. A facade signal
+> would be a second, legend-less encoding that silently contradicts the active lens. Repointing
+> these functions at metrics requires a legend and a `*Measured` gate first.
+>
+> Two invariants survive from before and are still asserted: the unit-cube bound
+> (`[-0.5,0.5]^3`, now per profile × tier) and the body/crown vertex-color split. Windows only
+> ever DARKEN (bounded by `WINDOW_DARKEN`), so a facade can never push a wall up onto another
+> object type's rung of the ladder above. RED gates: `tests/facades.test.ts`,
+> `tests/buildings.test.ts`.
 
 ## Phase 4: git time-travel (timeline scrub)
 

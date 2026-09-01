@@ -56,13 +56,13 @@ export interface CompileCityOptions {
    *  "district" (the original V4 behavior) so omitting this option is bit-for-bit unchanged. */
   cloneLodScope?: CloneLodScope;
   /** V5.1 district area-weighting curve (src/compiler/layout.ts DistrictWeightMode). Defaults to
-   *  DEFAULT_DISTRICT_WEIGHT_MODE, which is "derived" as of 2026-08-31: the exponent of a
-   *  count**p curve is SOLVED per-compile from the actual district counts (see
-   *  deriveDistrictWeightExponent), least distortion that still keeps every district legible,
-   *  rather than a fixed curve ruled on one repo's shape and silently wrong on the next one's --
-   *  see DEFAULT_DISTRICT_WEIGHT_MODE's doc comment for the usul-mgmt distribution that motivated
-   *  retiring the fixed "log" default. Pass "linear", "sqrt", or "log" to reproduce any city
-   *  compiled before that date byte-for-byte -- all three remain explicit, named opt-outs. See
+   *  DEFAULT_DISTRICT_WEIGHT_MODE, which is "log" as of 2026-09-01 (Usul's ruling on the rendered
+   *  variants, reverting the "derived" default of 2026-08-31: on the usul-mgmt corpus `derived`
+   *  solved to a curve giving the largest district 81.5% of the canvas, satisfying the legibility
+   *  floor for small districts while losing the comparative picture the view exists to show).
+   *  "derived", "linear", and "sqrt" all remain explicit, named opt-outs, and every city compiled
+   *  under any of them reproduces byte-for-byte by naming that mode. See
+   *  DEFAULT_DISTRICT_WEIGHT_MODE's doc comment for the full history of both rulings, and
    *  layout.ts's districtWeight() doc comment for why the curve must stay a named, caller-chosen
    *  (or, for "derived", caller-chosen-and-then-data-solved) input rather than a hidden
    *  auto-selected mode. */

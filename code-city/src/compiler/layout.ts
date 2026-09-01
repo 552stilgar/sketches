@@ -31,8 +31,25 @@ export type DistrictWeightMode = "linear" | "sqrt" | "log" | "derived";
 export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "sqrt", "log", "derived"];
 
 /**
- * The curve used when a caller names none. `derived` since 2026-08-31 (superseding the `log`
- * ruling of 2026-08-30 below), because `log` turned out to be exactly the class of defect
+ * The curve used when a caller names none. **`log` since 2026-09-01 — Usul's ruling on the
+ * rendered A/B variants at dist/compare.html, reverting the `derived` default of 2026-08-31.**
+ *
+ * This is an AESTHETIC ruling and it deliberately overrides the engineering argument below, which
+ * still stands on its own terms and is kept in full because it is not wrong: `derived` really does
+ * generalize across repo shapes where a fixed curve cannot. What the rendered variants showed is
+ * that on the folded usul-mgmt corpus `derived` solves to a curve giving the largest district
+ * 81.5% of the canvas — i.e. it satisfies the legibility FLOOR for the small districts while
+ * letting the big one dominate the frame, which loses the thing the view exists to show. `log`'s
+ * 40.3% was ruled the better picture. The floor-vs-layout tension underneath this (the 0.008
+ * legibility floor answers square geometry while districts lay out as full-width strips) is a
+ * separate open item and is NOT settled by this ruling.
+ *
+ * `derived` remains available as an explicit named mode and its solver is unchanged; L5
+ * (deferred-lanes doc, 2026-09-01) still applies to it.
+ *
+ * --- 2026-08-31 rationale for the `derived` default this reverts, kept because it is still the
+ * best statement of what `derived` is for ---
+ * `derived` was made the default because `log` turned out to be exactly the class of defect
  * `normalizedHeightScale` (src/renderer/massing.ts) was written to fix for building height: a
  * curve ruled on one repo shape is wrong on another. `log`'s 2026-08-30 ruling was made on a
  * 3-district city where all three districts held hundreds of files each; on the folded usul-mgmt
@@ -54,7 +71,7 @@ export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "
  * have violated the determinism contract -- `derived` doesn't select a mode, it solves one curve
  * parameter within one mode, from data that's already part of the compile's own input.
  *
- * --- 2026-08-30 ruling this supersedes, kept for history ---
+ * --- 2026-08-30 ruling, now reinstated by the 2026-09-01 ruling above ---
  * `log` was chosen against rendered A/B variants of the merged mgmt trio: under `linear` the
  * largest district took 71.3% of the canvas and the two smaller repos collapsed into edge
  * slivers, so the view could not show what it exists to show -- the relative shape of several
@@ -62,7 +79,7 @@ export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "
  * districts became legible on THAT city. It was never re-validated against a differently-shaped
  * repo before shipping as the default -- `derived` is that missing generalization.
  */
-export const DEFAULT_DISTRICT_WEIGHT_MODE: DistrictWeightMode = "derived";
+export const DEFAULT_DISTRICT_WEIGHT_MODE: DistrictWeightMode = "log";
 
 /**
  * Minimum canvas share (fraction of the 1000x1000 layout canvas -- compiler/index.ts squarifies

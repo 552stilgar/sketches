@@ -368,4 +368,56 @@ rendered-variant review this run existed to enable hasn't happened yet (district
 scaffolding/ruins all unjudged); the 0.008-floor fix-vs-fix-layout call and the discarded
 `clamped` flag both wait on it; no independent review of the 10-commit diff has run.
 
-## 2026-09-01 — (save stub; full narrative at close) code-city: 2-lane independent review (17 findings, 7 HIGH), L1 rename-lineage fix merged, compare surface rebuilt and reachable
+## 2026-09-01 — code-city: independent review + L1 rename-lineage fix + visual phase (V1 tone mapping/sky, V2 procedural facades) + district-weight ruling reverted
+
+Two-lane independent review (2 read-only codex lanes) found 17 findings, 7 HIGH — the V5.2b
+merge's never-fabricate bug was not isolated; 5 of 7 HIGH findings shared one shape (absent or
+partial measurement acquiring a confident default). L1 (rename lineage in `git.ts`) fixed the
+analyzer half and found more than briefed: `--follow` returned nothing for 42 files that entered
+via the qol/itba/frd-ops fold merges, so real 124-day-old files were reporting as unmeasured —
+last session's "42 correctly-skipped unmeasured buildings" was itself an artifact of that bug.
+Analyze also went 9x faster (a repo-wide git log had been running once per file). L2–L5 deferred
+by ruling, fully scoped: `~/docs/reusable-playbooks/legacy-audits/outputs/code-city/2026-09-01/
+lanes-pending.md`. Comparison surface (`dist/compare.html`) rebuilt and reachable again.
+
+Ruling then made on district weight, the one rendered variant that was safe to judge
+independently of the others: reverted the default from `derived` (2026-08-31, 81.5% to the
+largest district) back to `log` (40.3%) — `derived`'s engineering argument stands and is kept in
+both contract docs, but was overruled on the picture it produces. Both defaults now recorded in
+`CONTRACTS.md` and `docs/CONTRACT-city-json.md` with full history; `compare.html`'s stale "open
+ruling" label corrected.
+
+Visual phase started: V1 (`src/renderer/scene.ts`) — ACES filmic tone mapping at a gated
+exposure, procedural twilight sky as both background and PMREM-derived IBL, lights rebalanced.
+Guarded by a new `tests/tone-mapping.test.ts` pinning the never-confusable lightness ladder
+(ruin < landmark-band < building < landmark-body) survives the curve — browser-verified, sky
+live, city legible, nothing blown out or crushed. V2 (`src/renderer/facades.ts`, new,
+hybrid split per Usul's ruling) — silhouette via geometry buckets (grouping key became
+`profile:setbackTier`, 4→5 meshes on the real corpus, 1108/1108 instances preserved) + surface
+via an `onBeforeCompile` shader reading per-instance floor/window attributes. Facades
+deliberately restate geometry (height/footprint), never a metric — loc/complexity/churn/age stay
+out, both for never-fabricate and because the lens system already re-encodes those and a second
+encoding would silently contradict whichever lens is active.
+
+Three real defects found and fixed AFTER the 548-test suite was green, none caught by the tests
+as first written: (1) floors were derived from raw building height, but buildings render at
+`height * massingScale`, solved per-city (0.250 on this corpus) — floors were 13–40 with the
+ceiling saturated, now 3–20, zero clamped; caught by measuring against the real corpus, not by a
+test. (2) the shader paired each wall with the wrong axis's column count (an X-facing wall spans
+depth, was fed the width-derived count) — caught by re-reading the shader, not by the test
+written for it (an inequality that also passes when the two values are swapped). (3) a GLSL
+comment containing backticks silently terminated the JS template literal holding the shader —
+caught by `tsc`. Fix #2 is currently unverifiable in the browser: every building in every
+city.json is square by construction (`compiler/index.ts` emits `width: side, depth: side` from
+one value) — measured across all three committed cities, 0 non-square. Documented as a known
+verification gap in the module rather than left implied as tested.
+
+Added `window.__test.buildingMeshes()` (name + instance count per building mesh) — closes a real
+instrumentation gap a browser-verify pass hit mid-session (had to intercept `drawArraysInstanced`
+to prove instance-count integrity, and could not see mesh names at all).
+
+Net: 511→548 tests (+37, 45→46 files), all local, all green. Three rulings still owed
+(patina, scaffolding, ruins — deferred this morning, now unblocked since `compare.html` renders
+live through the current viewer). Facades do not read at the default camera framing
+(browser-verified twice) — visible only at close zoom; that's a camera/zoom question, not
+resolved this session.

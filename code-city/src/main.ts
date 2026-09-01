@@ -20,6 +20,14 @@ import { resolveMassingScale } from "./massing-resolution.ts";
 interface TestBridge {
   ready: boolean;
   buildingCount(): number;
+  /**
+   * One entry per building InstancedMesh: its name (`buildings:<profile>:<setbackTier>` since V2)
+   * and its instance count. Exists because the V2 regrouping (one mesh per profile x tier, rather
+   * than per profile) can only be verified by checking that the group instance counts still SUM to
+   * buildingCount() -- a headless verifier previously had to intercept `drawArraysInstanced` to
+   * get at this, which proved the sum but could not see the names.
+   */
+  buildingMeshes(): Array<{ name: string; count: number }>;
   clickBuilding(id: string): void;
   overlayText(): string | null;
   /** Roads currently receiving animated flow (resolvable-endpoint roads; V3 §5.5). */
@@ -382,6 +390,9 @@ async function main(): Promise<void> {
     ready: true,
     buildingCount(): number {
       return city.buildings.length;
+    },
+    buildingMeshes(): Array<{ name: string; count: number }> {
+      return buildingsHandle.meshes.map((m) => ({ name: m.name, count: m.count }));
     },
     clickBuilding(id: string): void {
       ui.openOverlay(id);

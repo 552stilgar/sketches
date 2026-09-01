@@ -12,6 +12,14 @@
 import * as THREE from "three";
 import type { Building, CityModel, District, Road } from "../types.ts";
 import {
+  facadeAttributes,
+  installFacadeShader,
+  setbackStepCount,
+  setbackTier,
+  SETBACK_STEP_INSET,
+  type SetbackTier,
+} from "./facades.ts";
+import {
   computeCityLensRanks,
   DEFAULT_LENS,
   lensColorHSL,
@@ -273,15 +281,61 @@ function tagColor(geo: THREE.BufferGeometry, factor: number): THREE.BufferGeomet
 const CROWN_FACTOR = 0.8;
 
 /**
- * Builds a profile's unit-space geometry (roof mass baked in). Exported so
- * tests/buildings.test.ts can assert, for every profile, that the real computed bounding box
- * never exceeds the [-0.5,0.5]^3 unit cube -- i.e. this profile can never scale out past the
- * compiler-given width/depth/height, which is what keeps the no-overlap guarantee intact.
+ * Splits the body span [y0, y1] into `steps + 1` stacked boxes, each inset SETBACK_STEP_INSET
+ * further than the one below it -- the V2 "silhouette" half (src/renderer/facades.ts module
+ * header). Returns body parts only; the caller still appends its own crown/roof.
+ *
+ * Every step only ever SHRINKS the half-extent, and the lowest step is the caller's own
+ * (already-inset) hw/hd, so a ziggurat can never push a vertex outside the [-0.5,0.5]^3 unit cube
+ * -- the invariant tests/buildings.test.ts asserts per (profile, tier) pair. The floor at 0.04
+ * mirrors the crown's own floor: three steps must not pinch a narrow tower into a spike.
  */
-export function buildProfileGeometry(profile: StyleProfile): THREE.BufferGeometry {
+function steppedBody(
+  hw: number,
+  hd: number,
+  y0: number,
+  y1: number,
+  steps: number,
+): THREE.BufferGeometry[] {
+  const tiers = Math.max(0, steps) + 1;
+  const span = (y1 - y0) / tiers;
+  const parts: THREE.BufferGeometry[] = [];
+  for (let i = 0; i < tiers; i++) {
+    const inset = SETBACK_STEP_INSET * i;
+    parts.push(
+      tagColor(
+        boxGeometry(
+          Math.max(0.04, hw - inset),
+          y0 + span * i,
+          y0 + span * (i + 1),
+          Math.max(0.04, hd - inset),
+        ),
+        1,
+      ),
+    );
+  }
+  return parts;
+}
+
+/**
+ * Builds a profile's unit-space geometry (roof mass baked in) for one setback tier. Exported so
+ * tests/buildings.test.ts can assert, for every profile AND every tier, that the real computed
+ * bounding box never exceeds the [-0.5,0.5]^3 unit cube -- i.e. this profile can never scale out
+ * past the compiler-given width/depth/height, which is what keeps the no-overlap guarantee intact.
+ *
+ * `tier` defaults to "none", which reproduces the pre-V2 geometry EXACTLY (steppedBody with 0
+ * steps is a single box spanning the same range the old code emitted) -- that is what keeps
+ * src/renderer/timeline.ts, which builds its own instanced meshes and passes no tier, bit-for-bit
+ * unchanged by V2.
+ */
+export function buildProfileGeometry(
+  profile: StyleProfile,
+  tier: SetbackTier = "none",
+): THREE.BufferGeometry {
   const inset = THREE.MathUtils.clamp(profile.footprintInset, 0, 0.4);
   const hw = HALF - inset;
   const hd = HALF - inset;
+  const steps = setbackStepCount(tier);
 
   if (profile.roof === "flat") {
     // "large flat-topped cube reading as inert" -- give flat-roof profiles (tower, storefront) a
@@ -290,25 +344,33 @@ export function buildProfileGeometry(profile: StyleProfile): THREE.BufferGeometr
     const setback = profile.name === "tower" ? 0.05 : 0.025;
     const fullHeight = HALF - -HALF; // = 1, spelled out so the 0.78 split reads against it
     const crownY = -HALF + fullHeight * 0.78;
-    const body = tagColor(boxGeometry(hw, -HALF, crownY, hd), 1);
-    const crownHw = Math.max(0.04, hw - setback);
-    const crownHd = Math.max(0.04, hd - setback);
+    const body = steppedBody(hw, hd, -HALF, crownY, steps);
+    // The crown insets from the TOPMOST body step, not from the base -- otherwise a triple-setback
+    // tower would grow a crown wider than the shaft it caps.
+    const topHw = Math.max(0.04, hw - SETBACK_STEP_INSET * steps);
+    const topHd = Math.max(0.04, hd - SETBACK_STEP_INSET * steps);
+    const crownHw = Math.max(0.04, topHw - setback);
+    const crownHd = Math.max(0.04, topHd - setback);
     const crown = tagColor(boxGeometry(crownHw, crownY, HALF, crownHd), CROWN_FACTOR);
-    return mergeGeometries([body, crown]);
+    return mergeGeometries([...body, crown]);
   }
   if (profile.roof === "stepped") {
     const bodyTop = 0.2;
-    const body = tagColor(boxGeometry(hw, -HALF, bodyTop, hd), 1);
-    const capHw = Math.min(hw, Math.max(0.08, hw * 0.55));
-    const capHd = Math.min(hd, Math.max(0.08, hd * 0.55));
+    const body = steppedBody(hw, hd, -HALF, bodyTop, steps);
+    const topHw = Math.max(0.04, hw - SETBACK_STEP_INSET * steps);
+    const topHd = Math.max(0.04, hd - SETBACK_STEP_INSET * steps);
+    const capHw = Math.min(topHw, Math.max(0.08, topHw * 0.55));
+    const capHd = Math.min(topHd, Math.max(0.08, topHd * 0.55));
     const cap = tagColor(boxGeometry(capHw, bodyTop, HALF, capHd), CROWN_FACTOR);
-    return mergeGeometries([body, cap]);
+    return mergeGeometries([...body, cap]);
   }
   // pitched
   const bodyTop = 0.05;
-  const body = tagColor(boxGeometry(hw, -HALF, bodyTop, hd), 1);
-  const roof = tagColor(pyramidGeometry(hw, hd, bodyTop, HALF), CROWN_FACTOR);
-  return mergeGeometries([body, roof]);
+  const body = steppedBody(hw, hd, -HALF, bodyTop, steps);
+  const topHw = Math.max(0.04, hw - SETBACK_STEP_INSET * steps);
+  const topHd = Math.max(0.04, hd - SETBACK_STEP_INSET * steps);
+  const roof = tagColor(pyramidGeometry(topHw, topHd, bodyTop, HALF), CROWN_FACTOR);
+  return mergeGeometries([...body, roof]);
 }
 
 // -------------------------------------------------------------------------------------------
@@ -681,14 +743,31 @@ function applyInstance(
 export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): BuildingsHandle {
   const baseHeightScale = opts?.heightScale ?? BASE_HEIGHT_SCALE_DEFAULT;
   const buildingById = new Map<string, Building>();
-  const byProfile = new Map<ProfileName, Building[]>();
+
+  // V2 grouping key is `${profile}:${setbackTier}`, not the profile alone -- one InstancedMesh per
+  // (profile, tier) pair, because a tier changes the GEOMETRY and instances of one mesh must share
+  // it. The tier is quantized (facades.ts) precisely so this stays a handful of meshes rather than
+  // one per building. Grouping is the only thing that changed: everything keyed off `mesh` below
+  // (meshOrder, instanceIndex, resolveBuildingId) works unchanged, since none of it ever assumed
+  // one mesh per profile.
+  const groupKey = (b: Building, tier: SetbackTier): string => `${styleProfile(b.style).name}:${tier}`;
+  const byGroup = new Map<string, { profile: StyleProfile; tier: SetbackTier; list: Building[] }>();
+
+  // Height reference for the tier split: the city's own p95 height, the same reference discipline
+  // `fanInRef`/`ageRef` below already use. Taken over RAW compiled heights (not lens-scaled ones)
+  // so switching lenses can never re-bucket a building into a different mesh -- setLens() only
+  // rewrites transforms and colors in place, and a regrouping mid-session would break the
+  // instanceId -> building mapping resolveBuildingId() depends on.
+  const heightRef = p95((city.buildings as Building[]).map((b) => b.height));
 
   for (const b of city.buildings as Building[]) {
     buildingById.set(b.id, b);
-    const profileName = styleProfile(b.style).name;
-    const list = byProfile.get(profileName) ?? [];
-    list.push(b);
-    byProfile.set(profileName, list);
+    const profile = styleProfile(b.style);
+    const tier = setbackTier(b.height, heightRef);
+    const key = groupKey(b, tier);
+    const entry = byGroup.get(key) ?? { profile, tier, list: [] };
+    entry.list.push(b);
+    byGroup.set(key, entry);
   }
 
   const roads = city.roads as Road[];
@@ -715,9 +794,8 @@ export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): B
 
   const dummy = new THREE.Object3D();
 
-  for (const [profileName, list] of byProfile) {
-    const profile = PROFILE_DEFS[profileName];
-    const geometry = buildProfileGeometry(profile);
+  for (const [key, { profile, tier, list }] of byGroup) {
+    const geometry = buildProfileGeometry(profile, tier);
     const material = new THREE.MeshStandardMaterial({
       roughness: profile.roughness,
       metalness: profile.metalness,
@@ -726,10 +804,32 @@ export function buildBuildings(city: CityModel, opts?: BuildBuildingsOptions): B
       // so the crown reads as a visibly distinct material tier on every instance for free.
       vertexColors: true,
     });
+    // V2 "surface" half: procedural floors/windows in the fragment shader, from the per-instance
+    // attributes filled in below. Installed per material because each group compiles its own.
+    installFacadeShader(material);
+
+    // Per-INSTANCE facade attributes. These are what let ~1100 buildings carry individually-sized
+    // window grids while still sharing one geometry and one draw call per group.
+    const aFloors = new Float32Array(list.length);
+    const aColumnsAlongX = new Float32Array(list.length);
+    const aColumnsAlongZ = new Float32Array(list.length);
+    const aFacadeSeed = new Float32Array(list.length);
+    list.forEach((b, i) => {
+      const f = facadeAttributes(b, baseHeightScale);
+      aFloors[i] = f.floors;
+      aColumnsAlongX[i] = f.columnsAlongX;
+      aColumnsAlongZ[i] = f.columnsAlongZ;
+      aFacadeSeed[i] = f.seed;
+    });
+    geometry.setAttribute("aFloors", new THREE.InstancedBufferAttribute(aFloors, 1));
+    geometry.setAttribute("aColumnsAlongX", new THREE.InstancedBufferAttribute(aColumnsAlongX, 1));
+    geometry.setAttribute("aColumnsAlongZ", new THREE.InstancedBufferAttribute(aColumnsAlongZ, 1));
+    geometry.setAttribute("aFacadeSeed", new THREE.InstancedBufferAttribute(aFacadeSeed, 1));
+
     const mesh = new THREE.InstancedMesh(geometry, material, list.length);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    mesh.name = `buildings:${profileName}`;
+    mesh.name = `buildings:${key}`;
 
     list.forEach((b, i) => {
       const fanIn = fanInById.get(b.id) ?? 0;

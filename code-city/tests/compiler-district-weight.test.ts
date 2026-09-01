@@ -79,19 +79,26 @@ describe("districtWeight() pure curve", () => {
     expect(Number.isFinite(districtWeight(0, "log"))).toBe(true);
   });
 
-  // The default moved log -> derived on 2026-08-31 (this task; see DEFAULT_DISTRICT_WEIGHT_MODE's
-  // doc comment for why a fixed curve ruled on one repo's shape doesn't generalize). Asserted
-  // against the exported constant so a future re-ruling has to change it deliberately rather than
-  // silently drifting the omitted-option path.
-  it("defaults to DEFAULT_DISTRICT_WEIGHT_MODE, which is derived", () => {
-    expect(DEFAULT_DISTRICT_WEIGHT_MODE).toBe("derived");
+  // Default history: log (2026-08-30) -> derived (2026-08-31) -> log again (2026-09-01, Usul's
+  // ruling on the rendered variants; see DEFAULT_DISTRICT_WEIGHT_MODE's doc comment, which keeps
+  // BOTH rationales because the engineering argument for `derived` was never refuted — it was
+  // overruled on how the result looks). Asserted against the exported constant so a future
+  // re-ruling has to change it deliberately rather than silently drifting the omitted-option path.
+  it("defaults to DEFAULT_DISTRICT_WEIGHT_MODE, which is log", () => {
+    expect(DEFAULT_DISTRICT_WEIGHT_MODE).toBe("log");
   });
 
   it("throws loudly on 'derived' -- a single count can't be weighted without its siblings", () => {
     expect(() => districtWeight(42, "derived")).toThrow();
-    // Default mode is now "derived", so the no-mode-argument call must throw too, not silently
-    // fall back to some other curve.
-    expect(() => districtWeight(42)).toThrow();
+  });
+
+  // Companion to the above: with the default back to `log` (a per-count curve), the no-argument
+  // call must once again RETURN rather than throw. This pair is what makes the default flip
+  // visible here instead of silently changing districtWeight()'s contract -- under the `derived`
+  // default this same call was required to throw.
+  it("weights a single count with no mode argument, using the log default", () => {
+    expect(districtWeight(42)).toBe(districtWeight(42, "log"));
+    expect(Number.isFinite(districtWeight(42))).toBe(true);
   });
 
   it("throws loudly on an unrecognized mode (never silently falls back)", () => {
@@ -132,9 +139,13 @@ describe("compileCity({ districtWeightMode }) — V5.1", () => {
   // the old `log` default distorted this fixture unconditionally (see the superseded assertion in
   // git history), which is precisely the "one repo's ruling, wrong on the next" defect this task
   // exists to close.
-  it("(a3) derived (the default) matches `linear` byte-for-byte on a mild skew that already clears the floor", () => {
+  // `derived` is NAMED here rather than reached through the omitted-option path. It was written as
+  // "the default" on 2026-08-31 when derived held that slot; the 2026-09-01 revert to `log` broke
+  // it, correctly — the assertion is about what `derived` does, and coupling it to whichever mode
+  // currently happens to be the default made a passing test depend on something it wasn't testing.
+  it("(a3) `derived` matches `linear` byte-for-byte on a mild skew that already clears the floor", () => {
     const g = makeSkewedRepoGraph(); // 90:3, smallest share under linear is 3/93 ≈ 3.2% > 0.8% floor
-    const derived = JSON.stringify(compileCity(structuredClone(g)));
+    const derived = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "derived" }));
     const linear = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "linear" }));
     expect(derived).toBe(linear);
   });

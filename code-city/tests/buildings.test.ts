@@ -17,6 +17,7 @@ import {
   PROFILE_NAMES,
   styleProfile,
 } from "../src/renderer/buildings.ts";
+import { SETBACK_TIERS } from "../src/renderer/facades.ts";
 import { validateCity } from "../src/types.ts";
 import type { Building, CityModel, District, Road } from "../src/types.ts";
 
@@ -169,21 +170,50 @@ describe("styleProfile", () => {
 describe("buildProfileGeometry -- never exceeds the building's own footprint/height", () => {
   const box = new THREE.Box3();
 
+  // V2 (2026-09-01): the invariant is now asserted per (profile, TIER) pair, not per profile.
+  // Setback tiers add stacked, progressively-inset body steps, so each tier is a genuinely
+  // different geometry — covering only the default "none" tier would leave the three tiers that
+  // actually ship on tall buildings unguarded.
   for (const name of PROFILE_NAMES) {
-    it(`keeps the "${name}" profile's geometry within the unit cube [-0.5, 0.5]^3`, () => {
-      const geometry = buildProfileGeometry(styleProfile(profileToLanguage(name)));
-      geometry.computeBoundingBox();
-      box.copy(geometry.boundingBox!);
+    for (const tier of SETBACK_TIERS) {
+      it(`keeps the "${name}" profile at tier "${tier}" within the unit cube [-0.5, 0.5]^3`, () => {
+        const geometry = buildProfileGeometry(styleProfile(profileToLanguage(name)), tier);
+        geometry.computeBoundingBox();
+        box.copy(geometry.boundingBox!);
 
-      const EPS = 1e-6;
-      expect(box.min.x).toBeGreaterThanOrEqual(-0.5 - EPS);
-      expect(box.max.x).toBeLessThanOrEqual(0.5 + EPS);
-      expect(box.min.y).toBeGreaterThanOrEqual(-0.5 - EPS);
-      expect(box.max.y).toBeLessThanOrEqual(0.5 + EPS);
-      expect(box.min.z).toBeGreaterThanOrEqual(-0.5 - EPS);
-      expect(box.max.z).toBeLessThanOrEqual(0.5 + EPS);
+        const EPS = 1e-6;
+        expect(box.min.x).toBeGreaterThanOrEqual(-0.5 - EPS);
+        expect(box.max.x).toBeLessThanOrEqual(0.5 + EPS);
+        expect(box.min.y).toBeGreaterThanOrEqual(-0.5 - EPS);
+        expect(box.max.y).toBeLessThanOrEqual(0.5 + EPS);
+        expect(box.min.z).toBeGreaterThanOrEqual(-0.5 - EPS);
+        expect(box.max.z).toBeLessThanOrEqual(0.5 + EPS);
+      });
+    }
+  }
+
+  // The default-argument path is what keeps src/renderer/timeline.ts (which passes no tier)
+  // bit-for-bit unchanged by V2. Asserted on the actual emitted vertex data, not on the signature.
+  for (const name of PROFILE_NAMES) {
+    it(`emits identical geometry for "${name}" whether tier is omitted or explicitly "none"`, () => {
+      const omitted = buildProfileGeometry(styleProfile(profileToLanguage(name)));
+      const explicitNone = buildProfileGeometry(styleProfile(profileToLanguage(name)), "none");
+      expect(Array.from(omitted.getAttribute("position").array)).toEqual(
+        Array.from(explicitNone.getAttribute("position").array),
+      );
     });
   }
+
+  it("adds real silhouette steps as the tier rises (the buckets are not cosmetic)", () => {
+    // A higher tier must produce strictly more body geometry — otherwise the grouping key is
+    // splitting meshes for nothing.
+    const counts = SETBACK_TIERS.map(
+      (tier) => buildProfileGeometry(styleProfile("typescript"), tier).getAttribute("position").count,
+    );
+    for (let i = 1; i < counts.length; i++) {
+      expect(counts[i]).toBeGreaterThan(counts[i - 1]);
+    }
+  });
 
   it("stays within bounds even for an out-of-range footprintInset (defensive clamp)", () => {
     const geometry = buildProfileGeometry({

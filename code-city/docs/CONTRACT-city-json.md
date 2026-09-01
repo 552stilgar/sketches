@@ -377,8 +377,9 @@ compileCity(graph: RepoGraph, options?: { districtWeightMode?: "linear" | "sqrt"
 
 - `"linear"`: raw count, unmodified — the original behavior, still reachable byte-for-byte.
 - `"sqrt"` / `"log"`: fixed compression curves (`Math.sqrt`, `Math.log1p`) that dampen the gap
-  between a large district and a small one. `"log"` was the default from 2026-08-30–2026-08-31.
-- `"derived"` (default since 2026-08-31): the exponent `p` of a `count ** p` curve is SOLVED per
+  between a large district and a small one. **`"log"` is the default** — from 2026-08-30 to
+  2026-08-31, and again since 2026-09-01.
+- `"derived"` (default only from 2026-08-31 to 2026-09-01): the exponent `p` of a `count ** p` curve is SOLVED per
   compile from the actual district counts (`deriveDistrictWeightExponent`), not fixed. It picks the
   LARGEST `p` (least distortion — `p = 1` is exact linear) such that the smallest district's canvas
   share still clears `MIN_DISTRICT_SHARE_DEFAULT` (a legibility floor derived from the district
@@ -392,6 +393,17 @@ files per district) and turned out to be wrong on another (the folded usul-mgmt 
 holding 65 files between them took 59.6% of the canvas while the 1103-file district got 40.3%,
 worse than the imbalance `"log"` was chosen to fix. `"derived"` generalizes across repo shapes
 instead of re-litigating the ruling per repo.
+
+**Reverted to `"log"` on 2026-09-01 (Usul's ruling on the rendered variants).** The reasoning above
+still stands as an account of what `"derived"` does and why it exists — it was overruled on the
+picture it produces, not refuted. Rendered on the usul-mgmt corpus, `"derived"` solves to a curve
+giving `modules` **81.5%** of the canvas: the legibility floor for the five small districts is
+satisfied, but one district then dominates the frame and the comparative read the view exists for
+is lost. `"log"`'s 40.3% was ruled the better picture. Note this means neither curve is
+unconditionally right — `"log"` remains vulnerable to the generalization problem `"derived"` was
+built to solve, and a differently-shaped repo may re-open the question. The underlying tension (the
+floor is derived for square district geometry while districts actually lay out as full-width
+strips) is unresolved and tracked separately.
 
 This does **not** violate the determinism contract above: `"derived"` is a pure function of the
 graph's own district counts (no clock, no randomness, fixed-iteration bisection — see

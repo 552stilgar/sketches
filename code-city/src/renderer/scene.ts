@@ -242,6 +242,167 @@ export function computeCameraFraming(
 }
 
 // ---------------------------------------------------------------------------------------------
+// V1 -- tone mapping, exposure, and the procedural sky used as both background and IBL source.
+//
+// WHY A TONE CURVE IS A CONTRACT RISK HERE, NOT JUST A LOOK:
+// Four renderer modules pick their hue's LIGHTNESS deliberately, against each other, so that one
+// kind of object can never be mistaken for another at any camera distance -- ruins.ts's header
+// states the whole ladder explicitly: ruin charcoal 0.16 < tethers amber ~0.5 / props crane 0.5 <
+// landmark steel-blue 0.55, with buildings.ts's `buildingColor` never falling below ~0.42
+// pre-bias. A tone curve remaps every one of those. If the curve were non-monotonic (or applied
+// per-channel in a way that crossed two of these over), a ruin could tone-map ABOVE a dim
+// building and the never-confusable discipline would break silently -- nothing in the pipeline
+// asserts it today.
+//
+// ACES filmic is monotonic in luminance, so ORDER is preserved by construction; what a curve can
+// still do is compress two anchors so close that the separation stops reading. That is what
+// tests/tone-mapping.test.ts pins: post-curve ordering AND a minimum surviving gap between each
+// adjacent pair of the documented anchors, at the exposure this module ships. Retuning
+// TONE_MAPPING_EXPOSURE is therefore a gated change, not a free dial.
+//
+// DETERMINISM (constraint 1): the sky is a pure function of position -- `skyGradientColor` reads
+// no clock and no `Math.random()`, and `buildSkyTextureData` is a pure array builder. There is no
+// time-of-day. The environment map is derived from that same texture through PMREM, so the IBL a
+// city is lit by is fully determined by this module's constants.
+// ---------------------------------------------------------------------------------------------
+
+/** Exposure multiplier applied before the ACES curve. Gated: see the header -- raising this
+ *  compresses the bright end and shrinks the ruin/building/landmark lightness separations that
+ *  tests/tone-mapping.test.ts guards. */
+export const TONE_MAPPING_EXPOSURE = 1.15;
+
+/** Sky anchors, nadir -> zenith. Twilight, deliberately dim: the city's own palette lives in the
+ *  0.16-0.55 lightness band (header), so a bright sky would flatten every one of those against it
+ *  and an IBL derived from it would wash the same separations out from the fill side. */
+const SKY_NADIR = new THREE.Color(0x0a0d18);
+const SKY_HORIZON = new THREE.Color(0x2b3a5e);
+const SKY_ZENITH = new THREE.Color(0x0a1430);
+
+/** Where the horizon band sits in the 0..1 nadir->zenith parameter. */
+const SKY_HORIZON_T = 0.5;
+
+/**
+ * Sky color at `t`, 0 = straight down (nadir), 0.5 = horizon, 1 = straight up (zenith). Two
+ * linear segments through the three anchors. Pure -- no clock, no randomness.
+ *
+ * `t` outside 0..1 clamps rather than extrapolating, so a caller's off-by-one texel can never
+ * produce a color outside the authored palette.
+ */
+export function skyGradientColor(t: number): THREE.Color {
+  const clamped = Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 0;
+  if (clamped <= SKY_HORIZON_T) {
+    return SKY_NADIR.clone().lerp(SKY_HORIZON, clamped / SKY_HORIZON_T);
+  }
+  const k = (clamped - SKY_HORIZON_T) / (1 - SKY_HORIZON_T);
+  return SKY_HORIZON.clone().lerp(SKY_ZENITH, k);
+}
+
+/** Equirectangular sky texture dimensions. The gradient varies only vertically, so width exists
+ *  purely to keep PMREM's convolution well-conditioned, not to carry detail. */
+const SKY_TEXTURE_WIDTH = 16;
+const SKY_TEXTURE_HEIGHT = 128;
+
+/**
+ * RGBA bytes for an equirectangular sky texture, row 0 = zenith (equirect V origin is the top),
+ * row `height-1` = nadir. Pure: same dimensions in, byte-identical array out.
+ *
+ * Values are written in sRGB byte space and the texture is tagged `SRGBColorSpace` by the caller,
+ * so the renderer linearizes them exactly once -- writing linear bytes here instead would
+ * double-decode and silently darken the IBL.
+ */
+export function buildSkyTextureData(
+  width = SKY_TEXTURE_WIDTH,
+  height = SKY_TEXTURE_HEIGHT,
+): Uint8Array<ArrayBuffer> {
+  // Backed by an explicit ArrayBuffer (rather than `new Uint8Array(n)`) so the type is
+  // Uint8Array<ArrayBuffer>, which is what THREE.DataTexture's BufferSource parameter accepts --
+  // the bare form widens to Uint8Array<ArrayBufferLike> and does not.
+  const data = new Uint8Array(new ArrayBuffer(width * height * 4));
+  for (let y = 0; y < height; y++) {
+    // Row 0 is the top of the equirect image = zenith = t 1.
+    const t = height === 1 ? 1 : 1 - y / (height - 1);
+    const color = skyGradientColor(t);
+    const r = Math.round(color.r * 255);
+    const g = Math.round(color.g * 255);
+    const b = Math.round(color.b * 255);
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      data[i] = r;
+      data[i + 1] = g;
+      data[i + 2] = b;
+      data[i + 3] = 255;
+    }
+  }
+  return data;
+}
+
+/** Scene-referred luminance of an sRGB-space color, used by the tone-mapping guard to compare
+ *  anchors on the same axis the ACES curve actually acts on. */
+export function relativeLuminance(color: THREE.Color): number {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+}
+
+/**
+ * The ACES filmic approximation three.js applies in `ACESFilmicToneMapping`, in scalar form, with
+ * this module's exposure baked in. Exported so the never-confusable guard can be asserted in a
+ * unit test without standing up a WebGL context (which no test environment here has).
+ *
+ * Kept deliberately as the same rational fit three.js ships (`ACESFilmicToneMapping` in
+ * three/src/renderers/shaders/ShaderChunk/tonemapping_pars_fragment.glsl.js) -- if three's curve
+ * is ever changed upstream, this drifts, and the guard test is what surfaces it.
+ */
+export function toneMapACES(x: number, exposure = TONE_MAPPING_EXPOSURE): number {
+  const v = Math.max(0, x) * exposure * 0.6;
+  const a = 2.51;
+  const b = 0.03;
+  const c = 2.43;
+  const d = 0.59;
+  const e = 0.14;
+  return Math.min(1, Math.max(0, (v * (v * a + b)) / (v * (v * c + d) + e)));
+}
+
+/** Builds the equirectangular sky texture plus the PMREM-convolved environment map derived from
+ *  it. The PMREM generator is disposed before returning -- the environment RenderTarget's texture
+ *  outlives it, the generator itself does not need to. */
+function createSkyEnvironment(renderer: THREE.WebGLRenderer): {
+  background: THREE.DataTexture;
+  environment: THREE.Texture;
+  dispose(): void;
+} {
+  const sky = new THREE.DataTexture(
+    buildSkyTextureData(),
+    SKY_TEXTURE_WIDTH,
+    SKY_TEXTURE_HEIGHT,
+    THREE.RGBAFormat,
+  );
+  sky.colorSpace = THREE.SRGBColorSpace;
+  sky.mapping = THREE.EquirectangularReflectionMapping;
+  sky.minFilter = THREE.LinearFilter;
+  sky.magFilter = THREE.LinearFilter;
+  sky.needsUpdate = true;
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const target = pmrem.fromEquirectangular(sky);
+  pmrem.dispose();
+
+  return {
+    background: sky,
+    environment: target.texture,
+    dispose(): void {
+      sky.dispose();
+      target.dispose();
+    },
+  };
+}
+
+/** How much of the surface fill now comes from the sky IBL rather than from the punctual lights.
+ *  The hemisphere/ambient pair below was carrying ALL the fill before V1; leaving them at their
+ *  pre-IBL intensities on top of an environment map double-fills and flattens exactly the
+ *  lightness separations the header is about. */
+const ENVIRONMENT_INTENSITY = 1.0;
+
+// ---------------------------------------------------------------------------------------------
 // Three.js consumer
 // ---------------------------------------------------------------------------------------------
 
@@ -268,15 +429,10 @@ const GROUND_MARGIN_FACTOR = 3; // ground plane spans this many bounds-radii bey
 
 export function createScene(container: HTMLElement, city: CityModel): SceneHandle {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0b1020);
 
   const bounds = computeCityBounds(city);
   const aspect = container.clientWidth / Math.max(1, container.clientHeight);
   const framing = computeCameraFraming(bounds, aspect);
-
-  // Fog reaches proportionally further than the fit distance so the far side of a large city
-  // doesn't dissolve before the camera has finished framing it.
-  scene.fog = new THREE.Fog(0x0b1020, framing.radius * 6, framing.radius * 18);
 
   const camera = new THREE.PerspectiveCamera(55, aspect, 0.1, Math.max(5000, framing.radius * 20));
   camera.position.set(framing.position.x, framing.position.y, framing.position.z);
@@ -286,7 +442,21 @@ export function createScene(container: HTMLElement, city: CityModel): SceneHandl
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // V1: filmic response instead of the raw linear->sRGB clip. See this module's tone-mapping
+  // header for why the exposure is gated rather than free.
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = TONE_MAPPING_EXPOSURE;
   container.appendChild(renderer.domElement);
+
+  // Sky + IBL. Built AFTER the renderer because PMREM convolution needs its GL context.
+  const sky = createSkyEnvironment(renderer);
+  scene.background = sky.background;
+  scene.environment = sky.environment;
+  scene.environmentIntensity = ENVIRONMENT_INTENSITY;
+
+  // Fog is tinted to the horizon band so distant geometry dissolves INTO the sky it is seen
+  // against, rather than toward a background color the sky no longer uses.
+  scene.fog = new THREE.Fog(SKY_HORIZON.getHex(), framing.radius * 6, framing.radius * 18);
 
   // Ground plane, centered on the bounds' own X/Z center (not a hardcoded canvas half-point) and
   // sized off the fitted radius so it always reaches well beyond the city regardless of scale.
@@ -300,10 +470,19 @@ export function createScene(container: HTMLElement, city: CityModel): SceneHandl
   ground.name = "ground";
   scene.add(ground);
 
-  const hemi = new THREE.HemisphereLight(0x8fb0ff, 0x1a1420, 0.65);
+  // Hemisphere + ambient are now SECONDARY fill: the sky environment map above supplies most of
+  // it. Their pre-V1 intensities (0.65 / 0.4) were sized for a scene with no IBL at all; kept
+  // there they would stack on top of the environment and lift every surface toward a common
+  // brightness -- the flattening the tone-mapping header warns about, arriving from the fill side
+  // instead of the curve. Hemi is retained (not deleted) for its sky/ground directional tint,
+  // which a PMREM environment alone renders more subtly than this palette wants.
+  const hemi = new THREE.HemisphereLight(0x8fb0ff, 0x1a1420, 0.22);
   scene.add(hemi);
 
-  const sun = new THREE.DirectionalLight(0xfff2e0, 1.1);
+  // Key light strengthened against the ACES curve's shoulder: the same 1.1 under a filmic
+  // response reads flatter than it did under the previous linear clip, and the sun/shadow
+  // contrast is what keeps building massing legible.
+  const sun = new THREE.DirectionalLight(0xfff2e0, 1.7);
   // Positioned relative to the bounds center at a scale proportional to the fitted radius --
   // same directional character as the old CANVAS_SIZE-scaled offset, now content-sized.
   sun.position.set(
@@ -326,7 +505,7 @@ export function createScene(container: HTMLElement, city: CityModel): SceneHandl
   sun.shadow.camera.far = framing.radius * 6;
   scene.add(sun);
 
-  const ambient = new THREE.AmbientLight(0x404060, 0.4);
+  const ambient = new THREE.AmbientLight(0x404060, 0.12);
   scene.add(ambient);
 
   const controls = new OrbitControls(camera, renderer.domElement);

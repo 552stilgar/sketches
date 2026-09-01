@@ -65,7 +65,7 @@ describe("bin/compile.ts CLI — --district-weight", () => {
     }
   });
 
-  it("omitting --district-weight still compiles (defaults to derived, unchanged CLI behavior)", () => {
+  it("omitting --district-weight still compiles (defaults to DEFAULT_DISTRICT_WEIGHT_MODE, unchanged CLI behavior)", () => {
     const outPath = join(workDir, "city-default.json");
     const result = execFileSync("node", ["--experimental-strip-types", SCRIPT, repoJsonPath, outPath], {
       encoding: "utf8",

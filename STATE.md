@@ -1,51 +1,56 @@
 ---
 project: sketches
 updated: 2026-09-01
-next: "Start the visual phase — V1 (tone mapping + exposure + sky/IBL in src/renderer/scene.ts) and V2 (procedural facades: floors/windows/roofs/setbacks derived from existing metrics, hash-deterministic like ruins.ts). Independent files, they parallelize."
-phase: "code-city V5.2b independently reviewed (2 read-only codex lanes) → 17 findings, 7 HIGH. L1 (rename lineage) merged; L2–L5 deferred by ruling. Comparison surface rebuilt and reachable again."
-campaign_ref: "2026-09-01 — code-city: independent review + L1 rename-lineage fix + compare-surface rebuild"
+next: "Look-and-decide: patina, scaffolding, ruins (compare.html, now unblocked — renders through
+the current viewer, V1+V2 included). Then default-camera / progressive semantic zoom: facades are
+browser-verified invisible at default framing, visible only at close zoom."
+phase: "code-city visual phase started: V1 tone mapping/sky (scene.ts) + V2 procedural facades
+(facades.ts, hybrid buckets+shader). District-weight default reverted derived->log (ruled).
+511->548 tests, all local."
+campaign_ref: "2026-09-01 — code-city: independent review + L1 rename-lineage fix + visual phase
+(V1 tone mapping/sky, V2 procedural facades) + district-weight ruling reverted"
 gates:
-  - "L1 verified on the real corpus by A/B at identical HEAD: ages only increase (max +144d), churn only increases, no contributors lost. Suite green on main."
-  - "Comparison surface link-checked in-browser: every href 200, overlays confirmed off by default, ruin data-count == rendered mesh count."
+  - "548/548 tests green, 46 files, tsc clean on every touched file, dist rebuilt."
+  - "V1 + V2 both browser-verified against the final build (not an earlier one) via browser-verify."
 ---
 
 # sketches — STATE
 
 ## Now
 
-code-city's semantic layer is complete and now honest about renames. An independent review found
-the V5.2b merge's never-fabricate bug was not isolated — 5 of 7 HIGH findings are the same shape
-(an absent or partial measurement acquiring a confident default). L1 fixed the analyzer half and
-uncovered more than briefed: `--follow` returned *nothing* for 42 files that entered via the
-qol/itba/frd-ops fold merges, so real 124-day-old files were being reported as unmeasured. Last
-session's "42 correctly-skipped unmeasured buildings" was itself an artifact of that bug. Analyze
-also went 9x faster (a repo-wide git log had been running once per file).
+Visual phase V1 (tone mapping + sky/IBL) and V2 (procedural facades, hybrid buckets+shader) both
+shipped and browser-verified. District weight ruled back to `log` (was `derived`, 81.5% one
+district -> 40.3%), recorded in both contract docs. Three real V2 defects were found and fixed
+AFTER the suite was green (floor-scale mismatch, wrong-axis window columns, a GLSL/JS backtick
+collision) -- none caught by the tests as first written, all now guarded properly. One of those
+fixes (axis pairing) is currently unverifiable in the browser: every building in every city.json
+is square by construction, so the bug it fixes has never been visually observed.
 
 ## Open
 
-- **Four rulings owed, none made.** District weight (`derived` gives the largest district 81.5%
-  vs `log`'s 40.3% — `derived` is the current default and undoes what the log ruling fixed),
-  patina, scaffolding, ruins. Surface: https://fenrir-vps.komodo-deneb.ts.net:7500/compare.html
-  (backend = `python3 -m http.server 8099 --bind 127.0.0.1 --directory ~/sketches/code-city/dist`;
-  it was down, which is why nothing had been seen).
-  District weight is safe to rule any time; the other three read metrics L2/L3 would change.
-- **L2–L5 deferred, fully scoped, not forgotten** —
-  `~/docs/reusable-playbooks/legacy-audits/outputs/code-city/2026-09-01/lanes-pending.md`
-  (sized, executor-assigned, with the hard L4→L5 ordering edge). Findings: `findings.md`, same dir.
-- Patina fires but is imperceptible at the default camera; scaffolding covers 898/1108 buildings
-  on this repo (younger than its 90-day window). Both are ruling-relevant, not defects.
-- `public/city-ruins.json` + `repo-usul-mgmt-v53.json` were deleted mid-session by an
-  unidentified actor and restored from `dist`. The `bash-audit` hook cannot see a dispatched
-  agent's internal shell — that blind spot is real and unclosed.
-- Footprint-floor default still unset. The 0.008 district-legibility floor still answers square
-  geometry while districts lay out as full-width strips — fix-floor vs fix-layout is Usul's call.
+- **Three rulings still owed** -- patina, scaffolding, ruins. Deferred this morning as blocked on
+  V1; that block is gone (`compare.html` renders live through the viewer). Surface:
+  https://fenrir-vps.komodo-deneb.ts.net:7500/compare.html (backend =
+  `python3 -m http.server 8099 --bind 127.0.0.1 --directory ~/sketches/code-city/dist`; running).
+- **Facades don't read at the default camera.** Browser-verified twice: not resolvable at default
+  framing, only at close zoom. Progressive semantic zoom (PROJECT_IDEA.md §5.1) was never built --
+  candidate next visual move once the three rulings above land.
+- **L2-L5 deferred, fully scoped** --
+  `~/docs/reusable-playbooks/legacy-audits/outputs/code-city/2026-09-01/lanes-pending.md`.
+- **Non-square footprints** are what would make the V2 axis-pairing fix observable -- currently a
+  compiler-side change (`compiler/index.ts` emits `width: side, depth: side` from one value), not
+  renderer work.
+- Footprint-floor default still unset (0.008 floor answers square geometry, districts lay out as
+  full-width strips) -- fix-floor vs fix-layout is Usul's call, unchanged from before this session.
 - 12 active worktrees; `git worktree remove` still permission-denied.
 
 ## Do not
 
-- Don't add colors/fills into `src/renderer/svg.ts` — stays presentation-free.
-- Don't flip patina/scaffolding/ruins ON by default before the rulings above.
-- Don't trust screenshot-derived numbers from a subagent without re-measuring — the browser lane
-  reported district shares that were an unlabelled visual estimate, off by ~20 points.
-- Don't fix churn or age with a per-file `git log --follow`: that was ~1170 subprocesses on the
-  real corpus. The rename map is built once per `analyzeRepo` run.
+- Don't add colors/fills into `src/renderer/svg.ts` -- stays presentation-free.
+- Don't flip patina/scaffolding/ruins ON by default before the three rulings above.
+- Don't repoint `facades.ts`'s floor/window derivations at metrics (loc/complexity/churn/age) --
+  they deliberately restate geometry only; the lens system already encodes those and a facade
+  signal would silently contradict whichever lens is active. See the module header if revisiting.
+- Don't raise `TONE_MAPPING_EXPOSURE` or `WINDOW_DARKEN` without checking
+  `tests/tone-mapping.test.ts` / `tests/facades.test.ts` -- both are gated against the
+  never-confusable lightness ladder (ruin < landmark-band < building < landmark-body).
