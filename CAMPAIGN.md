@@ -367,3 +367,5 @@ Net: 403→494 tests (38→43 files), 10 commits, all local. ROI: $44.36 lane sp
 rendered-variant review this run existed to enable hasn't happened yet (district-weight/patina/
 scaffolding/ruins all unjudged); the 0.008-floor fix-vs-fix-layout call and the discarded
 `clamped` flag both wait on it; no independent review of the 10-commit diff has run.
+
+## 2026-09-01 — (save stub; full narrative at close) code-city: 2-lane independent review (17 findings, 7 HIGH), L1 rename-lineage fix merged, compare surface rebuilt and reachable
