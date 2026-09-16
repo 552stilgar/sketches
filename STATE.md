@@ -7,8 +7,7 @@ browser-verified invisible at default framing, visible only at close zoom."
 phase: "code-city visual phase started: V1 tone mapping/sky (scene.ts) + V2 procedural facades
 (facades.ts, hybrid buckets+shader). District-weight default reverted derived->log (ruled).
 511->548 tests, all local."
-campaign_ref: "2026-09-01 — code-city: independent review + L1 rename-lineage fix + visual phase
-(V1 tone mapping/sky, V2 procedural facades) + district-weight ruling reverted"
+campaign_ref: "2026-09-16 — Harness-layer audit P2: stripped-date repair + legacy Active Thread archived"
 gates:
   - "548/548 tests green, 46 files, tsc clean on every touched file, dist rebuilt."
   - "V1 + V2 both browser-verified against the final build (not an earlier one) via browser-verify."
