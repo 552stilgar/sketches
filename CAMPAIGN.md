@@ -391,3 +391,7 @@ Net: 511→548 tests (+37, 45→46 files), all local, all green. Three rulings s
 live through the current viewer). Facades do not read at the default camera framing
 (browser-verified twice) — visible only at close zoom; that's a camera/zoom question, not
 resolved this session.
+
+## 2026-09-16 — Harness-layer audit P2: stripped-date repair + legacy Active Thread archived
+
+CAMP-3 stripped-date heading repair (1, git-blame verified). Legacy stale (2026-07-06) "Active Thread" forge status snapshot archived verbatim to campaign-archive/LEGACY-status-cards-2026-09-16.md; file was under the rotation threshold so no rotation ran.
