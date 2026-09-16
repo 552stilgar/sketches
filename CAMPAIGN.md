@@ -328,7 +328,7 @@ so not prioritized). Worktree count grew 11→18 this session (7 new V5.1 lane w
 merged) — `git worktree remove` is still denied by the permission classifier; needs a rule or
 Usul's own hand, worse now than at last close.
 
-##  — code-city V5.2b: derived district-weight + 3 temporal overlays, workflow-orchestrated
+## 2026-08-31 — code-city V5.2b: derived district-weight + 3 temporal overlays, workflow-orchestrated
 
 Board picked "merge the completed derived-district-weight lane, render+browser-verify pending
 visual changes for Usul's ruling" over pushing further temporal overlays on an unjudged crane
