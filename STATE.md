@@ -1,6 +1,6 @@
 ---
 project: sketches
-updated: 2026-09-01
+updated: 2026-09-16
 next: "Look-and-decide: patina, scaffolding, ruins (compare.html, now unblocked — renders through
 the current viewer, V1+V2 included). Then default-camera / progressive semantic zoom: facades are
 browser-verified invisible at default framing, visible only at close zoom."
