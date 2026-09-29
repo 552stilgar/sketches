@@ -1,0 +1,18 @@
+{
+  "name": "sketches",
+  "trunk": "main",
+  "shared_checkout": false,
+  "packages": {
+    ".": {
+      "runner": null,
+      "test": null,
+      "gate": null,
+      "build": null,
+      "typecheck": null,
+      "node_modules": "none",
+      "link": [],
+      "copy": []
+    }
+  },
+  "services": {}
+}

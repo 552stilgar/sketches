@@ -1,3 +1,6 @@
 SNAPSHOT.md
 brain/
 .worktrees/
+node_modules/
+node_modules
+.claude/worktrees/
