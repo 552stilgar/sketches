@@ -20,7 +20,7 @@ import {
   topLevelPathOfFilePath,
 } from "./grammar.ts";
 import type { CloneLodScope } from "./grammar.ts";
-import { districtWeights, shelfSlots, squarify } from "./layout.ts";
+import { districtWeightsDetailed, shelfSlots, squarify } from "./layout.ts";
 import type { DistrictWeightMode } from "./layout.ts";
 import { compareCodepoints, comparePathThenId } from "../util/compare.ts";
 
@@ -107,13 +107,14 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
     if (!districtMembers.has(path)) districtMembers.set(path, []);
   }
   const districtPaths = [...districtMembers.keys()].sort(compareCodepoints);
-  // districtWeights() computes the whole distribution's weights in one call rather than per-path
+  // districtWeightsDetailed() computes the whole distribution's weights in one call rather than per-path
   // districtWeight(count) calls: "derived" mode (the default) needs every district's count at once
   // to solve one shared exponent (layout.ts deriveDistrictWeightExponent) -- a per-count call has
-  // no way to see its siblings. "linear"/"sqrt"/"log" are unaffected: districtWeights() for those
+  // no way to see its siblings. "linear"/"sqrt"/"log" are unaffected: the detailed helper for those
   // three modes is exactly a per-count map, so this is not a behavior change for explicit opt-outs.
   const districtCounts = districtPaths.map((path) => districtMembers.get(path)?.length ?? 1);
-  const districtWeightValues = districtWeights(districtCounts, options?.districtWeightMode);
+  const districtWeightResult = districtWeightsDetailed(districtCounts, options?.districtWeightMode);
+  const districtWeightValues = districtWeightResult.weights;
   const rectangles = squarify(
     districtPaths.map((path, i) => ({ path, weight: districtWeightValues[i] })),
     { x: 0, y: 0, width: 1000, depth: 1000 },
@@ -279,5 +280,13 @@ export function compileCity(graph: RepoGraph, options?: CompileCityOptions): Cit
   });
   ruins.sort((a, b) => compareCodepoints(a.id, b.id));
 
-  return { districts, buildings, roads, landmarks, identityLinks, ruins };
+  return {
+    districts,
+    buildings,
+    roads,
+    landmarks,
+    identityLinks,
+    ruins,
+    layout: { districtWeight: districtWeightResult.districtWeight },
+  };
 }

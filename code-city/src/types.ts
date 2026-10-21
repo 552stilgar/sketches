@@ -289,6 +289,13 @@ export interface RuinMarker {
   style: string;
 }
 
+export interface DistrictWeightDisclosure {
+  mode: "linear" | "sqrt" | "log" | "derived";
+  clamped: boolean;
+  exponent?: number;
+  minResultingShare?: number;
+}
+
 export interface CityModel {
   districts: District[];
   buildings: Building[];
@@ -311,6 +318,10 @@ export interface CityModel {
    * `city.json` compiled before V5.3b still validates unchanged.
    */
   ruins: RuinMarker[];
+  /** Layout decisions disclosed by newer compilers; absent on older city.json files. */
+  layout?: {
+    districtWeight: DistrictWeightDisclosure;
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -527,6 +538,25 @@ export function validateCity(x: unknown): ValidationResult {
   const buildings = c.buildings as unknown[];
   const roads = c.roads as unknown[];
   const landmarks = c.landmarks as unknown[];
+
+  if (c.layout !== undefined) {
+    if (!isPlainObject(c.layout) || !isPlainObject(c.layout.districtWeight)) {
+      errors.push("layout.districtWeight must be an object when layout is present");
+    } else {
+      const disclosure = c.layout.districtWeight;
+      if (!["linear", "sqrt", "log", "derived"].includes(disclosure.mode as string)) {
+        errors.push("layout.districtWeight.mode must be one of linear, sqrt, log, derived");
+      }
+      if (typeof disclosure.clamped !== "boolean") {
+        errors.push("layout.districtWeight.clamped must be a boolean");
+      }
+      for (const field of ["exponent", "minResultingShare"] as const) {
+        if (disclosure[field] !== undefined && !isFiniteNumber(disclosure[field])) {
+          errors.push(`layout.districtWeight.${field} must be a finite number when present`);
+        }
+      }
+    }
+  }
 
   const districtIds = new Set<string>();
   districts.forEach((raw, i) => {

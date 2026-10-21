@@ -1,4 +1,5 @@
 import { compareCodepoints } from "../util/compare.ts";
+import type { DistrictWeightDisclosure } from "../types.ts";
 
 export interface Rect {
   x: number;
@@ -27,6 +28,25 @@ export interface WeightedPath {
  * options object changed.
  */
 export type DistrictWeightMode = "linear" | "sqrt" | "log" | "derived";
+
+export interface ClampDisclosure {
+  kind: "district-weight" | "height-scale";
+  clamped: boolean;
+  exponent?: number;
+  minResultingShare?: number;
+  scale?: number;
+  medianAspect?: number;
+  [key: string]: unknown;
+}
+
+/** Format either layout clamp as one deterministic stderr-ready line. */
+export function formatClampDisclosure(disclosure: ClampDisclosure): string | null {
+  if (!disclosure.clamped) return null;
+  const details = (["exponent", "minResultingShare", "scale", "medianAspect"] as const)
+    .filter((key) => typeof disclosure[key] === "number")
+    .map((key) => `${key}=${String(disclosure[key])}`);
+  return `${disclosure.kind} clamped${details.length > 0 ? `: ${details.join(", ")}` : ""}`;
+}
 
 export const DISTRICT_WEIGHT_MODES: readonly DistrictWeightMode[] = ["linear", "sqrt", "log", "derived"];
 
@@ -153,12 +173,10 @@ export const DISTRICT_WEIGHT_EXPONENT_FLOOR = 0.05;
  * this is a precision BUDGET, not a "run until close enough" test.
  *
  * FAILS LOUDLY (throws) on degenerate input, per Failure Discipline LAW -- never fabricate a
- * plausible-looking exponent from bad data: an empty `counts` array, any non-finite or non-positive
- * count (a district with 0 files can never be given non-zero weight by any power curve --
- * `0 ** p === 0` for every `p > 0` -- so it is a caller error to pass one in here rather than this
- * function's problem to paper over; `districtWeight(count, "log")`'s `log1p` zero-handling is a
- * property of that DIFFERENT, single-count curve and does not carry over), or a `minShare` that
- * isn't a finite fraction in `(0, 1)`.
+ * plausible-looking exponent from bad data: an empty `counts` array, any non-finite or negative
+ * count, or a `minShare` that isn't a finite fraction in `(0, 1)`. A zero-file district is valid:
+ * the search uses its downstream effective weight of 1 because `squarify` applies that same floor,
+ * while the returned district weight remains `0 ** p === 0` for `squarify` to floor itself.
  */
 export function deriveDistrictWeightExponent(
   counts: readonly number[],
@@ -171,13 +189,13 @@ export function deriveDistrictWeightExponent(
     throw new Error(`deriveDistrictWeightExponent: minShare must be a finite fraction in (0, 1), got ${minShare}`);
   }
   for (const count of counts) {
-    if (!Number.isFinite(count) || count <= 0) {
-      throw new Error(`deriveDistrictWeightExponent: every count must be a positive, finite number, got ${count}`);
+    if (!Number.isFinite(count) || count < 0) {
+      throw new Error(`deriveDistrictWeightExponent: every count must be a non-negative, finite number, got ${count}`);
     }
   }
 
   const minShareAt = (p: number): number => {
-    const weights = counts.map((count) => Math.pow(count, p));
+    const weights = counts.map((count) => Math.pow(Math.max(1, count), p));
     const sum = weights.reduce((a, b) => a + b, 0);
     return Math.min(...weights) / sum;
   };
@@ -268,25 +286,31 @@ export function districtWeights(
   mode: DistrictWeightMode = DEFAULT_DISTRICT_WEIGHT_MODE,
   minShare?: number,
 ): number[] {
+  return districtWeightsDetailed(counts, mode, minShare).weights;
+}
+
+export interface DistrictWeightsDetailedResult {
+  weights: number[];
+  districtWeight: DistrictWeightDisclosure;
+}
+
+/** Weight a distribution and retain the solve metadata needed for city.json disclosure. */
+export function districtWeightsDetailed(
+  counts: readonly number[],
+  mode: DistrictWeightMode = DEFAULT_DISTRICT_WEIGHT_MODE,
+  minShare?: number,
+): DistrictWeightsDetailedResult {
   if (mode !== "derived") {
-    return counts.map((count) => districtWeight(count, mode));
+    return {
+      weights: counts.map((count) => districtWeight(count, mode)),
+      districtWeight: { mode, clamped: false },
+    };
   }
-  // `deriveDistrictWeightExponent` fails loudly on a count <= 0 (see its own doc comment: a power
-  // curve can never give a 0-file district non-zero weight regardless of exponent, so it's
-  // meaningless input to a legibility search). Zero-file districts are a real, valid shape though
-  // -- a datastore-only directory with no analyzed source files (docs/CONTRACT-city-json.md V4) --
-  // and every curve above ("linear"/"sqrt"/"log") already gives them weight 0 before `squarify`'s
-  // own `Math.max(1, weight)` floor takes over downstream. So they're excluded from the exponent
-  // SEARCH (a district that's always floored to the same area regardless of exponent contributes
-  // nothing to "does the smallest REAL district read") but still get a weight from the resulting
-  // exponent like every other count -- `0 ** exponent === 0`, same as the other three curves.
-  const positiveCounts = counts.filter((count) => count > 0);
-  // All-districts-zero is the degenerate edge of that edge case (a graph with datastores but zero
-  // analyzed source files anywhere) -- there is nothing to search over, and every weight is 0
-  // regardless of exponent, so `exponent` is a don't-care; 1 keeps the choice inert and documented
-  // rather than picking a curve for a distribution that has none.
-  const exponent = positiveCounts.length > 0 ? deriveDistrictWeightExponent(positiveCounts, minShare).exponent : 1;
-  return counts.map((count) => Math.pow(count, exponent));
+  const solve = deriveDistrictWeightExponent(counts, minShare);
+  return {
+    weights: counts.map((count) => Math.pow(count, solve.exponent)),
+    districtWeight: { mode, ...solve },
+  };
 }
 
 function worst(row: readonly WeightedPath[], shortSide: number): number {

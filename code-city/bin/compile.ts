@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { compileCity } from "../src/compiler/index.ts";
 import type { CloneLodScope } from "../src/compiler/grammar.ts";
-import { DISTRICT_WEIGHT_MODES } from "../src/compiler/layout.ts";
+import { DISTRICT_WEIGHT_MODES, formatClampDisclosure } from "../src/compiler/layout.ts";
 import type { DistrictWeightMode } from "../src/compiler/layout.ts";
 import { validateRepoGraph, validateCity } from "../src/types.ts";
 import type { RepoGraph } from "../src/types.ts";
@@ -52,6 +52,11 @@ function main(): void {
   }
 
   const city = compileCity(graph, { cloneLodScope, districtWeightMode });
+
+  if (city.layout?.districtWeight.clamped) {
+    const line = formatClampDisclosure({ kind: "district-weight", ...city.layout.districtWeight });
+    if (line !== null) console.error(line);
+  }
 
   const cityCheck = validateCity(city);
   if (!cityCheck.ok) {
