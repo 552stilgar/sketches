@@ -299,7 +299,7 @@ describe("deriveDistrictWeightExponent() -- V5.1 derived weighting", () => {
 
   it("7. fails loudly on degenerate input: empty counts, zero/negative count, non-finite minShare", () => {
     expect(() => deriveDistrictWeightExponent([])).toThrow();
-    expect(() => deriveDistrictWeightExponent([10, 0, 5])).toThrow();
+    // L5/H3: a zero-file count is VALID now (effective weight 1) -- see tests/layout-derived-solver.test.ts.
     expect(() => deriveDistrictWeightExponent([10, -5])).toThrow();
     expect(() => deriveDistrictWeightExponent([10, 5], Number.NaN)).toThrow();
     expect(() => deriveDistrictWeightExponent([10, 5], Number.POSITIVE_INFINITY)).toThrow();
