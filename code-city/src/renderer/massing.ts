@@ -1,4 +1,5 @@
 import type { Building } from "../types.ts";
+import type { ClampDisclosure } from "../compiler/layout.ts";
 
 /**
  * Target median aspect ratio (height / min(width, depth)) that `normalizedHeightScale` solves
@@ -71,7 +72,7 @@ export function medianAspect(buildings: readonly Building[], heightScale: number
 export function normalizedHeightScale(
   buildings: readonly Building[],
   target?: number,
-): { scale: number; clamped: boolean; medianAspect: number } {
+): { scale: number; clamped: boolean; medianAspect: number; disclosure: ClampDisclosure } {
   const resolvedTarget = target ?? TARGET_MEDIAN_ASPECT_DEFAULT;
   if (!Number.isFinite(resolvedTarget)) {
     throw new Error("target must be finite");
@@ -84,9 +85,12 @@ export function normalizedHeightScale(
   }
 
   const scale = Math.min(2, Math.max(0.25, idealScale));
+  const clamped = idealScale < 0.25 || idealScale > 2;
+  const resolvedMedianAspect = medianAspect(buildings, scale);
   return {
     scale,
-    clamped: idealScale < 0.25 || idealScale > 2,
-    medianAspect: medianAspect(buildings, scale),
+    clamped,
+    medianAspect: resolvedMedianAspect,
+    disclosure: { kind: "height-scale", clamped, scale, medianAspect: resolvedMedianAspect },
   };
 }
