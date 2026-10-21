@@ -78,6 +78,38 @@ const execFileAsync = promisify(execFile);
  */
 export const RENAME_SIMILARITY_THRESHOLD = 50;
 
+interface HistoryChange {
+  status: string;
+  path: string;
+  newPath?: string;
+}
+
+function parseHistoryChanges(lines: string[]): HistoryChange[] {
+  const changes: HistoryChange[] = [];
+  for (const line of lines) {
+    const [status, rawPath, rawNewPath] = line.split("\t");
+    if (!status || !rawPath) continue;
+    changes.push({
+      status,
+      path: rawPath.replaceAll("\\", "/"),
+      ...(rawNewPath === undefined ? {} : { newPath: rawNewPath.replaceAll("\\", "/") }),
+    });
+  }
+  return changes;
+}
+
+function pathAtHead(path: string, forwardRenames: ReadonlyMap<string, string>): string {
+  let current = path;
+  const visited = new Set<string>();
+  while (!visited.has(current)) {
+    visited.add(current);
+    const next = forwardRenames.get(current);
+    if (next === undefined) break;
+    current = next;
+  }
+  return current;
+}
+
 async function git(repoPath: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", args, {
     cwd: repoPath,
@@ -135,13 +167,16 @@ export async function readRuins(repoPath: string, headDate: string): Promise<Rui
         // exists ONLY as an evil-merge resolution is not reported — see the contract doc).
         "--no-merges",
         `-M${RENAME_SIMILARITY_THRESHOLD}%`,
-        "--diff-filter=D",
-        // Same scar as readFileGitMetrics: --name-only prints paths relative to the git ROOT, so
+        // One repo-wide status scan supplies deletions, restorations, and the old/new pairs for
+        // every rename. In particular, do not replace this with per-file `--follow`: besides
+        // scaling with the number of deleted paths, that loses the single ordering needed to
+        // decide whether an addition happened after a deletion.
+        // Same scar as readFileGitMetrics: --name-status prints paths relative to the git ROOT, so
         // for a repoPath that is a SUBDIRECTORY of a larger repo the paths would never line up
         // with the repo-relative id space. --relative rewrites them relative to cwd (== repoPath)
         // and, usefully here, drops deletions that happened outside the analyzed subtree.
         "--relative",
-        "--name-only",
+        "--name-status",
         "--format=%x1e%H%x09%cI",
         "HEAD",
       ]),
@@ -161,28 +196,47 @@ export async function readRuins(repoPath: string, headDate: string): Promise<Rui
       .map((p) => p.replaceAll("\\", "/")),
   );
 
-  // git log is newest-first, so the FIRST deletion seen for a path is its most recent one — which
-  // is the one that left it absent at HEAD. A path deleted, restored, and deleted again inside the
-  // window is one ruin, dated to the demolition that stuck.
+  // git log is newest-first. State accumulated before a record therefore describes only commits
+  // newer than that record: exactly what is needed to tell whether a deletion was later undone.
+  // Rename edges are kept forward so a historical path can be resolved to the name its restored
+  // lineage has at HEAD. Assigning an edge again while walking backwards is intentional: the
+  // older assignment is the first rename that lineage encounters when walking forward.
   const deletions = new Map<string, { sha: string; date: string }>();
+  const restoredPaths = new Set<string>();
+  const forwardRenames = new Map<string, string>();
   for (const record of logText.split("\x1e")) {
     const lines = record.trim().split("\n");
     if (!lines[0]) continue;
     const [sha, date] = lines[0].split("\t");
     const commitMs = Date.parse(date);
-    // Identical window predicate to countRecentTouches (src/analyzer/git.ts): filtered here in JS
-    // rather than handed to `git log --since`, whose date parsing is fuzzier than an exact
-    // headDate-anchored comparison.
-    if (commitMs < sinceMs || commitMs > headMs) continue;
-    for (const raw of lines.slice(1)) {
-      const path = raw.trim().replaceAll("\\", "/");
-      if (!path) continue;
-      // Same source-language gate live files pass, and the re-added case: a path that is tracked
-      // at HEAD is a live file, whatever happened to it mid-window. It is not a ruin.
-      if (!isSourceFile(path)) continue;
-      if (aliveAtHead.has(path)) continue;
-      if (deletions.has(path)) continue;
-      deletions.set(path, { sha, date: new Date(date).toISOString() });
+    const changes = parseHistoryChanges(lines.slice(1));
+
+    // Evaluate all deletions before adding this commit's restoration/rename facts: only a LATER
+    // commit invalidates a deletion. The date predicate is identical to countRecentTouches
+    // (src/analyzer/git.ts) and remains in JS because git's --since parsing is less exact.
+    if (commitMs >= sinceMs && commitMs <= headMs) {
+      for (const { status, path } of changes) {
+        if (status !== "D") continue;
+        // Same source-language gate live files pass. A later A at this exact path, or a later
+        // rename landing on it, invalidates this deletion even if that restored incarnation was
+        // subsequently renamed or deleted again. Its later genuine deletion is considered first
+        // by this newest-first traversal and remains the one ruin (newest-deletion-wins).
+        if (!isSourceFile(path)) continue;
+        if (restoredPaths.has(path)) continue;
+        if (aliveAtHead.has(pathAtHead(path, forwardRenames))) continue;
+        if (deletions.has(path)) continue;
+        deletions.set(path, { sha, date: new Date(date).toISOString() });
+      }
+    }
+
+    for (const { status, path, newPath } of changes) {
+      if (status === "A") {
+        restoredPaths.add(path);
+        continue;
+      }
+      if (!status.startsWith("R") || newPath === undefined) continue;
+      restoredPaths.add(newPath);
+      forwardRenames.set(path, newPath);
     }
   }
 
