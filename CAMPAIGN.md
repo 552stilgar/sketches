@@ -395,3 +395,7 @@ resolved this session.
 ## 2026-09-16 — Harness-layer audit P2: stripped-date repair + legacy Active Thread archived
 
 CAMP-3 stripped-date heading repair (1, git-blame verified). Legacy stale (2026-07-06) "Active Thread" forge status snapshot archived verbatim to campaign-archive/LEGACY-status-cards-2026-09-16.md; file was under the rotation threshold so no rotation ran.
+
+## 2026-10-21 — code-city L2/L4/L5 landed via Codex round 5
+
+Two lanes from the deferred L2-L5 list (lanes-pending.md) ran as Codex gpt-5.6-sol dispatches under Sonnet supervisors with Claude-authored RED gates: r5-cc-l2 (d5ab0ba) makes ruins follow renames and drop restored deletions; r5-cc-l4l5 pins the district-weight and ruins tests to real fixtures (L4, Sonnet inline, 5a674c3) and then builds the derived district-weight solver (L5: zero-file districts counted, clamping disclosed on stderr, layout.districtWeight named in city.json; f1c5763, a397b3c). The supervisor's post-RED test edit (ESM __dirname, the a3 byte-equality claim narrowed to geometry because L5 adds layout.districtWeight by design) was ratified as a RED amendment. Both merged into integ-r5-sk with the full suite 564/564 and were fast-forwarded onto main by hand (7513065) because lane land refuses the untracked IDEAS.md; files did not overlap. Pushed with the older lane-manifest commit 65b146e.
