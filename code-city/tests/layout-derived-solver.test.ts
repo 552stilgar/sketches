@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { compileCity } from "../src/compiler/index.ts";
 import {
   deriveDistrictWeightExponent,
@@ -51,6 +52,8 @@ function graphOf(counts: Record<string, number>, extra: Partial<RepoGraph> = {})
     ...extra,
   };
 }
+
+const HERE = fileURLToPath(new URL(".", import.meta.url));
 
 const MGMT = { modules: 1103, test: 36, src: 23, bin: 4, lib: 1, scripts: 1 };
 
@@ -186,7 +189,7 @@ describe("bin/compile.ts surfaces clamping on stderr", () => {
       writeFileSync(inPath, JSON.stringify(graph));
       const r = spawnSync(
         process.execPath,
-        ["--experimental-strip-types", join(__dirname, "..", "bin", "compile.ts"), inPath, outPath, ...extraArgs],
+        ["--experimental-strip-types", join(HERE, "..", "bin", "compile.ts"), inPath, outPath, ...extraArgs],
         { encoding: "utf-8" },
       );
       const city = r.status === 0 ? JSON.parse(readFileSync(outPath, "utf-8")) : null;
@@ -217,7 +220,7 @@ describe("bin/compile.ts surfaces clamping on stderr", () => {
 describe("log and linear outputs stay byte-identical to the L4 fixture", () => {
   it("districts, buildings and districtWeights() match tests/fixtures/district-weight-log-linear.json", () => {
     const fixture = JSON.parse(
-      readFileSync(join(__dirname, "fixtures", "district-weight-log-linear.json"), "utf-8"),
+      readFileSync(join(HERE, "fixtures", "district-weight-log-linear.json"), "utf-8"),
     ) as Record<"log" | "linear", { weights: number[]; districts: unknown[]; buildings: unknown[] }>;
     const g = graphOf({ big: 90, small: 3 }, {
       repoPath: "/fixtures/skewed-graph",

@@ -154,9 +154,13 @@ describe("compileCity({ districtWeightMode }) — V5.1", () => {
   // currently happens to be the default made a passing test depend on something it wasn't testing.
   it("(a3) `derived` matches `linear` byte-for-byte on a mild skew that already clears the floor", () => {
     const g = makeSkewedRepoGraph(); // 90:3, smallest share under linear is 3/93 ≈ 3.2% > 0.8% floor
-    const derived = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "derived" }));
-    const linear = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "linear" }));
-    expect(derived).toBe(linear);
+    // L5: city.json now names the mode under layout.districtWeight, so the two differ there by
+    // design; the claim is about the laid-out geometry, which must stay byte-identical.
+    const geometry = (mode: "derived" | "linear") => {
+      const { layout: _layout, ...rest } = compileCity(structuredClone(g), { districtWeightMode: mode });
+      return JSON.stringify(rest);
+    };
+    expect(geometry("derived")).toBe(geometry("linear"));
   });
 
   // The usul-mgmt distribution (the finding that motivated this task) is skewed enough that linear
