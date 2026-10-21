@@ -120,18 +120,24 @@ describe("compileCity — ruins placement", () => {
     expect(marker.y).toBeGreaterThanOrEqual(district.y);
   });
 
-  it("footprint is a fixed fraction of the slot, never derived from lastLoc (RuinRecord.lastLoc has no bearing on size)", () => {
-    const tiny: RuinRecord = { ...RUIN_ALPHA, path: "alpha/tiny.ts", lastLoc: 1 };
-    const huge: RuinRecord = { ...RUIN_ALPHA, path: "alpha/huge.ts", lastLoc: 100000 };
-    const city = compileCity(withRuins([tiny, huge]));
-    const byId = new Map(city.ruins.map((r: RuinMarker) => [r.id, r]));
-    const a = byId.get("ruin:alpha/tiny.ts");
-    const b = byId.get("ruin:alpha/huge.ts");
-    if (!a || !b) throw new Error("expected both ruins");
-    // Not asserting equality (different slots in a shared grid can differ), but a monstrous
-    // lastLoc must not blow the footprint out relative to a tiny one -- both come from the same
-    // fixed fraction of a similarly-sized shelf-grid cell.
-    expect(Math.abs(a.width - b.width)).toBeLessThan(Math.max(a.width, b.width));
+  it("footprint never derives from lastLoc: ruins with different lastLoc have equal width, as do ruins with equal lastLoc", () => {
+    const mk = (name: string, lastLoc: number): RuinRecord => ({ ...RUIN_ALPHA, path: `alpha/${name}.ts`, lastLoc });
+    const widthsOf = (records: RuinRecord[]): number[] => {
+      const city = compileCity(withRuins(records));
+      return records.map((r) => {
+        const m = city.ruins.find((x: RuinMarker) => x.id === `ruin:${r.path}`);
+        if (!m) throw new Error(`missing ruin ${r.path}`);
+        return m.width;
+      });
+    };
+    const [tiny, huge] = widthsOf([mk("tiny", 1), mk("huge", 100000)]);
+    expect(tiny).toBe(huge); // different lastLoc -> equal width
+    const [twinA, twinB] = widthsOf([mk("twin-a", 500), mk("twin-b", 500)]);
+    expect(twinA).toBe(twinB); // equal lastLoc -> equal width
+    // Same two paths, lastLoc swapped between them: the whole marker set is unchanged.
+    const swapA = compileCity(withRuins([mk("tiny", 1), mk("huge", 100000)])).ruins;
+    const swapB = compileCity(withRuins([mk("tiny", 100000), mk("huge", 1)])).ruins;
+    expect(swapB).toEqual(swapA);
   });
 
   it("is deterministic: same graph compiled twice yields byte-identical ruins", () => {

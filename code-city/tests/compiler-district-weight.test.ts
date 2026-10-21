@@ -7,6 +7,7 @@
 // comment for why it must stay caller-chosen rather than auto-detected from how skewed the data is.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { compileCity } from "../src/compiler/index.ts";
 import {
   districtWeight,
@@ -50,6 +51,20 @@ function makeSkewedRepoGraph(): RepoGraph {
     headSha: "0000000000000000000000000000000000skew",
     headDate: "2026-06-01T12:00:00.000Z",
   };
+}
+
+// Committed fixture generated once from the pre-L4/L5 implementation (2026-10-21): the districts,
+// buildings and districtWeights([90,3,0]) of makeSkewedRepoGraph() under `log` and `linear`. Pins
+// those two curves against a recorded value instead of a second run of the same code. `derived`
+// is deliberately NOT in it -- L5 changes derived by design.
+const LOG_LINEAR_FIXTURE = JSON.parse(
+  readFileSync(new URL("./fixtures/district-weight-log-linear.json", import.meta.url), "utf-8"),
+) as Record<"log" | "linear", { weights: number[]; districts: unknown[]; buildings: unknown[] }>;
+
+function layoutOf(mode: "log" | "linear") {
+  const city = compileCity(structuredClone(makeSkewedRepoGraph()), { districtWeightMode: mode });
+  // Round-trip through JSON so the comparison is on serialized bytes' values, like the fixture.
+  return JSON.parse(JSON.stringify({ weights: districtWeights([90, 3, 0], mode), districts: city.districts, buildings: city.buildings }));
 }
 
 function districtArea(city: ReturnType<typeof compileCity>, name: string): number {
@@ -119,19 +134,13 @@ describe("compileCity({ districtWeightMode }) — V5.1", () => {
 
   // Every pre-2026-08-31 curve stays reachable byte-for-byte by naming it explicitly -- that's
   // what makes each default change a preference, not a one-way door.
-  it("(a2) `log` still reproduces the pre-2026-08-31 default output on a skewed graph", () => {
-    const g = makeSkewedRepoGraph();
-    const log = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "log" }));
-    const logAgain = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "log" }));
-    expect(log).toBe(logAgain);
+  it("(a2) `log` still reproduces the pre-2026-08-31 default output on a skewed graph (pinned to a committed fixture)", () => {
+    expect(layoutOf("log")).toEqual(LOG_LINEAR_FIXTURE.log);
   });
 
   // `linear` still reproduces every city compiled before ANY curve existed.
-  it("(a2b) `linear` still reproduces the original V4 output", () => {
-    const g = makeSkewedRepoGraph();
-    const linear = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "linear" }));
-    const linearAgain = JSON.stringify(compileCity(structuredClone(g), { districtWeightMode: "linear" }));
-    expect(linear).toBe(linearAgain);
+  it("(a2b) `linear` still reproduces the original V4 output (pinned to a committed fixture)", () => {
+    expect(layoutOf("linear")).toEqual(LOG_LINEAR_FIXTURE.linear);
   });
 
   // The whole point of "derived": a MILD skew (30:1) that already clears the legibility floor
@@ -229,19 +238,22 @@ describe("deriveDistrictWeightExponent() -- V5.1 derived weighting", () => {
     expect(result.clamped).toBe(false);
   });
 
-  it("2. monotonicity: the smallest district's resulting share is non-increasing as the exponent grows", () => {
-    // Skewed enough that the curve actually matters across the sampled exponents.
+  it("2. monotonicity: asking for a larger minimum share never yields a larger exponent, and every unclamped answer honors its floor", () => {
+    // Calls the real solver. Reversing or breaking the production bisection breaks either the
+    // non-increasing exponent sequence or the floor guarantee below.
     const counts = [1103, 36, 23, 4, 1, 1];
-    const shareAt = (p: number): number => {
-      const weights = counts.map((c) => Math.pow(c, p));
-      const sum = weights.reduce((a, b) => a + b, 0);
-      return Math.min(...weights) / sum;
-    };
-    const exponents = [0.05, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1];
-    const shares = exponents.map(shareAt);
-    for (let i = 1; i < shares.length; i++) {
-      expect(shares[i]).toBeLessThanOrEqual(shares[i - 1] + 1e-12);
+    const minShares = [0.001, 0.002, 0.004, 0.008, 0.016, 0.03, 0.05];
+    const results = minShares.map((m) => deriveDistrictWeightExponent(counts, m));
+    for (let i = 1; i < results.length; i++) {
+      expect(results[i].exponent).toBeLessThanOrEqual(results[i - 1].exponent + 1e-12);
     }
+    results.forEach((r, i) => {
+      if (!r.clamped) expect(r.minResultingShare).toBeGreaterThanOrEqual(minShares[i] - 1e-9);
+    });
+    // And the aggregate entry point agrees with the solver's exponent.
+    const weights = districtWeights(counts, "derived", 0.008);
+    const exponent = deriveDistrictWeightExponent(counts, 0.008).exponent;
+    expect(weights).toEqual(counts.map((c) => Math.pow(c, exponent)));
   });
 
   it("3. on the real usul-mgmt distribution, the smallest district clears the floor", () => {

@@ -1,0 +1,3222 @@
+{
+ "log": {
+  "weights": [
+   4.51085950651685,
+   1.3862943611198906,
+   0
+  ],
+  "districts": [
+   {
+    "id": "district:big",
+    "name": "big",
+    "x": 0,
+    "y": 0,
+    "width": 1000,
+    "depth": 764.921453257681,
+    "style": "typescript"
+   },
+   {
+    "id": "district:small",
+    "name": "small",
+    "x": 0,
+    "y": 764.921453257681,
+    "width": 1000,
+    "depth": 235.07854674231893,
+    "style": "typescript"
+   }
+  ],
+  "buildings": [
+   {
+    "id": "big/f0.ts",
+    "x": 372.5263157894737,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f1.ts",
+    "x": 320.7368421052632,
+    "y": 259.64048441922705,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f10.ts",
+    "x": 424.3157894736842,
+    "y": 559.2090657222994,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f11.ts",
+    "x": 61.78947368421053,
+    "y": 708.9933563738357,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f12.ts",
+    "x": 579.6842105263158,
+    "y": 209.71238753538162,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f13.ts",
+    "x": 372.5263157894737,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f14.ts",
+    "x": 61.78947368421053,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f15.ts",
+    "x": 113.57894736842105,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f16.ts",
+    "x": 10,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f17.ts",
+    "x": 10,
+    "y": 559.2090657222994,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f18.ts",
+    "x": 942.2105263157895,
+    "y": 259.64048441922705,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f19.ts",
+    "x": 942.2105263157895,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f2.ts",
+    "x": 579.6842105263158,
+    "y": 109.85619376769081,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f20.ts",
+    "x": 735.0526315789474,
+    "y": 109.85619376769081,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f21.ts",
+    "x": 10,
+    "y": 159.78429065153622,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f22.ts",
+    "x": 683.2631578947369,
+    "y": 609.1371626061449,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f23.ts",
+    "x": 476.10526315789474,
+    "y": 159.78429065153622,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f24.ts",
+    "x": 476.10526315789474,
+    "y": 359.49667818691785,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f25.ts",
+    "x": 320.7368421052632,
+    "y": 359.49667818691785,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f26.ts",
+    "x": 268.94736842105266,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f27.ts",
+    "x": 320.7368421052632,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f28.ts",
+    "x": 683.2631578947369,
+    "y": 459.35287195460864,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f29.ts",
+    "x": 786.8421052631579,
+    "y": 459.35287195460864,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f3.ts",
+    "x": 372.5263157894737,
+    "y": 309.56858130307245,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f30.ts",
+    "x": 268.94736842105266,
+    "y": 708.9933563738357,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f31.ts",
+    "x": 476.10526315789474,
+    "y": 609.1371626061449,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f32.ts",
+    "x": 786.8421052631579,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f33.ts",
+    "x": 579.6842105263158,
+    "y": 659.0652594899902,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f34.ts",
+    "x": 890.421052631579,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f35.ts",
+    "x": 165.3684210526316,
+    "y": 259.64048441922705,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f36.ts",
+    "x": 217.1578947368421,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f37.ts",
+    "x": 113.57894736842105,
+    "y": 209.71238753538162,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f38.ts",
+    "x": 217.1578947368421,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f39.ts",
+    "x": 217.1578947368421,
+    "y": 659.0652594899902,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f4.ts",
+    "x": 735.0526315789474,
+    "y": 309.56858130307245,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f40.ts",
+    "x": 579.6842105263158,
+    "y": 309.56858130307245,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f41.ts",
+    "x": 631.4736842105264,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f42.ts",
+    "x": 735.0526315789474,
+    "y": 609.1371626061449,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f43.ts",
+    "x": 579.6842105263158,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f44.ts",
+    "x": 890.421052631579,
+    "y": 109.85619376769081,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f45.ts",
+    "x": 942.2105263157895,
+    "y": 359.49667818691785,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f46.ts",
+    "x": 424.3157894736842,
+    "y": 259.64048441922705,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f47.ts",
+    "x": 424.3157894736842,
+    "y": 309.56858130307245,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f48.ts",
+    "x": 476.10526315789474,
+    "y": 209.71238753538162,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f49.ts",
+    "x": 527.8947368421053,
+    "y": 309.56858130307245,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f5.ts",
+    "x": 527.8947368421053,
+    "y": 559.2090657222994,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f50.ts",
+    "x": 372.5263157894737,
+    "y": 559.2090657222994,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f51.ts",
+    "x": 165.3684210526316,
+    "y": 359.49667818691785,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f52.ts",
+    "x": 527.8947368421053,
+    "y": 609.1371626061449,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f53.ts",
+    "x": 320.7368421052632,
+    "y": 109.85619376769081,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f54.ts",
+    "x": 890.421052631579,
+    "y": 359.49667818691785,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f55.ts",
+    "x": 165.3684210526316,
+    "y": 159.78429065153622,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f56.ts",
+    "x": 838.6315789473684,
+    "y": 209.71238753538162,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f57.ts",
+    "x": 631.4736842105264,
+    "y": 109.85619376769081,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f58.ts",
+    "x": 476.10526315789474,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f59.ts",
+    "x": 320.7368421052632,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f6.ts",
+    "x": 838.6315789473684,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f60.ts",
+    "x": 683.2631578947369,
+    "y": 159.78429065153622,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f61.ts",
+    "x": 527.8947368421053,
+    "y": 159.78429065153622,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f62.ts",
+    "x": 476.10526315789474,
+    "y": 309.56858130307245,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f63.ts",
+    "x": 320.7368421052632,
+    "y": 209.71238753538162,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f64.ts",
+    "x": 165.3684210526316,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f65.ts",
+    "x": 217.1578947368421,
+    "y": 309.56858130307245,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f66.ts",
+    "x": 631.4736842105264,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f67.ts",
+    "x": 631.4736842105264,
+    "y": 609.1371626061449,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f68.ts",
+    "x": 579.6842105263158,
+    "y": 10,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f69.ts",
+    "x": 631.4736842105264,
+    "y": 209.71238753538162,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f7.ts",
+    "x": 113.57894736842105,
+    "y": 559.2090657222994,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f70.ts",
+    "x": 683.2631578947369,
+    "y": 659.0652594899902,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f71.ts",
+    "x": 424.3157894736842,
+    "y": 109.85619376769081,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f72.ts",
+    "x": 735.0526315789474,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f73.ts",
+    "x": 10,
+    "y": 659.0652594899902,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f74.ts",
+    "x": 113.57894736842105,
+    "y": 459.35287195460864,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f75.ts",
+    "x": 61.78947368421053,
+    "y": 459.35287195460864,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f76.ts",
+    "x": 113.57894736842105,
+    "y": 109.85619376769081,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f77.ts",
+    "x": 683.2631578947369,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f78.ts",
+    "x": 786.8421052631579,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f79.ts",
+    "x": 10,
+    "y": 59.928096883845406,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f8.ts",
+    "x": 217.1578947368421,
+    "y": 459.35287195460864,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f80.ts",
+    "x": 786.8421052631579,
+    "y": 708.9933563738357,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f81.ts",
+    "x": 786.8421052631579,
+    "y": 159.78429065153622,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f82.ts",
+    "x": 890.421052631579,
+    "y": 659.0652594899902,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f83.ts",
+    "x": 890.421052631579,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f84.ts",
+    "x": 424.3157894736842,
+    "y": 359.49667818691785,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f85.ts",
+    "x": 476.10526315789474,
+    "y": 459.35287195460864,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f86.ts",
+    "x": 217.1578947368421,
+    "y": 409.42477507076325,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f87.ts",
+    "x": 527.8947368421053,
+    "y": 259.64048441922705,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f88.ts",
+    "x": 735.0526315789474,
+    "y": 209.71238753538162,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f89.ts",
+    "x": 527.8947368421053,
+    "y": 459.35287195460864,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f9.ts",
+    "x": 424.3157894736842,
+    "y": 509.28096883845404,
+    "width": 45.928096883845406,
+    "depth": 45.928096883845406,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "small/f0.ts",
+    "x": 431.7142857142858,
+    "y": 884.4607266288405,
+    "width": 105.53927337115947,
+    "depth": 105.53927337115947,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "small/f1.ts",
+    "x": 150.57142857142858,
+    "y": 884.4607266288405,
+    "width": 105.53927337115947,
+    "depth": 105.53927337115947,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "small/f2.ts",
+    "x": 291.14285714285717,
+    "y": 884.4607266288405,
+    "width": 105.53927337115947,
+    "depth": 105.53927337115947,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   }
+  ]
+ },
+ "linear": {
+  "weights": [
+   90,
+   3,
+   0
+  ],
+  "districts": [
+   {
+    "id": "district:big",
+    "name": "big",
+    "x": 0,
+    "y": 0,
+    "width": 1000,
+    "depth": 967.741935483871,
+    "style": "typescript"
+   },
+   {
+    "id": "district:small",
+    "name": "small",
+    "x": 0,
+    "y": 967.741935483871,
+    "width": 1000,
+    "depth": 32.25806451612903,
+    "style": "typescript"
+   }
+  ],
+  "buildings": [
+   {
+    "id": "big/f0.ts",
+    "x": 357.29411764705884,
+    "y": 604.8387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f1.ts",
+    "x": 357.29411764705884,
+    "y": 426.38709677419354,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f10.ts",
+    "x": 415.1764705882353,
+    "y": 723.8064516129032,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f11.ts",
+    "x": 67.88235294117646,
+    "y": 902.258064516129,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f12.ts",
+    "x": 530.9411764705883,
+    "y": 247.93548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f13.ts",
+    "x": 357.29411764705884,
+    "y": 69.48387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f14.ts",
+    "x": 67.88235294117646,
+    "y": 485.8709677419355,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f15.ts",
+    "x": 125.76470588235294,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f16.ts",
+    "x": 10,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f17.ts",
+    "x": 10,
+    "y": 723.8064516129032,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f18.ts",
+    "x": 936.1176470588235,
+    "y": 307.4193548387097,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f19.ts",
+    "x": 936.1176470588235,
+    "y": 69.48387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f2.ts",
+    "x": 530.9411764705883,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f20.ts",
+    "x": 762.4705882352941,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f21.ts",
+    "x": 10,
+    "y": 188.4516129032258,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f22.ts",
+    "x": 646.7058823529412,
+    "y": 783.2903225806451,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f23.ts",
+    "x": 473.05882352941177,
+    "y": 188.4516129032258,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f24.ts",
+    "x": 473.05882352941177,
+    "y": 366.9032258064516,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f25.ts",
+    "x": 357.29411764705884,
+    "y": 485.8709677419355,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f26.ts",
+    "x": 299.4117647058824,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f27.ts",
+    "x": 299.4117647058824,
+    "y": 485.8709677419355,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f28.ts",
+    "x": 704.5882352941177,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f29.ts",
+    "x": 820.3529411764706,
+    "y": 604.8387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f3.ts",
+    "x": 415.1764705882353,
+    "y": 366.9032258064516,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f30.ts",
+    "x": 299.4117647058824,
+    "y": 902.258064516129,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f31.ts",
+    "x": 473.05882352941177,
+    "y": 783.2903225806451,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f32.ts",
+    "x": 762.4705882352941,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f33.ts",
+    "x": 530.9411764705883,
+    "y": 842.7741935483871,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f34.ts",
+    "x": 878.2352941176471,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f35.ts",
+    "x": 183.64705882352942,
+    "y": 307.4193548387097,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f36.ts",
+    "x": 183.64705882352942,
+    "y": 69.48387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f37.ts",
+    "x": 67.88235294117646,
+    "y": 247.93548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f38.ts",
+    "x": 241.52941176470588,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f39.ts",
+    "x": 183.64705882352942,
+    "y": 842.7741935483871,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f4.ts",
+    "x": 704.5882352941177,
+    "y": 366.9032258064516,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f40.ts",
+    "x": 588.8235294117648,
+    "y": 366.9032258064516,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f41.ts",
+    "x": 588.8235294117648,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f42.ts",
+    "x": 762.4705882352941,
+    "y": 783.2903225806451,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f43.ts",
+    "x": 646.7058823529412,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f44.ts",
+    "x": 878.2352941176471,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f45.ts",
+    "x": 936.1176470588235,
+    "y": 485.8709677419355,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f46.ts",
+    "x": 415.1764705882353,
+    "y": 426.38709677419354,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f47.ts",
+    "x": 530.9411764705883,
+    "y": 366.9032258064516,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f48.ts",
+    "x": 473.05882352941177,
+    "y": 247.93548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f49.ts",
+    "x": 530.9411764705883,
+    "y": 426.38709677419354,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f5.ts",
+    "x": 530.9411764705883,
+    "y": 723.8064516129032,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f50.ts",
+    "x": 357.29411764705884,
+    "y": 723.8064516129032,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f51.ts",
+    "x": 241.52941176470588,
+    "y": 485.8709677419355,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f52.ts",
+    "x": 530.9411764705883,
+    "y": 783.2903225806451,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f53.ts",
+    "x": 299.4117647058824,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f54.ts",
+    "x": 878.2352941176471,
+    "y": 426.38709677419354,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f55.ts",
+    "x": 183.64705882352942,
+    "y": 247.93548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f56.ts",
+    "x": 820.3529411764706,
+    "y": 247.93548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f57.ts",
+    "x": 588.8235294117648,
+    "y": 188.4516129032258,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f58.ts",
+    "x": 530.9411764705883,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f59.ts",
+    "x": 299.4117647058824,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f6.ts",
+    "x": 820.3529411764706,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f60.ts",
+    "x": 704.5882352941177,
+    "y": 188.4516129032258,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f61.ts",
+    "x": 530.9411764705883,
+    "y": 188.4516129032258,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f62.ts",
+    "x": 473.05882352941177,
+    "y": 426.38709677419354,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f63.ts",
+    "x": 299.4117647058824,
+    "y": 247.93548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f64.ts",
+    "x": 241.52941176470588,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f65.ts",
+    "x": 241.52941176470588,
+    "y": 366.9032258064516,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f66.ts",
+    "x": 646.7058823529412,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f67.ts",
+    "x": 704.5882352941177,
+    "y": 783.2903225806451,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f68.ts",
+    "x": 646.7058823529412,
+    "y": 69.48387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f69.ts",
+    "x": 588.8235294117648,
+    "y": 307.4193548387097,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f7.ts",
+    "x": 67.88235294117646,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f70.ts",
+    "x": 704.5882352941177,
+    "y": 842.7741935483871,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f71.ts",
+    "x": 415.1764705882353,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f72.ts",
+    "x": 704.5882352941177,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f73.ts",
+    "x": 10,
+    "y": 842.7741935483871,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f74.ts",
+    "x": 67.88235294117646,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f75.ts",
+    "x": 67.88235294117646,
+    "y": 604.8387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f76.ts",
+    "x": 125.76470588235294,
+    "y": 128.96774193548387,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f77.ts",
+    "x": 704.5882352941177,
+    "y": 69.48387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f78.ts",
+    "x": 762.4705882352941,
+    "y": 69.48387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f79.ts",
+    "x": 10,
+    "y": 69.48387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f8.ts",
+    "x": 183.64705882352942,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f80.ts",
+    "x": 762.4705882352941,
+    "y": 902.258064516129,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f81.ts",
+    "x": 820.3529411764706,
+    "y": 188.4516129032258,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f82.ts",
+    "x": 878.2352941176471,
+    "y": 783.2903225806451,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f83.ts",
+    "x": 878.2352941176471,
+    "y": 604.8387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f84.ts",
+    "x": 415.1764705882353,
+    "y": 485.8709677419355,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f85.ts",
+    "x": 473.05882352941177,
+    "y": 545.3548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f86.ts",
+    "x": 183.64705882352942,
+    "y": 485.8709677419355,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f87.ts",
+    "x": 530.9411764705883,
+    "y": 307.4193548387097,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f88.ts",
+    "x": 762.4705882352941,
+    "y": 247.93548387096774,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f89.ts",
+    "x": 530.9411764705883,
+    "y": 604.8387096774194,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "big/f9.ts",
+    "x": 415.1764705882353,
+    "y": 664.3225806451613,
+    "width": 53.88235294117647,
+    "depth": 53.88235294117647,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "small/f0.ts",
+    "x": 461,
+    "y": 977.741935483871,
+    "width": 12.258064516129032,
+    "depth": 12.258064516129032,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "small/f1.ts",
+    "x": 215,
+    "y": 977.741935483871,
+    "width": 12.258064516129032,
+    "depth": 12.258064516129032,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   },
+   {
+    "id": "small/f2.ts",
+    "x": 256,
+    "y": 977.741935483871,
+    "width": 12.258064516129032,
+    "depth": 12.258064516129032,
+    "height": 180,
+    "style": "typescript",
+    "metrics": {
+     "loc": 20,
+     "complexity": 1,
+     "churn": 0,
+     "age": 30,
+     "newestAge": 30,
+     "ageMeasured": true
+    }
+   }
+  ]
+ }
+}
