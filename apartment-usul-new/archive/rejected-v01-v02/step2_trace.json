@@ -1,0 +1,84 @@
+{
+  "title": "Usul apartment - Step 2 registered developer-baseline trace",
+  "source": {
+    "file_name": "201 a 701 (3)(5).pdf",
+    "library_file_id": "libfile_ad19786a2de481919c44f140282a3cf3",
+    "page": 1,
+    "printed_scale": "1:50",
+    "raster_dpi": 360,
+    "coordinate_system": "full-page 360 dpi raster pixels; x right, y down",
+    "crop_px": [1100, 880, 5750, 3000],
+    "status": "developer unit-family baseline, not confirmed as-built"
+  },
+  "registration": {
+    "theoretical_px_per_m_at_1_50": 283.464567,
+    "anchors": [
+      {"id": "balcony_length", "axis": "y", "p1": [1343, 1118], "p2": [1343, 2871], "printed_m": 6.19},
+      {"id": "balcony_wide_depth", "axis": "x", "p1": [1167, 2319], "p2": [1846, 2319], "printed_m": 2.40},
+      {"id": "living_width", "axis": "x", "p1": [1891, 2319], "p2": [3788, 2319], "printed_m": 6.70},
+      {"id": "living_depth", "axis": "y", "p1": [1892, 1927], "p2": [1892, 2868], "printed_m": 3.33},
+      {"id": "suite_width", "axis": "x", "p1": [1610, 1456], "p2": [2521, 1456], "printed_m": 3.22},
+      {"id": "suite_depth", "axis": "y", "p1": [1610, 975], "p2": [1610, 1896], "printed_m": 3.24},
+      {"id": "bedroom_width", "axis": "x", "p1": [3419, 1440], "p2": [4266, 1440], "printed_m": 3.00},
+      {"id": "bedroom_depth", "axis": "y", "p1": [4266, 981], "p2": [4266, 1839], "printed_m": 3.04},
+      {"id": "main_bath_width", "axis": "x", "p1": [3813, 2527], "p2": [4258, 2527], "printed_m": 1.57},
+      {"id": "main_bath_depth", "axis": "y", "p1": [4258, 1839], "p2": [4258, 2498], "printed_m": 2.32},
+      {"id": "wc_width", "axis": "x", "p1": [4312, 2498], "p2": [4609, 2498], "printed_m": 1.05},
+      {"id": "wc_depth", "axis": "y", "p1": [4604, 2153], "p2": [4604, 2524], "printed_m": 1.31},
+      {"id": "entry_run", "axis": "x", "p1": [3786, 2808], "p2": [4604, 2808], "printed_m": 2.89},
+      {"id": "kitchen_width", "axis": "x", "p1": [4838, 2808], "p2": [5668, 2808], "printed_m": 2.93},
+      {"id": "kitchen_west_depth", "axis": "y", "p1": [4918, 2153], "p2": [4918, 2868], "printed_m": 2.53},
+      {"id": "kitchen_east_depth", "axis": "y", "p1": [5309, 2153], "p2": [5309, 2879], "printed_m": 2.56}
+    ]
+  },
+  "zones": [
+    {"id": "suite", "label": "SUITE\n3.22 x 3.24 local spans", "confidence": "printed-plus-inferred", "color": "#dbe8f5", "label_px": [2130, 1660], "polygon_px": [[1600, 975], [2688, 975], [2688, 1580], [2825, 1580], [2825, 1900], [1600, 1900]]},
+    {"id": "dressing", "label": "DRESSING", "confidence": "plan-inferred", "color": "#ece1f4", "label_px": [2900, 1280], "polygon_px": [[2688, 975], [3121, 975], [3121, 1580], [2688, 1580]]},
+    {"id": "ensuite", "label": "ENSUITE", "confidence": "plan-inferred", "color": "#d8edf0", "label_px": [3270, 1280], "polygon_px": [[3121, 975], [3414, 975], [3414, 1580], [3121, 1580]]},
+    {"id": "central_passage", "label": "CENTRAL\nPASSAGE", "confidence": "plan-inferred", "color": "#eeeeee", "label_px": [3100, 1770], "polygon_px": [[2825, 1580], [3414, 1580], [3414, 1840], [3132, 1840], [3132, 2034], [2849, 2034], [2849, 1900], [2825, 1900]]},
+    {"id": "bedroom", "label": "BEDROOM\n3.00 x 3.04 local spans", "confidence": "printed-plus-inferred", "color": "#f4e5d7", "label_px": [3800, 1510], "polygon_px": [[3414, 975], [4266, 975], [4266, 2034], [4029, 2034], [4029, 1840], [3414, 1840]]},
+    {"id": "bedroom_wardrobe_recess", "label": "BEDROOM WARDROBE / RECESS", "confidence": "plan-inferred", "color": "#ead8c8", "label_px": [3580, 1935], "polygon_px": [[3132, 1840], [4029, 1840], [4029, 2034], [3132, 2034]]},
+    {"id": "living_dining", "label": "LIVING / DINING\n6.70 x 3.33 local spans", "confidence": "printed-plus-inferred", "color": "#f5edcf", "label_px": [2850, 2460], "polygon_px": [[1892, 1927], [2849, 1927], [2849, 2034], [3788, 2034], [3788, 2558], [3806, 2558], [3806, 2868], [1892, 2868]]},
+    {"id": "main_bath", "label": "MAIN BATH\n1.57 x 2.32", "confidence": "printed-plus-inferred", "color": "#cfeaec", "label_px": [4040, 2320], "polygon_px": [[3788, 2034], [4258, 2034], [4258, 2530], [3813, 2530], [3813, 2558], [3788, 2558]]},
+    {"id": "wc", "label": "WC\n1.05 x 1.31", "confidence": "printed-plus-inferred", "color": "#d9edf0", "label_px": [4470, 2360], "polygon_px": [[4312, 2113], [4628, 2113], [4628, 2556], [4312, 2556]]},
+    {"id": "entry_circulation", "label": "ENTRY / CIRCULATION\n2.89 local run", "confidence": "printed-plus-inferred", "color": "#e9e9e6", "label_px": [4260, 2730], "polygon_px": [[3788, 2558], [4312, 2558], [4312, 2556], [4628, 2556], [4628, 2808], [4918, 2808], [4918, 2872], [4068, 2872], [4068, 2909], [3806, 2909], [3806, 2868], [3788, 2868]]},
+    {"id": "kitchen_breakfast", "label": "KITCHEN / BREAKFAST\n2.93 x 2.53/2.56 local spans", "confidence": "printed-plus-inferred", "color": "#e3efd9", "label_px": [5220, 2520], "polygon_px": [[4636, 2108], [5695, 2108], [5695, 2909], [4918, 2909], [4918, 2808], [4636, 2808]]},
+    {"id": "balcony", "label": "BALCONY\n6.19 length / 2.40 wide portion", "confidence": "printed-plus-inferred", "color": "#d7e8e7", "label_px": [1450, 2250], "polygon_px": [[1167, 1118], [1597, 1118], [1597, 1927], [1892, 1927], [1892, 2672], [1535, 2672], [1535, 2883], [1167, 2883]]},
+    {"id": "balcony_storage_notch", "label": "STORAGE /\nSTRUCTURE NOTCH", "confidence": "plan-inferred", "color": "#d5d0ca", "label_px": [1710, 2770], "polygon_px": [[1535, 2672], [1892, 2672], [1892, 2868], [1535, 2868]]}
+  ],
+  "doors": [
+    {"id": "entry_external", "between": ["exterior", "entry_circulation"], "edge": [[3806, 2872], [4068, 2872]], "confidence": "plan-symbol"},
+    {"id": "entry_to_living", "between": ["entry_circulation", "living_dining"], "edge": [[3788, 2558], [3788, 2868]], "confidence": "open-plan inferred"},
+    {"id": "entry_to_kitchen", "between": ["entry_circulation", "kitchen_breakfast"], "edge": [[4636, 2808], [4918, 2808]], "confidence": "plan-symbol"},
+    {"id": "entry_to_main_bath", "between": ["entry_circulation", "main_bath"], "edge": [[3864, 2558], [4078, 2558]], "confidence": "plan-symbol"},
+    {"id": "entry_to_wc", "between": ["entry_circulation", "wc"], "edge": [[4421, 2556], [4604, 2556]], "confidence": "plan-symbol"},
+    {"id": "passage_to_bedroom", "between": ["central_passage", "bedroom"], "edge": [[4266, 1840], [4266, 2034]], "confidence": "plan-symbol"},
+    {"id": "passage_to_suite", "between": ["central_passage", "suite"], "edge": [[2825, 1900], [3132, 1900]], "confidence": "plan-symbol"},
+    {"id": "suite_to_dressing", "between": ["suite", "dressing"], "edge": [[2688, 1428], [2688, 1580]], "confidence": "plan-symbol"},
+    {"id": "dressing_to_ensuite", "between": ["dressing", "ensuite"], "edge": [[3121, 1438], [3121, 1555]], "confidence": "plan-symbol"},
+    {"id": "living_to_passage", "between": ["living_dining", "central_passage"], "edge": [[2849, 2034], [3132, 2034]], "confidence": "open connection inferred"}
+  ],
+  "glazing": [
+    {"id": "suite_to_balcony", "between": ["suite", "balcony"], "edge": [[1597, 1118], [1597, 1825]], "confidence": "plan-plus-photo-family"},
+    {"id": "living_to_balcony", "between": ["living_dining", "balcony"], "edge": [[1892, 1936], [1892, 2658]], "confidence": "plan-plus-photo"},
+    {"id": "bedroom_exterior", "between": ["bedroom", "exterior"], "edge": [[4266, 1133], [4266, 1825]], "confidence": "plan-symbol"},
+    {"id": "kitchen_lightwell_glazing", "between": ["kitchen_breakfast", "lightwell"], "edge": [[4650, 2108], [5017, 2108]], "confidence": "plan-plus-photo"},
+    {"id": "kitchen_north_opening", "between": ["kitchen_breakfast", "lightwell"], "edge": [[5035, 2108], [5576, 2108]], "confidence": "plan-symbol; type unresolved"}
+  ],
+  "route_graph": {
+    "exterior": ["entry_circulation"],
+    "entry_circulation": ["living_dining", "kitchen_breakfast", "main_bath", "wc"],
+    "living_dining": ["central_passage", "balcony"],
+    "central_passage": ["suite", "bedroom"],
+    "suite": ["dressing", "balcony"],
+    "dressing": ["ensuite"]
+  },
+  "assumptions": [
+    "Developer PDF orientation is used exactly as printed and is not mirrored.",
+    "The developer unit-family plan is treated as the baseline even though current as-built correspondence is unresolved.",
+    "Room-face polygons are registered to the source raster; unprinted offsets remain provisional.",
+    "Architect proposal geometry is excluded from this baseline trace.",
+    "Door/window types are taken from visible symbols; widths and construction details are not site-measured.",
+    "The first three interior photos are not used to set geometry."
+  ]
+}

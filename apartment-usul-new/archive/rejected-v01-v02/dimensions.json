@@ -1,0 +1,32 @@
+{
+  "project": "Usul new apartment - first measured shell",
+  "source_status": "Developer baseline drawing, printed 1:50, not confirmed as-built",
+  "units": "metres",
+  "printed_dimensions": {
+    "living_dining": {"width": 6.70, "depth": 3.33},
+    "suite": {"width": 3.22, "depth": 3.24},
+    "bedroom": {"width": 3.00, "depth": 3.04},
+    "balcony": {"length": 6.19, "wide_depth": 2.40, "shape": "stepped, not rectangular"},
+    "kitchen": {"width": 2.93, "depth": 2.56},
+    "main_bath": {"width": 1.57, "depth": 2.32},
+    "entry_run": 2.89,
+    "developer_areas": {"covered": 77.04, "semi_covered": 12.81, "amenities_allocation": 6.11}
+  },
+  "provisional": {
+    "wall_thickness": 0.15,
+    "ceiling_height": 2.60,
+    "internal_door_width": 0.80,
+    "entry_door_width": 0.90,
+    "door_height": 2.05,
+    "glazing_height": 2.20,
+    "balcony_parapet_height": 1.05
+  },
+  "notes": [
+    "All vertical dimensions and opening sizes are provisional because none are printed in the supplied plan.",
+    "The developer drawing is treated as a design baseline, not an as-built survey.",
+    "Room adjacency and unprinted offsets are schematic and must be checked on site.",
+    "The architect proposal is retained as a hidden placeholder collection only; proposed furnishings are intentionally not modelled in this pass.",
+    "Amenities 6.11 m2 is an allocation, not modelled floor geometry.",
+    "No construction or structural feasibility is inferred."
+  ]
+}

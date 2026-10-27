@@ -1,0 +1,57 @@
+{
+  "source_sha256": "84f4cd1037c745215da6d1171d0f961aec916a81253ff09f36bc9db65eaea5f4",
+  "geometry_json": "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\step3_geometry.json",
+  "blend": "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\apartment_shell_step3.blend",
+  "renders_pc": [
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step3\\step3_top_down.png",
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step3\\step3_cutaway_axon.png",
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step3\\step3_eye_cutaway_living.png",
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step3\\step3_eye_cutaway_bedroom.png",
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step3\\step3_eye_cutaway_kitchen.png"
+  ],
+  "renders_project": [
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step3\\step3_top_down.png",
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step3\\step3_cutaway_axon.png",
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step3\\step3_eye_cutaway_living.png",
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step3\\step3_eye_cutaway_bedroom.png",
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step3\\step3_eye_cutaway_kitchen.png"
+  ],
+  "object_counts": {
+    "base_wall_solids": 61,
+    "opening_infill_solids": 15,
+    "interior_floor_parts": 56,
+    "balcony_floor_parts": 16,
+    "glazing_threshold_parts": 2,
+    "opening_frame_parts": 46,
+    "labels": 11
+  },
+  "opening_clearances_m": {
+    "door_head": 2.1,
+    "wall_height": 2.6,
+    "overdoor_lintel_height": 0.5,
+    "full_height_glazing_head": 2.35,
+    "lightwell_sill": 0.9,
+    "lightwell_head": 2.1
+  },
+  "reachability": {
+    "Z01_living_dining": true,
+    "Z02_suite": true,
+    "Z03_dressing": true,
+    "Z04_ensuite": true,
+    "Z05_central_passage": true,
+    "Z06_bedroom": true,
+    "Z07_main_bath": true,
+    "Z08_wc": true,
+    "Z09_entry": true,
+    "Z10_kitchen": true
+  },
+  "defaults_provisional": {
+    "wall_height_m": 2.6,
+    "slab_thickness_m": 0.12,
+    "full_height_glazing_head_m": 2.35,
+    "lightwell_window_sill_m": 0.9,
+    "lightwell_window_head_m": 2.1,
+    "door_height_m": 2.1
+  },
+  "note": "Furniture proposal intentionally excluded from Step 3 shell."
+}

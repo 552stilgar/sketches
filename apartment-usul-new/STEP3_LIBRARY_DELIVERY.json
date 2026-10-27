@@ -1,0 +1,17 @@
+{
+  "step3_top_down.png": "libfile_3e922d414e94819192e41d0444b52d87",
+  "step3_cutaway_axon.png": "libfile_4c077b9cc0d481918f9830401c3fd650",
+  "step3_eye_cutaway_living.png": "libfile_b4d75230026c8191b592a89118bc35b8",
+  "step3_eye_cutaway_bedroom.png": "libfile_baaa4dd3041081918b536aa66d91f5f8",
+  "step3_eye_cutaway_kitchen.png": "libfile_9febded0149881919e7d10abb606d966",
+  "current_versions": {
+    "step3_top_down.png": 3,
+    "step3_cutaway_axon.png": 2,
+    "step3_eye_cutaway_living.png": 2,
+    "step3_eye_cutaway_bedroom.png": 2,
+    "step3_eye_cutaway_kitchen.png": 2
+  },
+  "version_reason": "Top version 3 corrects ENSUITE and MAIN BATH annotation placement only; other views remain version 2",
+  "upload_status": "replaced successfully with identities preserved",
+  "local_identity_metadata": "not persisted: current Windows Python lacks os.setxattr"
+}

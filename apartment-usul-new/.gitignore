@@ -1,0 +1,9 @@
+sources/
+renders/
+*.blend
+*.blend1
+verification.json
+__pycache__/
+*.pyc
+validated_source/*.png
+archive/rejected-v01-v02/step2_vector_layers.json
