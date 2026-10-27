@@ -1,0 +1,38 @@
+{
+  "stage": "Step 4 existing-condition materials and fixed details",
+  "base_step3_blend": "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\apartment_shell_step3.blend",
+  "step4_blend": "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\apartment_existing_step4.blend",
+  "separation": {
+    "existing_condition_collection": "04_STEP4_EXISTING_FIXED_DETAILS",
+    "architect_proposal_objects": 0,
+    "step3_shell_topology_changed": false
+  },
+  "renders_pc": [
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step4\\step4_materials_top_cutaway.png",
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step4\\step4_materials_axon_cutaway.png",
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step4\\step4_kitchen_section_detail.png",
+    "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\renders\\step4\\step4_balcony_full_height.png"
+  ],
+  "renders_project": [
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step4\\step4_materials_top_cutaway.png",
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step4\\step4_materials_axon_cutaway.png",
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step4\\step4_kitchen_section_detail.png",
+    "C:\\Users\\Usul\\Documents\\Codex\\2026-10-26\\task\\apartment-usul-new\\renders\\step4\\step4_balcony_full_height.png"
+  ],
+  "photo_grounded_features": [
+    "pale gray wood-look interior flooring",
+    "white walls and black aluminum frames",
+    "greige handleless kitchen with polished black stone counter/backsplash",
+    "double stainless sink, chrome faucet, black cooktop and oven",
+    "dark gray balcony tile, charcoal walls, glass balustrade, linear drain",
+    "warm wood-slat balcony soffit and black downlights"
+  ],
+  "provisional": [
+    "all cabinetry and fixture dimensions/coordinates",
+    "kitchen tile boundary",
+    "balcony parapet, drain, soffit and railing heights/depths",
+    "uncalibrated material colors"
+  ],
+  "fixed_detail_objects": 120,
+  "note": "No architect-proposal furniture or remodeling is included."
+}

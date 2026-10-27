@@ -25,3 +25,11 @@ This is the single review queue for unresolved apartment inputs. Items remain pr
 10. Confirm the architect PDF's inconsistent furniture depth units (`0.40 cm`, `0.80 cm`, `0.25 cm` versus a separate `60 cm` usable depth). These are not used in the Step 3 shell.
 
 11. Confirm whether the proposal's 2.60 m joinery/elevation height is also the actual finished ceiling height. Step 3 uses 2.60 m only as a reversible provisional default.
+
+## Step 4 existing-condition review
+
+12. Confirm whether the pale gray plank flooring shown in `124859`, `124904`, and `125132` continues through both bedrooms and the living/dining area, or whether any room differs.
+13. Confirm which room is shown in `125132` and whether its large street-balcony glazing corresponds to the living/dining opening or the suite-side opening.
+14. Confirm whether the kitchen cabinetry is the existing installation to retain, and provide one control dimension if exact joinery is later required (counter height, main run length, or cabinet depth).
+15. Confirm whether the balcony's frosted privacy panel visible in `125538` is permanent, temporary construction protection, or an element to remove; it is not modeled yet.
+16. Bathroom finishes and fixtures remain entirely unresolved because no bathroom photo has been supplied.

@@ -1,0 +1,33 @@
+{
+  "created_2026_10_27": [
+    {
+      "file_name": "step4_materials_top_cutaway.png",
+      "library_file_id": "libfile_fb11e76f3c1c81918ba8800bcdba65c0",
+      "file_id": "file_00000000e9b8821084adabe63c750288",
+      "version": 1,
+      "sha256": "79b2ba18b220783208a7a8c57ba8ebd89ed80dfc44af0b5fba5c092a7ccd597e"
+    },
+    {
+      "file_name": "step4_materials_axon_cutaway.png",
+      "library_file_id": "libfile_33014a13c39c8191a98008b4bee27c90",
+      "file_id": "file_000000003b2481fdb7edd3ea11649e14",
+      "version": 1,
+      "sha256": "4593a0188a06acb6518bf07763e7e334f0ea448f3a05bde766b3719caeadb680"
+    },
+    {
+      "file_name": "step4_kitchen_section_detail.png",
+      "library_file_id": "libfile_9caad9c564548191a3e7b2e5d70d7ea6",
+      "file_id": "file_0000000053cc81fd86b9e117c717dd0f",
+      "version": 1,
+      "sha256": "5590aa5d9acf1f4f6c2e3b59e965f13f5c293d9bf749d1b2950667a864418604"
+    },
+    {
+      "file_name": "step4_balcony_full_height.png",
+      "library_file_id": "libfile_8ace1e4b4b008191b64247e695452588",
+      "file_id": "file_00000000331c8230802ccb9eb13cb361",
+      "version": 1,
+      "sha256": "dd57c7584b274c02d8e21aebda478628982842b0ce116d3bebcdbd775ff86e2d"
+    }
+  ],
+  "local_identity_metadata": "Library creates succeeded. Windows does not expose os.setxattr, so identity is persisted in this manifest rather than filesystem extended attributes."
+}

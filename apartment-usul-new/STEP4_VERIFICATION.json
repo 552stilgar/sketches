@@ -1,0 +1,25 @@
+{
+  "blend": "C:\\Workshop\\blender\\scenes\\apartment-usul-new\\apartment_existing_step4.blend",
+  "base_wall_count": 61,
+  "base_wall_full_height_count": 61,
+  "step4_detail_count": 120,
+  "step4_detail_hidden_after_save": [],
+  "proposal_collections": [],
+  "expected_cameras_present": {
+    "S4_CAM_TOP_CUTAWAY": true,
+    "S4_CAM_AXON_CUTAWAY": true,
+    "S4_CAM_KITCHEN_SECTION_DETAIL": true,
+    "S4_CAM_BALCONY_FULL_HEIGHT": true
+  },
+  "evidence_counts": {
+    "photo": 20,
+    "photo type; inferred dimensions": 5,
+    "photo+source; height provisional": 2,
+    "photo+source": 1,
+    "photo; dimensions provisional": 1,
+    "photo; spacing provisional": 74,
+    "photo material; source footprint; height provisional": 16,
+    "photo; planar extent inferred": 1
+  },
+  "passed": true
+}
